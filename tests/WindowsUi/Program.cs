@@ -11,6 +11,7 @@ class Check
   object Field(string name)=>type.GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(form)!;
   void SetField(string name,object? value)=>type.GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,value);
   void Call(string name,params object?[] values)=>type.GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(form,values);
+  async Task CallAsync(string name,params object?[] values)=>await (Task)type.GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(form,values)!;
   string TextIn(Control control)=>control.Text+string.Concat(control.Controls.Cast<Control>().Select(TextIn));
   int Count()=>(int)type.GetProperty("NotificationCount")!.GetValue(form)!;
   var engine=(PeerEngine)Field("engine");engine.Start("127.0.0.5",45972,45971);
@@ -38,16 +39,16 @@ class Check
     typeof(NotifyIcon).GetMethod("OnBalloonTipClicked",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(tray,null);
     if(!form.Visible||form.WindowState!=FormWindowState.Normal||(string)Field("selected")!=remote.Id)throw new Exception("Notification click did not restore sender conversation");
     if(!TextIn((Control)Field("feed")).Contains("PRIVATE hidden message"))throw new Exception("Incoming chat not rendered");
-    remote.Dispose();((TextBox)Field("composer")).Text="Saved from native Windows UI";Call("Send");
+    remote.Dispose();((TextBox)Field("composer")).Text="Saved from native Windows UI";await CallAsync("Send");
     if(engine.Pending!=1||!TextIn((Control)Field("feed")).Contains("Queued"))throw new Exception("Native offline compose failed");
     var secondRoot=Path.Combine(root,"second");using var second=new PeerEngine(secondRoot,"Design team",new TestProtector(secondRoot));second.Start("127.0.0.7",45972,45971);
     await engine.AddAddress("127.0.0.7:45972");await second.AddAddress("127.0.0.5:45972");var secondCode=engine.PairingCode(second.Id);engine.Verify(second.Id,secondCode);second.Verify(engine.Id,secondCode);
     var groupId=engine.CreateGroup("Project room",new[]{remote.Id,second.Id});Call("Render");Call("RestoreWindow",groupId);
-    ((TextBox)Field("composer")).Text="Here is the design for our next update.";Call("Send");
-    var picture=Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jk1sAAAAASUVORK5CYII=");SetField("pendingAttachment",picture);SetField("pendingAttachmentName","Design.png");SetField("pendingAttachmentTarget",groupId);Call("RenderPendingAttachment");
+    ((TextBox)Field("composer")).Text="Here is the design for our next update.";await CallAsync("Send");
+    var picture=Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jk1sAAAAASUVORK5CYII=");var picturePath=Path.Combine(root,"design.png");File.WriteAllBytes(picturePath,picture);SetField("pendingAttachmentPath",picturePath);SetField("pendingAttachmentName","Design.png");SetField("pendingAttachmentTarget",groupId);Call("RenderPendingAttachment");
     if(engine.Messages(groupId).Length!=1||!((Control)Field("attachmentDraft")).Controls.Cast<Control>().SelectMany(AllControls).Any(c=>c is PictureBox))throw new Exception("Choosing an image sent it before Send or omitted the draft preview");
     using(var draftBitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(draftBitmap,new Rectangle(0,0,form.Width,form.Height));draftBitmap.Save(Path.Combine(root,"windows-draft.png"));}
-    ((TextBox)Field("composer")).Text="Draft image caption";Call("Send");
+    ((TextBox)Field("composer")).Text="Draft image caption";await CallAsync("Send");
     if(((ComboBox)Field("files")).Items.Count!=1||!((Button)Field("saveFile")).Enabled||!((Button)Field("members")).Enabled||((Button)Field("verify")).Enabled)throw new Exception("Group/attachment controls failed");
     if(engine.Messages(groupId).Length!=2||engine.Messages(groupId).Last().Text!="Draft image caption"||!TextIn((Control)Field("feed")).Contains("Design.png")||!((Control)Field("feed")).Controls.Cast<Control>().SelectMany(AllControls).Any(c=>c is PictureBox))throw new Exception("Explicit attachment send, caption or inline image failed");
     Console.WriteLine("PASS: native group selection, sending, attachment list and group actions");
@@ -60,7 +61,7 @@ class Check
     Call("RestoreWindow",second.Id);
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Second seen check"&&(m.Status=="Read"||m.Status=="Seen")),"Opening the conversation in the UI marks the message read");
     await Wait(()=>second.Messages(engine.Id).Any(m=>m.Text=="Second seen check"&&m.Status=="Seen"),"Seen receipt reaches the original sender");
-    ((TextBox)Field("composer")).Text="Seen tick check";Call("Send");
+    ((TextBox)Field("composer")).Text="Seen tick check";await CallAsync("Send");
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Seen tick check"&&m.Status=="Delivered"),"Reply sent from the native UI is delivered");
     second.MarkRead(engine.Id);
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Seen tick check"&&m.Status=="Seen"),"Native UI message reaches Seen once the other device reads it");

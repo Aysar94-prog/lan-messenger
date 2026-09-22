@@ -31,6 +31,20 @@ public sealed partial class PeerEngine : IDisposable
     public string LastConnectionError {get;private set;}="";
     public event Action? Changed;
     public event Action<Message>? Received;
+    // (messageId, bytesTransferred, totalBytes) — fired while streaming an attachment over the
+    // network, in either direction. Purely informational/UI, never persisted.
+    public event Action<string,long,long>? TransferProgress;
+    readonly ConcurrentDictionary<string,int> lastReportedPercent=new();
+    // Throttled to at most ~101 events per transfer regardless of chunk count/size.
+    void ReportProgress(string messageId,long done,long total)
+    {
+        if(total<=0)return;var pct=(int)(done*100/total);
+        if(lastReportedPercent.TryGetValue(messageId,out var last)&&pct==last&&done<total)return;
+        lastReportedPercent[messageId]=pct;
+        try{TransferProgress?.Invoke(messageId,done,total);}catch{}
+        if(done>=total)lastReportedPercent.TryRemove(messageId,out _);
+    }
+    static readonly TimeSpan ChunkTimeout=TimeSpan.FromSeconds(45);
     public static long Now=>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public PeerEngine(string directory,string defaultName,IStorageProtector? storageProtector=null)
     {
@@ -70,7 +84,7 @@ public sealed partial class PeerEngine : IDisposable
     }
     public void Queue(string peer,string text)
     {
-        QueueContent(peer,text,"",null);
+        QueueContentAsync(peer,text,"",null,0,null).GetAwaiter().GetResult();
     }
 
     void Load(string source)
@@ -173,10 +187,22 @@ public sealed partial class PeerEngine : IDisposable
             if(peerKey.Length==0||!SecureIdentity.Verify(Convert.FromBase64String(peerKey),CanonicalBytes(a[2],group,a[3],at,text,name,size,hash),Convert.FromBase64String(signature)))return;
         }
         ValidateFile(name,size,hash);lock(gate){if(!AllowedGroup(group,h[2]))return;}
-        var data=size>0?await ReadBytes(tls,size):Array.Empty<byte>();if(name.Length>0&&SecureIdentity.Hash(data)!=hash)return;
+        var m=new Message(a[2],a[3],Id,text,at,"Received",group,name,size,hash,signature,signature.Length>0);
+        if(name.Length>0)
+        {
+            string computed;
+            try{computed=await StoreAttachmentStream(m,new NetworkTimeoutStream(tls,ChunkTimeout),size,p=>ReportProgress(m.Id,p,size));}
+            catch{return;}
+            if(computed!=hash){try{File.Delete(AttachmentPath(m));}catch{}return;}
+        }
         Message? incoming=null;
-        lock(gate){if(!Trusted(h[2],fingerprint)||!AllowedGroup(group,h[2]))return;if(!hidden.Contains(h[2]+"/"+a[2])&&!messages.Any(m=>m.Id==a[2]&&m.From==a[3])){
-            var m=new Message(a[2],a[3],Id,text,at,"Received",group,name,size,hash,signature,signature.Length>0);if(name.Length>0)StoreAttachment(m,data);messages.Add(m);try{Save();}catch{messages.Remove(m);if(name.Length>0)File.Delete(AttachmentPath(m));throw;}incoming=m;}}
+        // A retransmitted duplicate of a message we already have must never delete the attachment
+        // we already legitimately stored for it — only a cleared/hidden conversation (never
+        // resurrect) or an outright-rejected message should ever remove a file here.
+        lock(gate){bool stillPresent=messages.Any(x=>x.Id==a[2]&&x.From==a[3]);
+            if(!Trusted(h[2],fingerprint)||!AllowedGroup(group,h[2])){if(name.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}return;}
+            if(!hidden.Contains(h[2]+"/"+a[2])&&!stillPresent){messages.Add(m);try{Save();}catch{messages.Remove(m);if(name.Length>0)try{File.Delete(AttachmentPath(m));}catch{}throw;}incoming=m;}
+            else if(name.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}}
 
         if(incoming is not null)try{Received?.Invoke(incoming);}catch{}
         await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");Notify();}catch(Exception e){LastConnectionError=e.ToString();}
@@ -192,8 +218,7 @@ public sealed partial class PeerEngine : IDisposable
         lock(gate)offer=AllowedGroup(group,peerId)?messages.Where(m=>m.GroupId==group&&m.Signature.Length>0&&Now<=m.Time+GroupTtlMs&&!known.Contains(m.Id)).GroupBy(m=>m.Id).Select(g=>g.First()).ToArray():Array.Empty<Message>();
         foreach(var m in offer)try{
             await Write(tls,$"LM4\tRELAY\t{m.Id}\t{group}\t{m.From}\t{Enc(DisplayName(m.From))}\t{m.Time}\t{Enc(m.Text)}\t{Enc(m.FileName)}\t{m.FileSize}\t{m.FileHash}\t{m.Signature}");
-            var data=m.FileName.Length>0?ReadAttachment(m):Array.Empty<byte>();
-            if(data.Length>0){using var timeout=new CancellationTokenSource(TransferTimeout(data.Length));await tls.WriteAsync(data,timeout.Token);}
+            if(m.FileName.Length>0)await ReadAttachmentStream(m,new NetworkTimeoutStream(tls,ChunkTimeout),p=>ReportProgress(m.Id,p,m.FileSize));
             if(await Read(tls)!="LM4\tRELAYACK\t"+m.Id)return;
         }catch{return;}
         try{await Write(tls,"LM4\tSYNCDONE");}catch{}
@@ -250,14 +275,25 @@ public sealed partial class PeerEngine : IDisposable
                 var text=Dec(reply[7]);var fileName=Dec(reply[8]);var fileHash=reply[10];var signature=reply[11];
                 if(Now>at+GroupTtlMs){await Write(tls,$"LM4\tRELAYACK\t{id}");continue;}
                 ValidateFile(fileName,fileSize,fileHash);
-                var data=fileSize>0?await ReadBytes(tls,fileSize):Array.Empty<byte>();
+                var m=new Message(id,origSender,Id,text,at,"Received",group.Id,fileName,fileSize,fileHash,signature,true);
+                bool fileOk=fileName.Length==0;
+                if(fileName.Length>0)
+                {
+                    try{fileOk=await StoreAttachmentStream(m,new NetworkTimeoutStream(tls,ChunkTimeout),fileSize,p=>ReportProgress(id,p,fileSize))==fileHash;}
+                    catch{fileOk=false;}
+                    if(!fileOk)try{File.Delete(AttachmentPath(m));}catch{}
+                }
                 Message? incoming=null;
-                if(fileName.Length==0||SecureIdentity.Hash(data)==fileHash){
+                // As in Receive(): a re-sync of a message we already have must never delete the
+                // attachment we already legitimately stored for it.
+                if(fileOk){
                     string origKey;lock(gate)origKey=peers.TryGetValue(origSender,out var op)&&op.Trusted?op.PublicKey:"";
-                    if(origKey.Length>0&&SecureIdentity.Verify(Convert.FromBase64String(origKey),CanonicalBytes(id,group.Id,origSender,at,text,fileName,fileSize,fileHash),Convert.FromBase64String(signature))){
-                        lock(gate){if(AllowedGroup(group.Id,origSender)&&!hidden.Contains(origSender+"/"+id)&&!messages.Any(m=>m.Id==id&&m.From==origSender)){
-                            var m=new Message(id,origSender,Id,text,at,"Received",group.Id,fileName,fileSize,fileHash,signature,true);if(fileName.Length>0)StoreAttachment(m,data);messages.Add(m);try{Save();}catch{messages.Remove(m);if(fileName.Length>0)File.Delete(AttachmentPath(m));throw;}incoming=m;
-                        }}
+                    bool verified=origKey.Length>0&&SecureIdentity.Verify(Convert.FromBase64String(origKey),CanonicalBytes(id,group.Id,origSender,at,text,fileName,fileSize,fileHash),Convert.FromBase64String(signature));
+                    lock(gate){
+                        bool stillPresent=messages.Any(x=>x.Id==id&&x.From==origSender);
+                        if(verified&&AllowedGroup(group.Id,origSender)&&!hidden.Contains(origSender+"/"+id)&&!stillPresent){
+                            messages.Add(m);try{Save();}catch{messages.Remove(m);if(fileName.Length>0)try{File.Delete(AttachmentPath(m));}catch{}throw;}incoming=m;
+                        }else if(fileName.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}
                     }
                 }
                 await Write(tls,$"LM4\tRELAYACK\t{id}");
@@ -267,10 +303,10 @@ public sealed partial class PeerEngine : IDisposable
         Message[] queued;lock(gate)queued=messages.Where(m=>m.To==peer.Id&&m.Status=="Queued").ToArray();
         foreach(var m in queued)try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fingerprint=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fingerprint))return;
         await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;RecordCertificate(h[2],fingerprint,SecureIdentity.RemotePublicKey(tls));if(await Read(tls)!="LM4\tREADY"||!Trusted(peer.Id,fingerprint))return;
-        byte[] data;lock(gate){if(!messages.Any(x=>x.Id==m.Id&&x.To==m.To))continue;data=m.FileName.Length>0?ReadAttachment(m):Array.Empty<byte>();}
+        bool exists;lock(gate)exists=messages.Any(x=>x.Id==m.Id&&x.To==m.To);if(!exists)continue;
         var wire=$"LM4\tMSG\t{m.Id}\t{Id}\t{m.To}\t{Enc(Name)}\t{m.Time}\t{Enc(m.Text)}\t{m.GroupId}\t{Enc(m.FileName)}\t{m.FileSize}\t{m.FileHash}"+(m.GroupId.Length>0?$"\t{m.Signature}":"");
         await Write(tls,wire);
-        if(data.Length>0){using var timeout=new CancellationTokenSource(TransferTimeout(data.Length));await tls.WriteAsync(data,timeout.Token);}
+        if(m.FileName.Length>0)await ReadAttachmentStream(m,new NetworkTimeoutStream(tls,ChunkTimeout),p=>ReportProgress(m.Id,p,m.FileSize));
         if(await Read(tls)!=$"LM4\tACK\t{m.Id}\t{peer.Id}"||!Trusted(peer.Id,fingerprint))return;
         lock(gate){int i=messages.FindIndex(x=>x.Id==m.Id&&x.To==m.To);if(i<0)continue;var old=messages[i];messages[i]=old with{Status="Delivered"};try{Save();}catch{messages[i]=old;throw;}}Notify();}catch{return;}
         Message[] toConfirm;lock(gate)toConfirm=messages.Where(m=>m.To==Id&&m.From==peer.Id&&m.Status=="Read").ToArray();

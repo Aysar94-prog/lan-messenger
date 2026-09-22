@@ -23,7 +23,7 @@ sealed class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Save file",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.7.3";
+    public const string AppVersion="0.7.4";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -51,7 +51,11 @@ sealed class ChatWindow : Form
     readonly Button send = new() { Text="Send", Dock=DockStyle.Fill, Enabled=false };
     readonly Dictionary<string,string> drafts=[];
     string? selected;
-    byte[]? pendingAttachment; string pendingAttachmentName=""; string? pendingAttachmentTarget; RowStyle pendingAttachmentRow=null!;
+    // The picked file's path, not its bytes — a 1 GB attachment is never fully read into memory
+    // just to sit in the compose draft; it's streamed from disk only once actually queued to send.
+    string? pendingAttachmentPath; string pendingAttachmentName=""; string? pendingAttachmentTarget; RowStyle pendingAttachmentRow=null!;
+    const long ThumbnailPreviewCap=20*1024*1024;
+    readonly Dictionary<string,(long done,long total)> transferProgress=[];
     string lastFeed="", lastContacts="";
     bool rendering;
     record ContactItem(string Id,string Name,string Detail,bool Group=false,int Unread=0) { public override string ToString()=>Name; }
@@ -87,16 +91,35 @@ sealed class ChatWindow : Form
         verify.Click+=(_,_)=>VerifyDevice();
         var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
         engine.Received+=m=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();var peer=engine.Peers.FirstOrDefault(p=>p.Id==m.From);ShowNotification(m.GroupId.Length>0?m.GroupId:m.From,m.GroupId.Length>0?engine.DisplayName(m.GroupId):peer?.Name??"LAN Messenger","New encrypted message");}));}catch{}};
+        // Attachment transfers run on background connection threads, not the UI thread — marshal
+        // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
+        engine.TransferProgress+=(id,done,total)=>{if(IsDisposed||!IsHandleCreated)return;try{BeginInvoke(new Action(()=>{if(IsDisposed)return;if(done>=total)transferProgress.Remove(id);else transferProgress[id]=(done,total);lastFeed="";Render();}));}catch{}};
         FormClosing+=(_,e)=>{if(!exiting&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();ShowNotification(null,"LAN Messenger","Still running. Right-click the tray icon and choose Exit to stop.");}};
         save.Click+=(_,_)=>{try{engine.Rename(profile.Text);profile.Text=engine.Name;}catch(Exception e){MessageBox.Show(e.Message,"Could not save name");}};
         scan.Click+=async(_,_)=>{await engine.Announce();Render();};add.Click+=async(_,_)=>await AddAddress();
         contacts.SelectedIndexChanged+=(_,_)=>{if(rendering)return;if(selected!=null)drafts[selected]=composer.Text;var next=(contacts.SelectedItem as ContactItem)?.Id;if(pendingAttachmentTarget!=null&&pendingAttachmentTarget!=next)ClearPendingAttachment();selected=next;composer.Text=selected!=null&&drafts.TryGetValue(selected,out var draft)?draft:"";lastFeed="";Render();};
-        send.Click+=(_,_)=>Send();composer.KeyDown+=(_,e)=>{if(e.KeyCode==Keys.Enter&&!e.Shift){e.SuppressKeyPress=true;Send();}};
+        send.Click+=async(_,_)=>await Send();composer.KeyDown+=async(_,e)=>{if(e.KeyCode==Keys.Enter&&!e.Shift){e.SuppressKeyPress=true;await Send();}};
         timer.Tick+=(_,_)=>Render();Shown+=(_,_)=>{try{engine.Start();timer.Start();Render();}catch(Exception e){status.Text="Could not start: "+e.Message;}};
         FormClosed+=(_,_)=>{timer.Stop();tray.Visible=false;tray.Dispose();engine.Dispose();};
         feed.Controls.Add(MessageLabel("People running LAN Messenger on your network appear automatically.\n\nContacts and messages stay saved after you close the app.\n\nOffline? Write a message now. It stays Queued until both devices are connected.\n\nNo contacts yet? Open the new app on another device on the same Wi-Fi. You can use Add by IP if discovery is blocked.",11,Ink,Math.Max(300,feed.ClientSize.Width-30)));
     }
-    void Send(){if(selected==null||!send.Enabled||(pendingAttachment==null&&string.IsNullOrWhiteSpace(composer.Text)))return;try{if(pendingAttachment!=null)engine.QueueFile(selected,composer.Text,pendingAttachmentName,pendingAttachment);else engine.Queue(selected,composer.Text);composer.Clear();drafts.Remove(selected);ClearPendingAttachment();Render();}catch(Exception e){MessageBox.Show(e.Message,"Message not saved");}}
+    async Task Send()
+    {
+        if(selected==null||!send.Enabled||(pendingAttachmentPath==null&&string.IsNullOrWhiteSpace(composer.Text)))return;
+        var target=selected;var path=pendingAttachmentPath;var name=pendingAttachmentName;var caption=composer.Text;var originalStatus=status.Text;
+        send.Enabled=false;attach.Enabled=false;
+        try{
+            if(path!=null){
+                var total=new FileInfo(path).Length;
+                // Runs on the UI thread already (no cross-thread marshal needed): every await in
+                // this call chain started from this UI-thread click and never leaves that context.
+                await engine.QueueFileFromPathAsync(target,caption,path,done=>{if(!IsDisposed)status.Text=$"Preparing to send… {(total>0?done*100/total:100)}%";},name);
+            }else engine.Queue(target,caption);
+            if(selected==target){composer.Clear();drafts.Remove(target);ClearPendingAttachment();}
+        }
+        catch(Exception e){MessageBox.Show(this,e.Message,"Message not saved");}
+        finally{if(!IsDisposed){status.Text=originalStatus;send.Enabled=true;attach.Enabled=true;Render();}}
+    }
     void Render()
     {
         if(selected!=null&&Visible&&WindowState!=FormWindowState.Minimized)try{engine.MarkRead(selected);}catch{}
@@ -152,32 +175,61 @@ sealed class ChatWindow : Form
         else{
             var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);
             if(thumbnail!=null){var picture=new PictureBox{Image=thumbnail,SizeMode=PictureBoxSizeMode.Zoom,Width=width-24,Height=Math.Max(150,Math.Min(320,(int)Math.Round((double)(width-24)*thumbnail.Height/thumbnail.Width))),Cursor=Cursors.Hand,BackColor=Color.FromArgb(232,236,243),Margin=new Padding(0,4,0,4)};picture.Click+=(_,_)=>PreviewImage(message);picture.Disposed+=(_,_)=>thumbnail.Dispose();card.Controls.Add(picture);}
-            card.Controls.Add(MessageLabel($"{message.FileName}  ·  {message.FileSize/1024.0:0.#} KB",10,Ink,width-24));
+            card.Controls.Add(MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24));
             var actions=new FlowLayoutPanel{AutoSize=true,WrapContents=false,Margin=new Padding(0)};var save=new Button{Text="Save",AutoSize=true};save.Click+=(_,_)=>SaveAttachment(message);actions.Controls.Add(save);if(thumbnail!=null){var open=new Button{Text="Open",AutoSize=true};open.Click+=(_,_)=>PreviewImage(message);actions.Controls.Add(open);}StyleButtons(actions);card.Controls.Add(actions);
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }
         var when=DateTimeOffset.FromUnixTimeMilliseconds(message.Time).LocalDateTime.ToString("MMM d, HH:mm");
-        if(mine){bool seen=message.Status.StartsWith("Seen");var ticks=seen||message.Status.StartsWith("Delivered")?"✓✓":"✓";card.Controls.Add(MessageLabel($"{when}  ·  {ticks} {message.Status}",9,seen?SeenBlue:Color.SlateGray,width-24));}
+        if(mine){bool seen=message.Status.StartsWith("Seen");var ticks=seen||message.Status.StartsWith("Delivered")?"✓✓":"✓";
+            var statusText=message.Status;
+            if(message.Status=="Queued"&&message.FileName.Length>0&&transferProgress.TryGetValue(message.Id,out var progress)&&progress.total>0)statusText=$"Sending {progress.done*100/progress.total}%";
+            card.Controls.Add(MessageLabel($"{when}  ·  {ticks} {statusText}",9,seen?SeenBlue:Color.SlateGray,width-24));}
         else card.Controls.Add(MessageLabel(when,9,Color.SlateGray,width-24));
         return card;
     }
-    Image? TryImageThumbnail(PeerEngine.Message message,int maxWidth,int maxHeight){try{return TryImageThumbnail(engine.ReadAttachment(message),maxWidth,maxHeight);}catch{return null;}}
+    // Guarded by size: decoding an inline thumbnail means fully decrypting the attachment into
+    // memory (ReadAttachment), which must stay off the table for anything near the 1 GB cap —
+    // rendering a whole conversation's history would otherwise decrypt every large file in it.
+    Image? TryImageThumbnail(PeerEngine.Message message,int maxWidth,int maxHeight){if(message.FileSize>ThumbnailPreviewCap)return null;try{return TryImageThumbnail(engine.ReadAttachment(message),maxWidth,maxHeight);}catch{return null;}}
     static Image? TryImageThumbnail(byte[] data,int maxWidth,int maxHeight){try{using var stream=new MemoryStream(data);using var source=Image.FromStream(stream);if((long)source.Width*source.Height>32000000)throw new IOException();double scale=Math.Min(1,Math.Min((double)maxWidth/source.Width,(double)maxHeight/source.Height));var result=new Bitmap(Math.Max(1,(int)(source.Width*scale)),Math.Max(1,(int)(source.Height*scale)));using var graphics=Graphics.FromImage(result);graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(source,new Rectangle(0,0,result.Width,result.Height));return result;}catch{return null;}}
+    static string FormatSize(long bytes)=>bytes>=1024*1024?$"{bytes/1024.0/1024.0:0.#} MB":$"{bytes/1024.0:0.#} KB";
     static void StyleButtons(Control root){foreach(Control c in root.Controls){if(c is Button b){b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderColor=Color.FromArgb(217,226,239);b.BackColor=Color.White;b.ForeColor=Ink;b.Padding=new Padding(2);b.Cursor=Cursors.Hand;}StyleButtons(c);}}
     async Task AttachFile()
     {
         if(selected==null)return;var target=selected;
         using var dialog=new OpenFileDialog{Title=$"Share a photo or file · up to {PeerEngine.MaxFileSize/1024/1024} MB",Filter="All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif"};
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-        try{if(new FileInfo(dialog.FileName).Length>PeerEngine.MaxFileSize)throw new IOException($"Files must be {PeerEngine.MaxFileSize/1024/1024} MB or smaller.");attach.Enabled=false;var data=await Task.Run(()=>File.ReadAllBytes(dialog.FileName));if(selected!=target)return;pendingAttachment=data;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not prepare file");}finally{attach.Enabled=send.Enabled;}
+        try{
+            var size=await Task.Run(()=>new FileInfo(dialog.FileName).Length);
+            if(size>PeerEngine.MaxFileSize)throw new IOException($"Files must be {PeerEngine.MaxFileSize/1024/1024} MB or smaller.");
+            if(selected!=target)return;
+            pendingAttachmentPath=dialog.FileName;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();
+        }catch(Exception e){MessageBox.Show(this,e.Message,"Could not prepare file");}
     }
-    void RenderPendingAttachment(){foreach(Control control in attachmentDraft.Controls.Cast<Control>().ToArray())control.Dispose();attachmentDraft.Controls.Clear();if(pendingAttachment==null){attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;return;}attachmentDraft.Visible=true;pendingAttachmentRow.Height=150;var thumb=TryImageThumbnail(pendingAttachment,150,125);if(thumb!=null){var image=new PictureBox{Image=thumb,Width=150,Height=125,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(220,226,237)};image.Click+=(_,_)=>PreviewImage(pendingAttachment,pendingAttachmentName);image.Disposed+=(_,_)=>thumb.Dispose();attachmentDraft.Controls.Add(image);}var details=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+(pendingAttachment.Length/1024.0).ToString("0.#")+" KB\nReady to send",10,Ink,330,true));var remove=new Button{Text="Remove",AutoSize=true};remove.Click+=(_,_)=>ClearPendingAttachment();details.Controls.Add(remove);StyleButtons(details);attachmentDraft.Controls.Add(details);}
-    void ClearPendingAttachment(){pendingAttachment=null;pendingAttachmentName="";pendingAttachmentTarget=null;RenderPendingAttachment();}
+    void RenderPendingAttachment()
+    {
+        foreach(Control control in attachmentDraft.Controls.Cast<Control>().ToArray())control.Dispose();attachmentDraft.Controls.Clear();
+        if(pendingAttachmentPath==null){attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;return;}
+        attachmentDraft.Visible=true;pendingAttachmentRow.Height=150;
+        var path=pendingAttachmentPath;long size;try{size=new FileInfo(path).Length;}catch{size=0;}
+        // Only decode a thumbnail for attachments small enough that reading them fully is cheap;
+        // a large file just shows its name/size, matching how most desktop apps handle big attachments.
+        if(size>0&&size<=ThumbnailPreviewCap){Image? thumb=null;try{thumb=TryImageThumbnail(File.ReadAllBytes(path),150,125);}catch{}
+            if(thumb!=null){var image=new PictureBox{Image=thumb,Width=150,Height=125,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(220,226,237)};image.Click+=(_,_)=>PreviewImagePath(path,pendingAttachmentName);image.Disposed+=(_,_)=>thumb.Dispose();attachmentDraft.Controls.Add(image);}}
+        var details=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};
+        details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+FormatSize(size)+"\nReady to send",10,Ink,330,true));
+        var remove=new Button{Text="Remove",AutoSize=true};remove.Click+=(_,_)=>ClearPendingAttachment();details.Controls.Add(remove);StyleButtons(details);attachmentDraft.Controls.Add(details);
+    }
+    void ClearPendingAttachment(){pendingAttachmentPath=null;pendingAttachmentName="";pendingAttachmentTarget=null;RenderPendingAttachment();}
     void SaveAttachment(){if(files.SelectedItem is FileItem item)SaveAttachment(item.Message);}
-    void SaveAttachment(PeerEngine.Message message){using var dialog=new SaveFileDialog{FileName=message.FileName,Title="Save attachment",Filter="All files|*.*"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;try{File.WriteAllBytes(dialog.FileName,engine.ReadAttachment(message));}catch(Exception e){MessageBox.Show(this,e.Message,"Could not save attachment");}}
+    void SaveAttachment(PeerEngine.Message message){using var dialog=new SaveFileDialog{FileName=message.FileName,Title="Save attachment",Filter="All files|*.*"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;_=ExportAttachment(message,dialog.FileName);}
+    // Streams straight to the destination file, decrypting on the fly — an export never needs
+    // the whole attachment in memory either, same reasoning as the send/receive path.
+    async Task ExportAttachment(PeerEngine.Message message,string destination){try{await engine.ExportAttachmentAsync(message,destination);}catch(Exception e){if(!IsDisposed)MessageBox.Show(this,e.Message,"Could not save attachment");}}
     void PreviewImage(){if(files.SelectedItem is FileItem item)PreviewImage(item.Message);}
-    void PreviewImage(PeerEngine.Message message){try{using var bytes=new MemoryStream(engine.ReadAttachment(message));using var decoded=Image.FromStream(bytes);if((long)decoded.Width*decoded.Height>32000000)throw new IOException("Image dimensions are too large for preview");using var picture=new Bitmap(decoded);using var window=new Form{Text=message.FileName,Size=new Size(900,700),StartPosition=FormStartPosition.CenterParent,BackColor=Color.FromArgb(20,24,31),KeyPreview=true};window.Controls.Add(new PictureBox{Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,Image=picture,BackColor=window.BackColor});window.KeyDown+=(_,e)=>{if(e.KeyCode==Keys.Escape)window.Close();};window.ShowDialog(this);}catch{MessageBox.Show(this,"This attachment cannot be opened as an image. Use Save to export it.","Image preview");}}
-    void PreviewImage(byte[] data,string name){try{using var bytes=new MemoryStream(data);using var decoded=Image.FromStream(bytes);if((long)decoded.Width*decoded.Height>32000000)throw new IOException();using var picture=new Bitmap(decoded);using var window=new Form{Text=name,Size=new Size(900,700),StartPosition=FormStartPosition.CenterParent,BackColor=Color.FromArgb(20,24,31),KeyPreview=true};window.Controls.Add(new PictureBox{Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,Image=picture,BackColor=window.BackColor});window.KeyDown+=(_,e)=>{if(e.KeyCode==Keys.Escape)window.Close();};window.ShowDialog(this);}catch{MessageBox.Show(this,"This file is not a supported image.","Image preview");}}
+    void PreviewImage(PeerEngine.Message message){try{PreviewImageCore(engine.ReadAttachment(message),message.FileName);}catch{MessageBox.Show(this,"This attachment cannot be opened as an image. Use Save to export it.","Image preview");}}
+    void PreviewImagePath(string path,string name){try{PreviewImageCore(File.ReadAllBytes(path),name);}catch{MessageBox.Show(this,"This file is not a supported image.","Image preview");}}
+    void PreviewImageCore(byte[] data,string name){using var bytes=new MemoryStream(data);using var decoded=Image.FromStream(bytes);if((long)decoded.Width*decoded.Height>32000000)throw new IOException();using var picture=new Bitmap(decoded);using var window=new Form{Text=name,Size=new Size(900,700),StartPosition=FormStartPosition.CenterParent,BackColor=Color.FromArgb(20,24,31),KeyPreview=true};window.Controls.Add(new PictureBox{Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,Image=picture,BackColor=window.BackColor});window.KeyDown+=(_,e)=>{if(e.KeyCode==Keys.Escape)window.Close();};window.ShowDialog(this);}
     void ClearChat(){if(selected==null)return;if(MessageBox.Show(this,"Clear this conversation on this device? Local messages and attachments will be removed and pending sends cancelled. Other devices keep their copies.","Clear conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;try{engine.ClearConversation(selected);drafts.Remove(selected);composer.Clear();ClearPendingAttachment();lastFeed="";Render();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not clear conversation");}}
     void ShowMembers(){var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;MessageBox.Show(this,string.Join("\n",g.Members.Select(id=>engine.DisplayName(id)+(id==engine.Id?" (you)":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People")))+"\n\nEvery pair must verify each other to exchange group messages. Membership is fixed for this group.",g.Name+" · Members");}
     void CreateGroup()

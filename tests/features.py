@@ -38,6 +38,13 @@ try:
     send_file(b,aid,'document.bin',data)
     wait_for(lambda:file_message(a,bid,'document.bin') is not None,'Windows binary file reaches Java')
     verify_file(a,bid,'document.bin',data)
+    # Bigger than one streaming chunk (1 MiB) on both platforms, so this exercises the actual
+    # multi-chunk loop in the new streaming encrypt/store/send/receive/decrypt path, not just a
+    # single-chunk payload small enough to hide a chunking bug.
+    large_data=bytes(range(256))*12000
+    send_file(a,bid,'large.bin',large_data)
+    wait_for(lambda:file_message(b,aid,'large.bin') is not None,'A multi-chunk (~3 MB) attachment streams correctly end to end')
+    verify_file(b,aid,'large.bin',large_data)
     send_file(a,gid,'group.bin',data)
     wait_for(lambda:file_message(b,gid,'group.bin') is not None and file_message(c,gid,'group.bin') is not None,'Encrypted group attachment reaches all members')
     group_file=verify_file(b,gid,'group.bin',data);verify_file(c,gid,'group.bin',data)

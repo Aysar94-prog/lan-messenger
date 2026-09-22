@@ -28,7 +28,13 @@ public class MainActivity extends Activity {
   final int[] namePalette={Color.rgb(233,30,99),Color.rgb(156,39,176),Color.rgb(63,81,181),Color.rgb(230,126,0),Color.rgb(0,137,123),Color.rgb(121,85,72),Color.rgb(216,67,21)};
   int nameColor(String id){int h=0;for(int i=0;i<id.length();i++)h=h*31+id.charAt(i);return namePalette[Math.abs(h)%namePalette.length];}
   LinearLayout root,chrome,body,feed,attachmentDraft; TextView status,heading; ScrollView scroll; EditText composer; Button send;
-  String selected=null,lastSignature="",attachmentTarget=null,pendingOpen=null,pendingAttachmentName="",pendingAttachmentTarget=null; byte[] pendingAttachment; Uri cameraUri; File cameraFile; PeerEngine.Message exportMessage; boolean active; final Map<String,String> drafts=new HashMap<>();
+  String selected=null,lastSignature="",attachmentTarget=null,pendingOpen=null,pendingAttachmentName="",pendingAttachmentTarget=null; Uri cameraUri; File cameraFile; PeerEngine.Message exportMessage; boolean active; final Map<String,String> drafts=new HashMap<>();
+  // The picked attachment's Uri and size, not its bytes — a 1 GB attachment is never fully read
+  // into memory just to sit in the compose draft; it's streamed only once actually queued to send.
+  Uri pendingAttachmentUri; long pendingAttachmentSize; File pendingCameraFile;
+  static final long THUMBNAIL_PREVIEW_CAP=20*1024*1024;
+  // (bytesDone, bytesTotal) per in-flight message id — transient, never persisted.
+  final Map<String,long[]> transferProgress=new HashMap<>();
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -81,7 +87,27 @@ public class MainActivity extends Activity {
     final TextView[] noticeHolder={null};if(isGroupFinal){noticeHolder[0]=label("Group messages and their attachments are automatically deleted after 7 days of being sent.",12);noticeHolder[0].setTextColor(Color.rgb(112,128,144));root.addView(noticeHolder[0]);}
     scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(chatBg);feed=column();feed.setPadding(dp(6),dp(6),dp(6),dp(6));scroll.addView(feed);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
     attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->capturePhoto());photo.setOnClickListener(v->pickFile(true));file.setOnClickListener(v->pickFile(false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));composeActions.addView(send,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(composeActions);
-    send.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}if(pendingAttachment==null&&composer.getText().toString().trim().isEmpty())return;try{if(pendingAttachment!=null)e.queueFile(selected,composer.getText().toString(),pendingAttachmentName,pendingAttachment);else e.queue(selected,composer.getText().toString());composer.setText("");drafts.remove(selected);clearPendingAttachment();lastSignature="";render();}catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}});renderPendingAttachment();render();
+    send.setOnClickListener(v->{
+      PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}
+      if(pendingAttachmentUri==null&&composer.getText().toString().trim().isEmpty())return;
+      String target=selected;String caption=composer.getText().toString();Uri uri=pendingAttachmentUri;long size=pendingAttachmentSize;String name=pendingAttachmentName;File cameraFile2=pendingCameraFile;
+      send.setEnabled(false);
+      // Runs the actual encrypt+store (and, for a large file, real work) off the UI thread — this
+      // used to happen synchronously in this click listener, which could freeze the app or trigger
+      // an ANR on a large attachment.
+      new Thread(()->{
+        try{
+          if(uri!=null){
+            try(InputStream in=getContentResolver().openInputStream(uri)){
+              if(in==null)throw new IOException("Cannot open attachment");
+              e.queueFileStream(target,caption,in,size,name,(done,tot)->ui.post(()->{if(status!=null&&tot>0)status.setText("Preparing to send… "+(done*100/tot)+"%");}));
+            }
+            if(cameraFile2!=null)cameraFile2.delete();
+          }else e.queue(target,caption);
+          ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)clearPendingAttachment();send.setEnabled(true);lastSignature="";render();});
+        }catch(Exception error){ui.post(()->{send.setEnabled(true);problem(error);});}
+      },"lan-send").start();
+    });renderPendingAttachment();render();
     // The header is now a single always-compact bar, so keyboard-open only needs to hide the group
     // notice and snap to the latest message — there is no separate button row left to collapse.
     View decor=getWindow().getDecorView();final boolean[] keyboardWasVisible={false};
@@ -99,7 +125,14 @@ public class MainActivity extends Activity {
     row.addView(contact,new LinearLayout.LayoutParams(0,-2,1));
     if(unread>0){LinearLayout.LayoutParams badgeParams=new LinearLayout.LayoutParams(dp(26),dp(26));badgeParams.setMargins(dp(8),0,dp(6),0);row.addView(badge(unread),badgeParams);}
     body.addView(row,new LinearLayout.LayoutParams(-1,-2));}
+  PeerEngine transferProgressWiredFor;
   void render(){PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
+    if(e!=transferProgressWiredFor){
+      // Attachment transfers run on background connection threads, not the UI thread — marshal
+      // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
+      e.transferProgress=(id,done,total)->ui.post(()->{if(done>=total)transferProgress.remove(id);else transferProgress.put(id,new long[]{done,total});lastSignature="";render();});
+      transferProgressWiredFor=e;
+    }
     if(pendingOpen!=null){String target=pendingOpen;pendingOpen=null;showChat(target);return;}
     if(selected!=null)try{e.markRead(selected);}catch(Exception ignored){}
     List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;for(PeerEngine.Peer p:people)if(p.online())online++;status.setText(online+" online · "+e.pending()+" queued · "+e.name);
@@ -122,13 +155,17 @@ public class MainActivity extends Activity {
       else if(peerAvatarBmp!=null){ImageView miniAvatar=new ImageView(this);miniAvatar.setImageBitmap(peerAvatarBmp);miniAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);miniAvatar.setClipToOutline(true);whoRow.addView(miniAvatar,miniAvatarParams);}
       else whoRow.addView(circle(whoName.isEmpty()?"?":whoName.substring(0,1).toUpperCase(Locale.ROOT),whoColor,18,9),miniAvatarParams);
       TextView who=label(whoName,14);who.setPadding(0,0,0,0);who.setTypeface(null,Typeface.BOLD);who.setTextColor(whoColor);whoRow.addView(who);
-      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else{Bitmap thumbnail=inlineBitmap(e,m);if(thumbnail!=null){ImageView image=new ImageView(this);image.setImageBitmap(thumbnail);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);int height=Math.max(dp(150),Math.min(dp(320),(int)((long)maxBubble*thumbnail.getHeight()/Math.max(1,thumbnail.getWidth()))));image.setLayoutParams(new LinearLayout.LayoutParams(maxBubble,height));image.setBackground(bg(Color.rgb(232,236,243)));image.setClipToOutline(true);image.setContentDescription("Open "+m.fileName);image.setOnClickListener(v->previewImage(m));card.addView(image);}TextView name=label(m.fileName+"  ·  "+String.format(Locale.ROOT,"%.1f KB",m.fileSize/1024.0),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);card.addView(name);LinearLayout fileActions=new LinearLayout(this);Button save=button("Save");fileActions.addView(save);save.setOnClickListener(v->exportFile(m));if(thumbnail!=null){Button open=button("Open");fileActions.addView(open);open.setOnClickListener(v->previewImage(m));}card.addView(fileActions);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";TextView statusLine=label(when+"  ·  "+ticks+" "+m.status,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
+      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else{Bitmap thumbnail=inlineBitmap(e,m);if(thumbnail!=null){ImageView image=new ImageView(this);image.setImageBitmap(thumbnail);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);int height=Math.max(dp(150),Math.min(dp(320),(int)((long)maxBubble*thumbnail.getHeight()/Math.max(1,thumbnail.getWidth()))));image.setLayoutParams(new LinearLayout.LayoutParams(maxBubble,height));image.setBackground(bg(Color.rgb(232,236,243)));image.setClipToOutline(true);image.setContentDescription("Open "+m.fileName);image.setOnClickListener(v->previewImage(m));card.addView(image);}TextView name=label(m.fileName+"  ·  "+formatSize(m.fileSize),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);card.addView(name);LinearLayout fileActions=new LinearLayout(this);Button save=button("Save");fileActions.addView(save);save.setOnClickListener(v->exportFile(m));if(thumbnail!=null){Button open=button("Open");fileActions.addView(open);open.setOnClickListener(v->previewImage(m));}card.addView(fileActions);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";String statusText=m.status;long[] progress=m.status.equals("Queued")&&!m.fileName.isEmpty()?transferProgress.get(m.id):null;if(progress!=null&&progress[1]>0)statusText="Sending "+(progress[0]*100/progress[1])+"%";TextView statusLine=label(when+"  ·  "+ticks+" "+statusText,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
       LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);View spacer=new View(this);
       if(mine){row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));row.addView(card,new LinearLayout.LayoutParams(-2,-2));}else{row.addView(card,new LinearLayout.LayoutParams(-2,-2));row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));}
       LinearLayout.LayoutParams rowParams=new LinearLayout.LayoutParams(-1,-2);rowParams.setMargins(0,dp(5),0,dp(5));feed.addView(row,rowParams);}
     if(bottom)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
   }
-  Bitmap inlineBitmap(PeerEngine engine,PeerEngine.Message message){try{return inlineBitmap(engine.readAttachment(message));}catch(Exception ignored){return null;}}
+  // Guarded by size: decoding an inline thumbnail means fully decrypting the attachment into
+  // memory (readAttachment), which must stay off the table for anything near the 1 GB cap —
+  // rendering a whole conversation's history would otherwise decrypt every large file in it.
+  Bitmap inlineBitmap(PeerEngine engine,PeerEngine.Message message){if(message.fileSize>THUMBNAIL_PREVIEW_CAP)return null;try{return inlineBitmap(engine.readAttachment(message));}catch(Exception ignored){return null;}}
+  static String formatSize(long bytes){return bytes>=1024*1024?String.format(Locale.ROOT,"%.1f MB",bytes/1024.0/1024.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
   Bitmap inlineBitmap(byte[] bytes){try{BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>32000000)return null;bounds.inSampleSize=1;while(bounds.outWidth/bounds.inSampleSize>1000||bounds.outHeight/bounds.inSampleSize>800)bounds.inSampleSize*=2;bounds.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);}catch(Exception ignored){return null;}}
   void releaseImages(View view){if(view instanceof ImageView){ImageView image=(ImageView)view;if(image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable){Bitmap bitmap=((android.graphics.drawable.BitmapDrawable)image.getDrawable()).getBitmap();image.setImageDrawable(null);if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();}}else if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)releaseImages(group.getChildAt(i));}}
   void verifyDevice(){PeerEngine e=MessengerService.engine;if(e==null||selected==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;final PeerEngine.Peer target=peer;
@@ -156,16 +193,69 @@ public class MainActivity extends Activity {
   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if(request==44&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online and try again.",Toast.LENGTH_LONG).show();return;}
     final String target=attachmentTarget;final PeerEngine.Message exporting=exportMessage;final File captured=cameraFile;
     new Thread(()->{try{
-      if(request==43&&exporting!=null&&uri!=null){byte[] bytes=e.readAttachment(exporting);try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){if(out==null)throw new IOException("Cannot open destination");out.write(bytes);}ui.post(()->Toast.makeText(this,"File saved",Toast.LENGTH_SHORT).show());}
-      else if((request==41||request==42)&&target!=null&&uri!=null){String name="attachment";try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(cursor!=null&&cursor.moveToFirst())name=cursor.getString(0);}if(name==null)name="attachment";try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open attachment");prepareAttachment(target,name,readLimited(in));}}
-      else if(request==44&&target!=null&&captured!=null){try(InputStream in=new FileInputStream(captured)){String name=new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date());prepareAttachment(target,"Photo-"+name+".jpg",readLimited(in));}finally{captured.delete();}}
+      if(request==43&&exporting!=null&&uri!=null){
+        try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
+          if(out==null)throw new IOException("Cannot open destination");
+          e.readAttachmentStream(exporting,out,(done,tot)->ui.post(()->{if(status!=null&&tot>0)status.setText("Saving… "+(done*100/tot)+"%");}));
+        }
+        ui.post(()->{Toast.makeText(this,"File saved",Toast.LENGTH_SHORT).show();lastSignature="";render();});
+      }
+      else if((request==41||request==42)&&target!=null&&uri!=null){
+        String name="attachment";long size=-1;
+        try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
+          if(cursor!=null&&cursor.moveToFirst()){name=cursor.getString(0);int sizeIndex=cursor.getColumnIndex(OpenableColumns.SIZE);if(sizeIndex>=0&&!cursor.isNull(sizeIndex))size=cursor.getLong(sizeIndex);}
+        }
+        if(name==null)name="attachment";
+        if(size>0&&size<=PeerEngine.MAX_FILE_SIZE)prepareAttachment(target,name,uri,size,null);
+        else if(size>PeerEngine.MAX_FILE_SIZE)throw new IOException("Files must be "+(PeerEngine.MAX_FILE_SIZE/1024/1024)+" MB or smaller.");
+        else{
+          // Rare: the picker didn't report a usable size — fall back to reading it fully
+          // (still bounded by MAX_FILE_SIZE while reading), instead of streaming.
+          byte[] bytes;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open attachment");bytes=readLimited(in);}
+          prepareAttachmentBytes(target,name,bytes);
+        }
+      }
+      else if(request==44&&target!=null&&captured!=null){
+        String name="Photo-"+new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+".jpg";
+        prepareAttachment(target,name,Uri.fromFile(captured),captured.length(),captured);
+      }
       else if(request==45&&uri!=null){byte[] raw;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open image");raw=readLimited(in);}Bitmap bitmap=inlineBitmap(raw);if(bitmap==null)throw new IOException("This file is not a supported image.");ByteArrayOutputStream png=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,90,png);e.setAvatar(png.toByteArray());bitmap.recycle();ui.post(()->{Toast.makeText(this,"Profile picture updated",Toast.LENGTH_SHORT).show();if(selected==null)showPeople();});}
     }catch(Exception error){if(captured!=null&&request==44)captured.delete();ui.post(()->problem(error));}},"lan-attachment").start();
   }
   byte[] readLimited(InputStream in)throws IOException{try(ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buffer=new byte[65536];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>PeerEngine.MAX_FILE_SIZE)throw new IOException("Files must be "+(PeerEngine.MAX_FILE_SIZE/1024/1024)+" MB or smaller.");out.write(buffer,0,n);}return out.toByteArray();}}
-  void prepareAttachment(String target,String name,byte[] bytes){ui.post(()->{if(!target.equals(selected))return;pendingAttachment=bytes;pendingAttachmentName=PeerEngine.safeFileName(name);pendingAttachmentTarget=target;renderPendingAttachment();if(composer!=null)composer.requestFocus();Toast.makeText(this,"Ready to send",Toast.LENGTH_SHORT).show();});}
-  void renderPendingAttachment(){if(attachmentDraft==null)return;releaseImages(attachmentDraft);attachmentDraft.removeAllViews();if(pendingAttachment==null)return;attachmentDraft.setPadding(dp(10),dp(6),dp(10),dp(6));attachmentDraft.setBackground(bg(Color.rgb(235,240,250)));Bitmap bitmap=inlineBitmap(pendingAttachment);if(bitmap!=null){ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(170)));image.setBackground(bg(Color.rgb(220,226,237)));image.setClipToOutline(true);image.setContentDescription("Preview "+pendingAttachmentName);image.setOnClickListener(v->previewBytes(pendingAttachment,pendingAttachmentName));attachmentDraft.addView(image);}attachmentDraft.addView(label(pendingAttachmentName+"  ·  "+String.format(Locale.ROOT,"%.1f KB",pendingAttachment.length/1024.0)+"\nReady to send",14));Button remove=button("Remove");remove.setOnClickListener(v->clearPendingAttachment());attachmentDraft.addView(remove);}
-  void clearPendingAttachment(){pendingAttachment=null;pendingAttachmentName="";pendingAttachmentTarget=null;if(attachmentDraft!=null){releaseImages(attachmentDraft);attachmentDraft.removeAllViews();}}
+  void prepareAttachment(String target,String name,Uri uri,long size,File cameraFileForCleanup){ui.post(()->{if(!target.equals(selected)){if(cameraFileForCleanup!=null)cameraFileForCleanup.delete();return;}clearPendingAttachment();pendingAttachmentUri=uri;pendingAttachmentSize=size;pendingCameraFile=cameraFileForCleanup;pendingAttachmentName=PeerEngine.safeFileName(name);pendingAttachmentTarget=target;renderPendingAttachment();if(composer!=null)composer.requestFocus();Toast.makeText(this,"Ready to send",Toast.LENGTH_SHORT).show();});}
+  // Fallback path only, for the rare picker that doesn't report a usable size (see above) —
+  // small enough already (bounded by MAX_FILE_SIZE) that keeping it as bytes is fine; written to
+  // a private cache file so the rest of the send pipeline can treat it like any other Uri source.
+  void prepareAttachmentBytes(String target,String name,byte[] bytes)throws IOException{
+    File tmp=new File(getCacheDir(),"attach-"+UUID.randomUUID());
+    try(FileOutputStream out=new FileOutputStream(tmp)){out.write(bytes);}
+    prepareAttachment(target,name,Uri.fromFile(tmp),bytes.length,tmp);
+  }
+  void renderPendingAttachment(){
+    if(attachmentDraft==null)return;releaseImages(attachmentDraft);attachmentDraft.removeAllViews();
+    if(pendingAttachmentUri==null)return;
+    attachmentDraft.setPadding(dp(10),dp(6),dp(10),dp(6));attachmentDraft.setBackground(bg(Color.rgb(235,240,250)));
+    attachmentDraft.addView(label(pendingAttachmentName+"  ·  "+formatSize(pendingAttachmentSize)+"\nReady to send",14));
+    Button remove=button("Remove");remove.setOnClickListener(v->clearPendingAttachment());attachmentDraft.addView(remove);
+    // Decoding even a small thumbnail is still blocking I/O — off the UI thread, then posted back
+    // only if this is still the pending attachment (the user may have picked something else, or
+    // sent/cleared it, by the time the decode finishes).
+    if(pendingAttachmentSize>0&&pendingAttachmentSize<=THUMBNAIL_PREVIEW_CAP){
+      final Uri uri=pendingAttachmentUri;final String forName=pendingAttachmentName;
+      new Thread(()->{
+        byte[] bytes=null;try(InputStream in=getContentResolver().openInputStream(uri)){if(in!=null)bytes=readLimited(in);}catch(Exception ignored){}
+        Bitmap bitmap=bytes!=null?inlineBitmap(bytes):null;
+        if(bitmap==null)return;
+        final byte[] previewBytes=bytes;
+        ui.post(()->{
+          if(uri!=pendingAttachmentUri||attachmentDraft==null){bitmap.recycle();return;}
+          ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(170)));image.setBackground(bg(Color.rgb(220,226,237)));image.setClipToOutline(true);image.setContentDescription("Preview "+forName);image.setOnClickListener(v->previewBytes(previewBytes,forName));attachmentDraft.addView(image,0);
+        });
+      },"lan-draft-thumbnail").start();
+    }
+  }
+  void clearPendingAttachment(){if(pendingCameraFile!=null){pendingCameraFile.delete();pendingCameraFile=null;}pendingAttachmentUri=null;pendingAttachmentSize=0;pendingAttachmentName="";pendingAttachmentTarget=null;if(attachmentDraft!=null){releaseImages(attachmentDraft);attachmentDraft.removeAllViews();}}
   void previewImage(PeerEngine.Message message){PeerEngine e=MessengerService.engine;if(e==null)return;new Thread(()->{try{byte[] bytes=e.readAttachment(message);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("Not a supported image. Use Save file.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{if(isFinishing()||isDestroyed()){bitmap.recycle();return;}ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(message.fileName).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-image-preview").start();}
   void previewBytes(byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-draft-preview").start();}
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
