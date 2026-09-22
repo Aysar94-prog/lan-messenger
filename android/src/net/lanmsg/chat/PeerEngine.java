@@ -333,7 +333,7 @@ public final class PeerEngine implements Closeable {
   public static final int MAX_FILE_SIZE=1024*1024*1024;
   // Chunk size for every streamed read/write (local store, export, network) — attachments up to
   // MAX_FILE_SIZE are never buffered whole in memory at any step; peak memory stays near this size.
-  static final int CHUNK_SIZE=1024*1024;
+  static final int CHUNK_SIZE=3*1024*1024;
   static final byte[] ATTACHMENT_MAGIC="LMATCS1".getBytes(StandardCharsets.US_ASCII);
   static final long CHUNK_WRITE_TIMEOUT_MS=45_000;
   static final ScheduledExecutorService WRITE_WATCHDOGS=Executors.newScheduledThreadPool(1,r->{Thread t=new Thread(r,"lan-write-watchdog");t.setDaemon(true);return t;});

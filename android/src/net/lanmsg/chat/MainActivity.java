@@ -120,11 +120,18 @@ public class MainActivity extends Activity {
     decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
   }
   TextView badge(int count){TextView t=new TextView(this);t.setText(count>99?"99+":String.valueOf(count));t.setTextColor(Color.WHITE);t.setTextSize(11);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(accent,26));return t;}
-  void addContactRow(Button contact,int unread,String initial,int avatarColor){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,dp(2),0,dp(2));
-    LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarParams.setMargins(dp(6),0,dp(8),0);row.addView(circle(initial,avatarColor,40,15),avatarParams);
+  void addContactRow(Button contact,int unread,String initial,int avatarColor){addContactRow(contact,unread,circle(initial,avatarColor,40,15));}
+  // A contact's real photo, once received (see peerAvatarView) — otherwise the colored-initial circle.
+  void addContactRow(Button contact,int unread,View avatarView){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,dp(2),0,dp(2));
+    LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarParams.setMargins(dp(6),0,dp(8),0);row.addView(avatarView,avatarParams);
     row.addView(contact,new LinearLayout.LayoutParams(0,-2,1));
     if(unread>0){LinearLayout.LayoutParams badgeParams=new LinearLayout.LayoutParams(dp(26),dp(26));badgeParams.setMargins(dp(8),0,dp(6),0);row.addView(badge(unread),badgeParams);}
     body.addView(row,new LinearLayout.LayoutParams(-1,-2));}
+  View peerAvatarView(PeerEngine e,PeerEngine.Peer p,String initial){
+    byte[] raw=e.peerAvatar(p.id);Bitmap bmp=raw!=null?inlineBitmap(raw):null;
+    if(bmp==null)return circle(initial,nameColor(p.id),40,15);
+    ImageView iv=new ImageView(this);iv.setImageBitmap(bmp);iv.setScaleType(ImageView.ScaleType.CENTER_CROP);iv.setBackground(circleBg(nameColor(p.id),40));iv.setClipToOutline(true);return iv;
+  }
   PeerEngine transferProgressWiredFor;
   void render(){PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
     if(e!=transferProgressWiredFor){
@@ -136,10 +143,21 @@ public class MainActivity extends Activity {
     if(pendingOpen!=null){String target=pendingOpen;pendingOpen=null;showChat(target);return;}
     if(selected!=null)try{e.markRead(selected);}catch(Exception ignored){}
     List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;for(PeerEngine.Peer p:people)if(p.online())online++;status.setText(online+" online · "+e.pending()+" queued · "+e.name);
-    if(selected==null){StringBuilder signature=new StringBuilder();for(PeerEngine.Group g:e.groups())signature.append(g.id).append(g.name).append(e.unread(g.id));for(PeerEngine.Peer p:people)signature.append(p.id).append(p.name).append(p.online()).append(p.security()).append(e.unread(p.id));if(signature.toString().equals(lastSignature)&&body.getChildCount()>0)return;lastSignature=signature.toString();body.removeAllViews();
+    if(selected==null){
+      // Most recently active conversation first, like a typical chat app — groups and contacts mixed
+      // together by last message time, not name/online order. {lastActivity, isGroup, id, group-or-peer}
+      List<Object[]> convos=new ArrayList<>();
+      for(PeerEngine.Group g:e.groups()){long last=0;for(PeerEngine.Message m:e.messages(g.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.TRUE,g.id,g});}
+      for(PeerEngine.Peer p:people){long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
+      convos.sort((x,y)->Long.compare((Long)y[0],(Long)x[0]));
+      StringBuilder signature=new StringBuilder();for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
+      if(signature.toString().equals(lastSignature)&&body.getChildCount()>0)return;lastSignature=signature.toString();body.removeAllViews();
       if(people.isEmpty()&&e.groups().isEmpty())body.addView(label("No contacts yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi. No host computer is needed.\n\nIf your router blocks discovery, use Add by IP.",17));
-      for(PeerEngine.Group g:e.groups()){Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));addContactRow(contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));}
-      for(PeerEngine.Peer p:people){Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);addContactRow(contact,e.unread(p.id),initial,nameColor(p.id));contact.setOnClickListener(v->showChat(p.id));}return;
+      for(Object[] c:convos){
+        if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));addContactRow(contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));}
+        else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);addContactRow(contact,e.unread(p.id),peerAvatarView(e,p,initial));contact.setOnClickListener(v->showChat(p.id));}
+      }
+      return;
     }
     PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;heading.setText(group!=null?group.name+" · "+group.members.length+" members":peer.name+" · "+(peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(group!=null||peer.trusted());List<PeerEngine.Message> messages=e.messages(selected);
     StringBuilder signature=new StringBuilder(selected);for(PeerEngine.Message m:messages)signature.append(m.id).append(m.status);if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();
@@ -260,7 +278,7 @@ public class MainActivity extends Activity {
   void previewBytes(byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-draft-preview").start();}
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
 
-  static final String APP_VERSION="0.7.2";
+  static final String APP_VERSION="0.7.5";
   void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+APP_VERSION+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
   void changeAvatar(){PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online first.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
   void profile(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.").setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNeutralButton("Go offline",(d,w)->{stopService(new Intent(this,MessengerService.class));}).setNegativeButton("Cancel",null).show();}

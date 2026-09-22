@@ -1,9 +1,10 @@
-# LAN Messenger 0.7.4 (Android) / 0.7.4 (Windows)
+# LAN Messenger 0.7.5 (Android) / 0.7.5 (Windows)
 
 Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay. English interface, Unicode messages.
 
 ## What is new
 
+- **0.7.5: the conversation list, chunk size, and contact photos.** Conversations now sort by most recent activity — send or receive a message and that chat jumps to the top, like a typical chat app (previously sorted by name/online status). The conversation list on both platforms now shows a contact's real profile picture, once received, instead of always a colored initial — the same photo already shown in message bubbles since 0.7.3, now also in the "main menu" list. The 0.7.4 streaming chunk size was raised from 1 MiB to 3 MiB (fewer, larger reads/writes per transfer). Also fixed: Android's About screen had been showing a stale version number since 0.7.3 (a separate hardcoded constant that wasn't kept in sync with the real build version).
 - **0.7.4: attachments up to 1 GiB, streamed instead of loaded whole into memory.** Sending or receiving a file — of any size — no longer reads/encrypts/decrypts it all at once: it's processed in small chunks from disk straight to the network and back, on a background thread. This fixes a real freeze (the whole app used to lock up, and could ANR on Android, while preparing a large attachment to send) and removes the memory-usage risk the old 200 MiB cap was partly there to limit. Message bubbles show live "Sending NN%" progress while a transfer is in flight. This does not add pause/resume: an interrupted transfer still restarts from the beginning on the next retry (see Network below). At-rest attachment encryption changed to a simpler per-attachment key streamed with AES-256-CBC (confidentiality only, no per-chunk authentication) instead of encrypting the whole file as one block — the existing end-to-end SHA-256 hash check, already relied on for integrity, is what catches corruption or tampering either way. Existing attachments saved by older versions still open fine (the app recognizes the old format automatically); only new attachments use the new one.
 - **0.7.3: profile pictures now actually reach the other side.** Once two devices have verified each other, each one pushes its own profile picture to the other automatically (and re-pushes it whenever it changes, or removes it there when you clear it) — no separate share step. It only ever goes to a device you've verified, and it's never relayed onward to anyone else, group or not. Message bubbles on both platforms now show the sender's real photo once received, instead of only a colored initial.
 - **0.7.2 (Windows): fixes a real crash in 0.7.1's mini-avatar feature.** If you had set a profile picture, changing it while an older message bubble using the previous picture was still on screen could crash the app (`ArgumentException: Parameter is not valid`) on its next repaint, because every bubble shared the exact same picture object that changing your photo then disposed of. Each bubble now keeps its own copy. Update from 0.7.1 if you installed it.
@@ -25,7 +26,7 @@ Private Windows and Android messaging on a local network. No central server, hos
 
 ## Install or update
 
-Android 8+ uses `LanMessenger-0.7.4.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.4.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
+Android 8+ uses `LanMessenger-0.7.5.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.5.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
 
 Existing 0.3/0.4/0.5 device identities, verification, contacts, history and queues are preserved. Legacy 0.2 data also migrates, but its contacts require verification. Do not downgrade after migration. Seen receipts (0.5.0) stayed wire-compatible with 0.4.x; **group messaging in 0.6.0 does not** — a group message now carries a sender signature so it can be safely relayed, and a device still on 0.4.x/0.5.0 doesn't understand that frame, so **every member of a group needs 0.6.0 to keep exchanging group messages at all**. 1:1 chats are unaffected regardless of version on either end. Version 0.4/0.5/0.6 all use LM4 and cannot communicate with 0.3/0.2 at all; upgrade both ends for that older jump. Profile-picture sharing (0.7.3) is additive like Seen: a device still on an older version just doesn't understand the new frame and no picture shows for it, without affecting messaging. The 0.7.4 streaming/1 GiB change does not alter the wire protocol at all (same bytes, just written/read in smaller pieces) and needs no version match on the other end — but if the OTHER device is still on an older cap, a file above ITS limit is still rejected on that side.
 
@@ -68,7 +69,7 @@ UDP 43871 discovery; TCP 43872 messaging. Allow Windows access on a trusted priv
 ## Build and tests
 
 ```powershell
-dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v074
+dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v075
 .\android\build.ps1
 .\tests\run.ps1
 ```

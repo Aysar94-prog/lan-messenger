@@ -6,7 +6,7 @@ public sealed partial class PeerEngine
     public const int MaxFileSize=1024*1024*1024;
     // Chunk size for every streamed read/write (local store, export, network) — attachments up to
     // MaxFileSize are never buffered whole in memory at any step; peak memory stays near this size.
-    const int ChunkSize=1024*1024;
+    const int ChunkSize=3*1024*1024;
     static readonly byte[] AttachmentMagic=Encoding.ASCII.GetBytes("LMATCS1");
     public sealed record Group(string Id,string Owner,string Name,string[] Members,string Acknowledged="");
     readonly Dictionary<string,Group> groups=[];

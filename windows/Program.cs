@@ -23,7 +23,7 @@ sealed class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Save file",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.7.4";
+    public const string AppVersion="0.7.5";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -56,9 +56,12 @@ sealed class ChatWindow : Form
     string? pendingAttachmentPath; string pendingAttachmentName=""; string? pendingAttachmentTarget; RowStyle pendingAttachmentRow=null!;
     const long ThumbnailPreviewCap=20*1024*1024;
     readonly Dictionary<string,(long done,long total)> transferProgress=[];
+    // Decoded once per contact-list rebuild (not per paint, which owner-draw would otherwise do on
+    // every scroll/focus repaint) — a contact's real photo shown in the conversation list, once received.
+    readonly Dictionary<string,Image> avatarCache=[];
     string lastFeed="", lastContacts="";
     bool rendering;
-    record ContactItem(string Id,string Name,string Detail,bool Group=false,int Unread=0) { public override string ToString()=>Name; }
+    record ContactItem(string Id,string Name,string Detail,bool Group=false,int Unread=0,long LastActivity=0) { public override string ToString()=>Name; }
 
     public ChatWindow() : this(null,null) {}
     public ChatWindow(string? dataDirectory,IStorageProtector? protector)
@@ -82,7 +85,13 @@ sealed class ChatWindow : Form
         var splitPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};splitPanel.Controls.Add(split);root.Controls.Add(splitPanel,0,3);
         var footerPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};footerPanel.Controls.Add(new Label{Text="Encrypted connection and local history • Verify the safety code on both devices before chatting",AutoSize=true,ForeColor=Color.DimGray,Dock=DockStyle.Left});root.Controls.Add(footerPanel,0,4);Controls.Add(root);
         contacts.DrawMode=DrawMode.OwnerDrawFixed;contacts.ItemHeight=64;contacts.BackColor=Color.White;
-        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(230,247,234):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);using var badge=new SolidBrush(item.Group?Color.FromArgb(227,220,251):NameColor(item.Id));e.Graphics.FillEllipse(badge,e.Bounds.X+10,e.Bounds.Y+13,36,36);TextRenderer.DrawText(e.Graphics,item.Group?"G":item.Name[..Math.Min(1,item.Name.Length)].ToUpperInvariant(),Font,new Rectangle(e.Bounds.X+10,e.Bounds.Y+18,36,28),Color.White,TextFormatFlags.HorizontalCenter);using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
+        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(230,247,234):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);
+            var avatarRect=new Rectangle(e.Bounds.X+10,e.Bounds.Y+13,36,36);
+            if(!item.Group&&avatarCache.TryGetValue(item.Id,out var photo)){
+                var oldClip=e.Graphics.Clip;using var clipPath=new System.Drawing.Drawing2D.GraphicsPath();clipPath.AddEllipse(avatarRect);e.Graphics.SetClip(clipPath,System.Drawing.Drawing2D.CombineMode.Intersect);
+                e.Graphics.DrawImage(photo,avatarRect);e.Graphics.Clip=oldClip;
+            }else{using var badge=new SolidBrush(item.Group?Color.FromArgb(227,220,251):NameColor(item.Id));e.Graphics.FillEllipse(badge,avatarRect);TextRenderer.DrawText(e.Graphics,item.Group?"G":item.Name[..Math.Min(1,item.Name.Length)].ToUpperInvariant(),Font,new Rectangle(e.Bounds.X+10,e.Bounds.Y+18,36,28),Color.White,TextFormatFlags.HorizontalCenter);}
+            using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
             if(item.Unread>0){var count=item.Unread>99?"99+":item.Unread.ToString();int d=22;var badgeRect=new Rectangle(e.Bounds.Right-d-12,e.Bounds.Y+(e.Bounds.Height-d)/2,d,d);using var unread=new SolidBrush(Accent);e.Graphics.FillEllipse(unread,badgeRect);using var tiny=new Font("Segoe UI",8,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,count,tiny,badgeRect,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
         StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
         avatarBox.Paint+=(_,e)=>{if(avatarImage==null){using var b=new SolidBrush(Accent);e.Graphics.FillEllipse(b,0,0,avatarBox.Width,avatarBox.Height);TextRenderer.DrawText(e.Graphics,engine.Name.Length>0?engine.Name[..1].ToUpperInvariant():"?",new Font("Segoe UI",14,FontStyle.Bold),avatarBox.ClientRectangle,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
@@ -123,12 +132,19 @@ sealed class ChatWindow : Form
     void Render()
     {
         if(selected!=null&&Visible&&WindowState!=FormWindowState.Minimized)try{engine.MarkRead(selected);}catch{}
-        var peers=engine.Peers.OrderByDescending(p=>p.Online).ThenBy(p=>p.Name).ToArray();
+        var peers=engine.Peers;
         status.Text=$"{(engine.Running?"Available on your network":"Offline")}  ·  {peers.Count(p=>p.Online)} online  ·  {engine.Pending} queued  ·  Your ID: {engine.Id[..8]}";
         var groups=engine.Groups;
-        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members",true,engine.Unread(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id)))).ToArray();
-        string signature=string.Join("|",entries.Select(p=>$"{p.Id}:{p.Name}:{p.Detail}:{p.Unread}"));
-        if(signature!=lastContacts){rendering=true;contacts.BeginUpdate();contacts.Items.Clear();contacts.Items.AddRange(entries);for(int i=0;i<contacts.Items.Count;i++)if(((ContactItem)contacts.Items[i]).Id==selected)contacts.SelectedIndex=i;contacts.EndUpdate();rendering=false;lastContacts=signature;}
+        // Most recently active conversation first, like a typical chat app — not name/online order.
+        long LastActivity(string conversation){var items=engine.Messages(conversation);return items.Length>0?items.Max(m=>m.Time):0;}
+        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members",true,engine.Unread(g.Id),LastActivity(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id),LastActivity(p.Id)))).OrderByDescending(e=>e.LastActivity).ThenBy(e=>e.Name).ToArray();
+        string signature=string.Join("|",entries.Select(p=>$"{p.Id}:{p.Name}:{p.Detail}:{p.Unread}:{p.LastActivity}"))+"|"+string.Join(",",peers.Select(p=>p.Id+":"+p.ReceivedAvatarHash));
+        if(signature!=lastContacts){
+            rendering=true;contacts.BeginUpdate();contacts.Items.Clear();contacts.Items.AddRange(entries);for(int i=0;i<contacts.Items.Count;i++)if(((ContactItem)contacts.Items[i]).Id==selected)contacts.SelectedIndex=i;contacts.EndUpdate();rendering=false;lastContacts=signature;
+            // Decoded once here, not per paint — DrawItem below just reads this cache.
+            foreach(var img in avatarCache.Values)img.Dispose();avatarCache.Clear();
+            foreach(var p in peers)try{var raw=engine.PeerAvatar(p.Id);if(raw!=null){var img=TryImageThumbnail(raw,72,72);if(img!=null)avatarCache[p.Id]=img;}}catch{}
+        }
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
         verify.Enabled=peer!=null;members.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=group!=null||peer?.Trusted==true;attach.Enabled=send.Enabled;composer.Enabled=selected!=null;groupNotice.Visible=group!=null;
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
