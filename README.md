@@ -1,10 +1,11 @@
-# LAN Messenger 0.7.2 (Android) / 0.7.1 (Windows)
+# LAN Messenger 0.7.2 (Android) / 0.7.2 (Windows)
 
 Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay. English interface, Unicode messages.
 
 ## What is new
 
-- **0.7.1 (Windows): the mini-avatar-next-to-name from the Android 0.7.2 update, brought to Windows too.** Every message bubble now shows a small (18px) picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise. Screenshotted and confirmed rendering correctly.
+- **0.7.2 (Windows): fixes a real crash in 0.7.1's mini-avatar feature.** If you had set a profile picture, changing it while an older message bubble using the previous picture was still on screen could crash the app (`ArgumentException: Parameter is not valid`) on its next repaint, because every bubble shared the exact same picture object that changing your photo then disposed of. Each bubble now keeps its own copy. Update from 0.7.1 if you installed it.
+- **0.7.1 (Windows): the mini-avatar-next-to-name from the Android 0.7.2 update, brought to Windows too.** Every message bubble now shows a small (18px) picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise. Screenshotted and confirmed rendering correctly. (See the 0.7.2 crash fix above if you're updating from this version.)
 - **0.7.2 (Android only): more room for the chat itself.** The chat screen's back arrow, contact/group avatar, name and status, and an overflow menu are now one compact bar instead of three stacked sections (app title bar, a full button row, a separate name row) — "Verify device" moved into the overflow menu (⋮) to free up permanent space, not just while the keyboard is open. Each message bubble also shows a small picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise (contacts still show initials only, since their photos aren't sent to you).
 - **0.7.1 (Android only): three fixes to the 0.7.0 redesign.** The profile-picture circle is now actually tappable — it previously did nothing the first time, before you'd set a photo. Opening the keyboard to type collapses the (now-merged) action row and auto-scrolls to your latest message, so the keyboard doesn't cover the conversation.
 - **Redesigned interface**, WhatsApp-inspired: a dark teal header, green accents, a beige chat background, and proper chat bubbles — your own messages sit on the right in green, everyone else's on the left in white, sized to their content instead of stretching edge to edge. Each sender's name is shown in a distinct color from the message text (yours in green; each contact gets one consistently picked from a small palette, so the same person is always the same color) — no more guessing who said what at a glance in a group. Seen-receipt ticks stay blue, matching the rest of the design.
@@ -22,7 +23,7 @@ Private Windows and Android messaging on a local network. No central server, hos
 
 ## Install or update
 
-Android 8+ uses `LanMessenger-0.7.2.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.1.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
+Android 8+ uses `LanMessenger-0.7.2.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.2.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
 
 Existing 0.3/0.4/0.5 device identities, verification, contacts, history and queues are preserved. Legacy 0.2 data also migrates, but its contacts require verification. Do not downgrade after migration. Seen receipts (0.5.0) stayed wire-compatible with 0.4.x; **group messaging in 0.6.0 does not** — a group message now carries a sender signature so it can be safely relayed, and a device still on 0.4.x/0.5.0 doesn't understand that frame, so **every member of a group needs 0.6.0 to keep exchanging group messages at all**. 1:1 chats are unaffected regardless of version on either end. Version 0.4/0.5/0.6 all use LM4 and cannot communicate with 0.3/0.2 at all; upgrade both ends for that older jump.
 
@@ -65,7 +66,7 @@ UDP 43871 discovery; TCP 43872 messaging. Allow Windows access on a trusted priv
 ## Build and tests
 
 ```powershell
-dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v071
+dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v072
 .\android\build.ps1
 .\tests\run.ps1
 ```
