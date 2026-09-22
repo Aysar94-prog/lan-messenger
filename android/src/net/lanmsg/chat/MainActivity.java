@@ -18,6 +18,8 @@ import android.provider.MediaStore;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Rect;
+import android.view.ViewTreeObserver;
 
 public class MainActivity extends Activity {
   final Handler ui=new Handler(Looper.getMainLooper());
@@ -26,6 +28,7 @@ public class MainActivity extends Activity {
   int nameColor(String id){int h=0;for(int i=0;i<id.length();i++)h=h*31+id.charAt(i);return namePalette[Math.abs(h)%namePalette.length];}
   LinearLayout root,body,feed,attachmentDraft; TextView status,heading; ScrollView scroll; EditText composer; Button send,verifyButton;
   String selected=null,lastSignature="",attachmentTarget=null,pendingOpen=null,pendingAttachmentName="",pendingAttachmentTarget=null; byte[] pendingAttachment; Uri cameraUri; File cameraFile; PeerEngine.Message exportMessage; boolean active; final Map<String,String> drafts=new HashMap<>();
+  ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
   TextView label(String text,int size){TextView t=new TextView(this);t.setText(text);t.setTextColor(ink);t.setTextSize(size);t.setPadding(0,dp(6),0,dp(6));return t;}
@@ -37,7 +40,7 @@ public class MainActivity extends Activity {
   GradientDrawable bg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(12));return d;}
   @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");showPeople();startConnection();if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
   void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class));}catch(Exception e){MessengerService.problem="Could not start. Open the app and try again.";}}
-  void frame(){if(root!=null)releaseImages(root);root=column();root.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);root.setBackgroundColor(panelBg);setContentView(root);
+  void frame(){if(root!=null)releaseImages(root);if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}root=column();root.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);root.setBackgroundColor(panelBg);setContentView(root);
     LinearLayout headerBar=new LinearLayout(this);headerBar.setOrientation(LinearLayout.HORIZONTAL);headerBar.setGravity(android.view.Gravity.CENTER_VERTICAL);headerBar.setBackgroundColor(headerDark);headerBar.setPadding(dp(18),dp(14),dp(18),dp(14));
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));root.addView(headerBar);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));root.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
@@ -45,22 +48,33 @@ public class MainActivity extends Activity {
   void saveDraft(){if(selected!=null&&composer!=null)drafts.put(selected,composer.getText().toString());}
   void showPeople(){saveDraft();clearPendingAttachment();selected=null;composer=null;lastSignature="";frame();
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
-    ImageView avatarView=new ImageView(this);avatarView.setLayoutParams(new LinearLayout.LayoutParams(dp(40),dp(40)));((LinearLayout.LayoutParams)avatarView.getLayoutParams()).setMargins(0,0,dp(8),0);avatarView.setScaleType(ImageView.ScaleType.CENTER_CROP);avatarView.setClipToOutline(true);
+    FrameLayout avatarWrap=new FrameLayout(this);LinearLayout.LayoutParams avatarWrapParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarWrapParams.setMargins(0,0,dp(8),0);tools.addView(avatarWrap,avatarWrapParams);
+    ImageView avatarView=new ImageView(this);avatarView.setLayoutParams(new FrameLayout.LayoutParams(-1,-1));avatarView.setScaleType(ImageView.ScaleType.CENTER_CROP);avatarView.setClipToOutline(true);
     PeerEngine ownEngine=MessengerService.engine;byte[] ownAvatar=ownEngine==null?null:ownEngine.avatar();
-    if(ownAvatar!=null){Bitmap b=inlineBitmap(ownAvatar);if(b!=null)avatarView.setImageBitmap(b);}
-    if(avatarView.getDrawable()==null){avatarView.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);tools.addView(t,new LinearLayout.LayoutParams(dp(40),dp(40)){{setMargins(0,0,dp(8),0);}});}
-    else tools.addView(avatarView);
-    avatarView.setOnClickListener(v->changeAvatar());
+    Bitmap ownBitmap=ownAvatar==null?null:inlineBitmap(ownAvatar);
+    if(ownBitmap!=null){avatarView.setImageBitmap(ownBitmap);avatarWrap.addView(avatarView);}
+    else{avatarWrap.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);avatarWrap.addView(t,new FrameLayout.LayoutParams(-1,-1));}
+    avatarWrap.setOnClickListener(v->changeAvatar());
     Button profile=button("Profile"),refresh=button("Refresh"),add=button("Add by IP"),about=button("About");tools.addView(profile);tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);tools.addView(about);group.setOnClickListener(v->createGroup());about.setOnClickListener(v->showAbout());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
     profile.setOnClickListener(v->profile());refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
     root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay here when offline.\nOnly devices using LAN Messenger appear.",14));render();
   }
   void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))clearPendingAttachment();selected=id;lastSignature="";frame();Button back=button("‹ People");LinearLayout actions=new LinearLayout(this);actions.addView(back);Button verify=button("Verify device");verifyButton=verify;actions.addView(verify);verify.setOnClickListener(v->verifyDevice());Button more=button("More");actions.addView(more);more.setOnClickListener(v->chatMenu(more));root.addView(actions);back.setOnClickListener(v->showPeople());heading=label("",20);root.addView(heading);
     PeerEngine groupCheck=MessengerService.engine;boolean isGroup=false;if(groupCheck!=null)for(PeerEngine.Group g:groupCheck.groups())if(g.id.equals(id))isGroup=true;
-    if(isGroup){TextView notice=label("Group messages and their attachments are automatically deleted after 7 days of being sent.",12);notice.setTextColor(Color.rgb(112,128,144));root.addView(notice);}
+    final TextView[] noticeHolder={null};if(isGroup){noticeHolder[0]=label("Group messages and their attachments are automatically deleted after 7 days of being sent.",12);noticeHolder[0].setTextColor(Color.rgb(112,128,144));root.addView(noticeHolder[0]);}
     scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(chatBg);feed=column();feed.setPadding(dp(6),dp(6),dp(6),dp(6));scroll.addView(feed);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
     attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->capturePhoto());photo.setOnClickListener(v->pickFile(true));file.setOnClickListener(v->pickFile(false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));composeActions.addView(send,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(composeActions);
     send.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}if(pendingAttachment==null&&composer.getText().toString().trim().isEmpty())return;try{if(pendingAttachment!=null)e.queueFile(selected,composer.getText().toString(),pendingAttachmentName,pendingAttachment);else e.queue(selected,composer.getText().toString());composer.setText("");drafts.remove(selected);clearPendingAttachment();lastSignature="";render();}catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}});renderPendingAttachment();render();
+    // Collapse the action row to just the back arrow and scroll to the latest message while the keyboard covers the screen, like a typical chat app.
+    View decor=getWindow().getDecorView();final boolean[] keyboardWasVisible={false};
+    keyboardListener=()->{
+      Rect visible=new Rect();decor.getWindowVisibleDisplayFrame(visible);int screenHeight=decor.getRootView().getHeight();int keypadHeight=screenHeight-visible.bottom;boolean keyboardVisible=keypadHeight>screenHeight*0.15;
+      if(keyboardVisible==keyboardWasVisible[0])return;keyboardWasVisible[0]=keyboardVisible;
+      verify.setVisibility(keyboardVisible?View.GONE:View.VISIBLE);more.setVisibility(keyboardVisible?View.GONE:View.VISIBLE);
+      if(noticeHolder[0]!=null)noticeHolder[0].setVisibility(keyboardVisible?View.GONE:View.VISIBLE);
+      if(keyboardVisible)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
+    };
+    decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
   }
   TextView badge(int count){TextView t=new TextView(this);t.setText(count>99?"99+":String.valueOf(count));t.setTextColor(Color.WHITE);t.setTextSize(11);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(accent,26));return t;}
   void addContactRow(Button contact,int unread,String initial,int avatarColor){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,dp(2),0,dp(2));
@@ -127,7 +141,7 @@ public class MainActivity extends Activity {
   void previewBytes(byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-draft-preview").start();}
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
 
-  static final String APP_VERSION="0.7.0";
+  static final String APP_VERSION="0.7.1";
   void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+APP_VERSION+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
   void changeAvatar(){PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online first.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
   void profile(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.").setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNeutralButton("Go offline",(d,w)->{stopService(new Intent(this,MessengerService.class));}).setNegativeButton("Cancel",null).show();}

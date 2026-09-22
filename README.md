@@ -1,9 +1,10 @@
-# LAN Messenger 0.7.0
+# LAN Messenger 0.7.1 (Android) / 0.7.0 (Windows)
 
 Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay. English interface, Unicode messages.
 
 ## What is new
 
+- **0.7.1 (Android only): three fixes to the 0.7.0 redesign.** The profile-picture circle is now actually tappable — it previously did nothing the first time, before you'd set a photo. Opening the keyboard to type now collapses "Verify device"/"More" down to just the back arrow and auto-scrolls to your latest message, so the keyboard doesn't cover the conversation. Windows is unchanged this round (still 0.7.0).
 - **Redesigned interface**, WhatsApp-inspired: a dark teal header, green accents, a beige chat background, and proper chat bubbles — your own messages sit on the right in green, everyone else's on the left in white, sized to their content instead of stretching edge to edge. Each sender's name is shown in a distinct color from the message text (yours in green; each contact gets one consistently picked from a small palette, so the same person is always the same color) — no more guessing who said what at a glance in a group. Seen-receipt ticks stay blue, matching the rest of the design.
 - **Profile picture.** Tap/click your avatar circle (top-left) to set a photo from your device. It's stored locally and shown on your own device only for now — contacts still show as colored initials, since sending it to them is a separate step not included here.
 - **About**, with the current version number, is now available from the toolbar on both platforms.
@@ -19,7 +20,7 @@ Private Windows and Android messaging on a local network. No central server, hos
 
 ## Install or update
 
-Android 8+ uses `LanMessenger-0.7.0.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.0.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
+Android 8+ uses `LanMessenger-0.7.1.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.0.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
 
 Existing 0.3/0.4/0.5 device identities, verification, contacts, history and queues are preserved. Legacy 0.2 data also migrates, but its contacts require verification. Do not downgrade after migration. Seen receipts (0.5.0) stayed wire-compatible with 0.4.x; **group messaging in 0.6.0 does not** — a group message now carries a sender signature so it can be safely relayed, and a device still on 0.4.x/0.5.0 doesn't understand that frame, so **every member of a group needs 0.6.0 to keep exchanging group messages at all**. 1:1 chats are unaffected regardless of version on either end. Version 0.4/0.5/0.6 all use LM4 and cannot communicate with 0.3/0.2 at all; upgrade both ends for that older jump.
 
