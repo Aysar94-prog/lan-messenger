@@ -1,0 +1,11 @@
+windows/bin/
+windows/obj/
+windows-dist*/
+tests/**/bin/
+tests/**/obj/
+*.apk
+*.idsig
+*.zip
+*.keystore
+.packages-cache/
+hs_err_pid*.log

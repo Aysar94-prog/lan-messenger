@@ -1,0 +1,72 @@
+# LAN Messenger 0.6.0
+
+Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay. English interface, Unicode messages.
+
+## What is new
+
+- **Group messages now reach you even if the original sender is offline.** Every member who receives a group message keeps their own copy, and can pass it on to a fellow member who missed it — authenticity travels with the message itself (a signature from the original sender's own device identity), not with whoever happens to relay it, so no one can put words in someone else's mouth. This only works between devices that have already verified each other directly; a message from someone you've never verified still won't be trusted just because a mutual contact relayed it. **Group messages and their attachments are automatically deleted 7 days after they were sent** — shown as a permanent notice inside every group — and re-forwarding never resets that clock. Existing history from before this update is not affected; only new group messages expire. This does require every member of a group to be on 0.6.0 to keep exchanging group messages at all (see Install or update below) — 1:1 chats are completely unaffected and work with any version.
+- **Seen receipts and unread counts, like a typical chat app.** Opening a conversation (while the window is on screen, not minimized or hidden) marks its messages read and clears its unread badge. Your own sent messages show ✓ Queued, ✓✓ Delivered, or ✓✓ **Seen** (highlighted) once the recipient has actually opened the chat — for a group, the aggregate only reaches Seen once every member has read it. The conversation list shows a small unread-count badge per contact/group, the same way WhatsApp does. Seen is a separate, later confirmation from delivery, sent over its own verified connection; a device still on 0.4.x simply won't send or show it, so mixed-version networks keep working without read receipts until both sides update.
+- Refreshed Windows conversation list and message styling; Android conversation cards and compact actions.
+- Photos now appear directly inside their message bubbles on Windows and Android. Click or tap a photo to open the larger viewer; use **Save** to export the original. Other attachments remain compact file cards.
+- Choosing an attachment prepares a visible draft first. Review it, optionally add a caption, remove it if needed, then press **Send**. Android also provides **Camera** for a full-resolution capture through the installed camera app.
+- **Clear chat / More > Clear conversation** removes local history and attachments and cancels unsent messages, after confirmation. Contacts, verification and groups remain. Other devices keep their copies. Already transmitted messages cannot be recalled. Duplicate retries do not restore cleared history.
+- **Attach** on Windows and **Camera / Photo / File** on Android prepare files up to **10 MiB** over the verified encrypted connection. Selection alone never sends: review the draft and press **Send**. Supported images render inline; choose **Save** to export any attachment. Nothing opens automatically. Attachments remain encrypted in app storage; files you explicitly export are ordinary files.
+- **New group** creates a fixed-membership conversation with **3–16 people including you**. Choose 2–15 verified contacts and a name. Members can exchange text, images and files. **Members / More > Group members** lists participants.
+
+## Install or update
+
+Android 8+ uses `LanMessenger-0.6.0.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.6.0.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
+
+Existing 0.3/0.4/0.5 device identities, verification, contacts, history and queues are preserved. Legacy 0.2 data also migrates, but its contacts require verification. Do not downgrade after migration. Seen receipts (0.5.0) stayed wire-compatible with 0.4.x; **group messaging in 0.6.0 does not** — a group message now carries a sender signature so it can be safely relayed, and a device still on 0.4.x/0.5.0 doesn't understand that frame, so **every member of a group needs 0.6.0 to keep exchanging group messages at all**. 1:1 chats are unaffected regardless of version on either end. Version 0.4/0.5/0.6 all use LM4 and cannot communicate with 0.3/0.2 at all; upgrade both ends for that older jump.
+
+## Pair and chat
+
+Open the apps on the same reachable LAN. People appear automatically; **Add by IP** is a fallback. Select a contact, open **Verify device** on BOTH devices, compare the entire safety code in person or through a trusted channel, and confirm on each only when it matches.
+
+Queued means saved on the sender. Delivered means durably saved and acknowledged by the recipient, not read. **Seen** (shown in blue with a double check) means the recipient has actually opened the conversation; for a group, Seen only shows once every member has read it. Messages retry after reconnect and restart. Unread counts on the conversation list are local only — they are never sent to anyone and simply track which of your own received messages you haven't opened yet.
+
+For a 1:1 chat, both devices must still eventually be running and reachable together; there is no relay when the sender is off. A group is different since 0.6.0: see Group behavior below.
+
+### Group behavior
+
+The creator distributes the group definition to each member over a verified connection. Keep the creator online until everyone receives the group. After that, members communicate directly without the creator staying online. Every pair of members must discover and verify each other; joining a group does NOT grant automatic trust to unknown devices. Unknown contacts show a device ID until discovered.
+
+Each outgoing group message has a separate durable delivery queue per recipient. The UI displays one message with a delivered/total count while queued; Delivered means all recipients acknowledged. An offline or unverified member does not prevent other members receiving. Membership is fixed in 0.4; create a new group to use a different membership. Group editing, removal and leave operations are not included.
+
+**Relay (0.6.0):** if the original sender is offline, a group message can still reach you through any other member who already has it and whom you've verified directly — the message carries a signature from its original sender, so a relaying member can pass it along but can never alter it or forge one in someone else's name, and you'll only trust a relayed message if you've independently verified that original sender yourself. This happens automatically in the background: reconnecting members pull whatever they're missing from whoever's reachable, and switch to another member if one drops mid-sync. **Group messages and their attachments delete themselves automatically 7 days after they were sent** (that notice is shown inside every group); forwarding a message never restarts that clock, and this applies only to messages sent since updating to 0.6.0 — your existing group history is untouched.
+
+## Background and notifications
+
+Windows receives while minimized or hidden. Closing hides to tray; **Exit** in the tray menu stops it. Double-click the tray icon to reopen. Incoming alerts show the sender/group name and a generic message label, not content or filenames; clicking routes to the conversation. **Test notification** requests an alert. Windows notification settings and Do not disturb can suppress banners.
+
+Android uses a foreground service with an ongoing notification. Allow notifications. **Profile > Go offline** stops it. Reopen after a reboot. Doze, manufacturer restrictions, force-stop or Wi-Fi loss can delay delivery. Physical-device background behavior still needs acceptance testing.
+
+## Security and storage
+
+TLS 1.2 ECDHE-RSA/AES-GCM encrypts messaging. Explicit safety-code confirmation pins the certificate fingerprint. A changed verified key is not silently accepted; investigate **KEY CHANGED** before revoking and pairing again.
+
+Windows protects app data with current-user DPAPI; Android uses AES-256-GCM with an Android Keystore key. Primary/backup histories and attachment blobs are protected. Clearing a conversation is logical local deletion, not forensic secure erasure of operating-system backups. Losing the OS storage key, clearing app data or uninstalling can make data unrecoverable; encrypted file copies alone are not portable backups.
+
+UDP discovery exposes device names, IDs and presence on the LAN and is unauthenticated. Verification gates messages, files and group definitions. Group messages (0.6.0) are additionally signed by their original sender's own device identity, the same RSA key already used for TLS — no new keys or key exchange — so a message can be relayed by another member without that member being able to forge or alter it, and it is only trusted by a recipient who has independently verified that original sender. This prototype has not had an independent security audit.
+
+Data: `%LOCALAPPDATA%/LanMessenger` on Windows; Android private `files/peer-data`. Attachments live in the private `attachments` subfolder, named by message IDs rather than remote filenames.
+
+## Network
+
+UDP 43871 discovery; TCP 43872 messaging. Allow Windows access on a trusted private network if prompted. Router client isolation can block discovery and direct connections. The app does not modify firewall/router settings. No cloud sync, automatic launch of received files, or resumable transfer: interrupted attachments retry from the beginning. Group relay (0.6.0) is peer-to-peer only, between devices already on the LAN — it is not a central server or third-party hosting; a message only ever passes through other group members' own devices.
+
+## Build and tests
+
+```powershell
+dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v06
+.\android\build.ps1
+.\tests\run.ps1
+```
+
+Android uses JDK 17, SDK platform 34 and build-tools 35.0.0, with configurable `-SdkRoot`, `-JdkRoot`, `-BuildRoot`. Restore the ORIGINAL development.keystore to BuildRoot when moving computers. Missing keys fail rather than silently breaking update compatibility. `-GenerateDevelopmentKey` is for separate new development installations only. Never publish the signing key.
+
+Windows uses the vendored BouncyCastle.Cryptography 2.7.0 package and license. NuGet.Config restores locally.
+
+Tests run actual Java/C# engines with isolated data: legacy migration, pairing, encrypted traffic/tampering, identity spoof rejection, restart queues, duplicate handling, group creation/replies/fanout, offline members, images/binary/empty files, unsafe metadata and corrupt files, non-member rejection, immutable group definitions, local clear/tombstones, pending cancellation, unread counts, seen-receipt delivery including group seen aggregation, an offline sender's group message and attachment reaching a returning member through another member without duplicating, an expired group message being rejected on arrival, and an already-expired message being purged locally at startup. Native Windows tests cover private notifications while hidden/minimized, click routing, group rendering, attachment controls, offline compose, and that opening a conversation marks it read and renders seen ticks. `tests/migration_v03.py` optionally tests an actual retained 0.3 build upgrading to 0.4; its arguments are in the file header.
+
+Harnesses use test storage protectors. Physical Android file picking/saving, image preview, Wi-Fi behavior, Android Keystore, production-user DPAPI and visible desktop notifications still need user acceptance testing. Treat 0.6 as a test release, not a production-certified app.
