@@ -23,7 +23,7 @@ sealed class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Save file",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.7.0";
+    public const string AppVersion="0.7.1";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -119,12 +119,32 @@ sealed class ChatWindow : Form
     }
     void ClearFeed(){foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();feed.Controls.Clear();}
     static Label MessageLabel(string text,float size,Color color,int width,bool bold=false)=>new(){Text=text,AutoSize=true,MaximumSize=new Size(width,0),Font=new Font("Segoe UI",size,bold?FontStyle.Bold:FontStyle.Regular),ForeColor=color,Margin=new Padding(0,2,0,2)};
+    static Bitmap DrawInitialCircle(string initial,Color color,int size)
+    {
+        var bmp=new Bitmap(size,size);using var g=Graphics.FromImage(bmp);g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using var b=new SolidBrush(color);g.FillEllipse(b,0,0,size,size);
+        TextRenderer.DrawText(g,initial,new Font("Segoe UI",size*0.42f,FontStyle.Bold),new Rectangle(0,0,size,size),Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);
+        return bmp;
+    }
+    // A small avatar next to the sender's name in every bubble: your own real picture for your own
+    // messages when set, a colored initial otherwise — never a contact's picture, since avatars aren't shared.
+    Control SenderRow(bool mine,string name,Color color,int width)
+    {
+        var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,Margin=new Padding(0)};
+        const int avatarSize=18;
+        var avatar=new PictureBox{Width=avatarSize,Height=avatarSize,SizeMode=PictureBoxSizeMode.Zoom,Margin=new Padding(0,0,5,0)};
+        if(mine&&avatarImage!=null)avatar.Image=avatarImage;
+        else{var drawn=DrawInitialCircle(name.Length>0?name[..1].ToUpperInvariant():"?",color,64);avatar.Image=drawn;avatar.Disposed+=(_,_)=>drawn.Dispose();}
+        row.Controls.Add(avatar);
+        row.Controls.Add(MessageLabel(name,10,color,width-avatarSize-8,true));
+        return row;
+    }
     Control MessageCard(PeerEngine.Message message)
     {
         bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.ClientSize.Width-45));
         var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.ClientSize.Width-width-25):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
         RoundCorners(card,10);
-        card.Controls.Add(MessageLabel(mine?"You":engine.DisplayName(message.From),10,mine?Accent:NameColor(message.From),width-24,true));
+        card.Controls.Add(SenderRow(mine,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         else{
             var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);

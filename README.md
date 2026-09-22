@@ -1,10 +1,11 @@
-# LAN Messenger 0.7.2 (Android) / 0.7.0 (Windows)
+# LAN Messenger 0.7.2 (Android) / 0.7.1 (Windows)
 
 Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay. English interface, Unicode messages.
 
 ## What is new
 
-- **0.7.2 (Android only): more room for the chat itself.** The chat screen's back arrow, contact/group avatar, name and status, and an overflow menu are now one compact bar instead of three stacked sections (app title bar, a full button row, a separate name row) — "Verify device" moved into the overflow menu (⋮) to free up permanent space, not just while the keyboard is open. Each message bubble now also shows a small picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise (contacts still show initials only, since their photos aren't sent to you). Windows is unchanged (still 0.7.0).
+- **0.7.1 (Windows): the mini-avatar-next-to-name from the Android 0.7.2 update, brought to Windows too.** Every message bubble now shows a small (18px) picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise. Screenshotted and confirmed rendering correctly.
+- **0.7.2 (Android only): more room for the chat itself.** The chat screen's back arrow, contact/group avatar, name and status, and an overflow menu are now one compact bar instead of three stacked sections (app title bar, a full button row, a separate name row) — "Verify device" moved into the overflow menu (⋮) to free up permanent space, not just while the keyboard is open. Each message bubble also shows a small picture next to the sender's name — your own real photo if you've set one, a colored initial otherwise (contacts still show initials only, since their photos aren't sent to you).
 - **0.7.1 (Android only): three fixes to the 0.7.0 redesign.** The profile-picture circle is now actually tappable — it previously did nothing the first time, before you'd set a photo. Opening the keyboard to type collapses the (now-merged) action row and auto-scrolls to your latest message, so the keyboard doesn't cover the conversation.
 - **Redesigned interface**, WhatsApp-inspired: a dark teal header, green accents, a beige chat background, and proper chat bubbles — your own messages sit on the right in green, everyone else's on the left in white, sized to their content instead of stretching edge to edge. Each sender's name is shown in a distinct color from the message text (yours in green; each contact gets one consistently picked from a small palette, so the same person is always the same color) — no more guessing who said what at a glance in a group. Seen-receipt ticks stay blue, matching the rest of the design.
 - **Profile picture.** Tap/click your avatar circle (top-left) to set a photo from your device. It's stored locally and shown on your own device only for now — contacts still show as colored initials, since sending it to them is a separate step not included here.
@@ -21,7 +22,7 @@ Private Windows and Android messaging on a local network. No central server, hos
 
 ## Install or update
 
-Android 8+ uses `LanMessenger-0.7.2.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.0.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
+Android 8+ uses `LanMessenger-0.7.2.apk`; install over the existing app without uninstalling. Windows: exit the old app through its tray menu, extract `LanMessenger-Windows-0.7.1.zip` and run `LanMessenger.exe` with its companion files. .NET Desktop Runtime 9 is required.
 
 Existing 0.3/0.4/0.5 device identities, verification, contacts, history and queues are preserved. Legacy 0.2 data also migrates, but its contacts require verification. Do not downgrade after migration. Seen receipts (0.5.0) stayed wire-compatible with 0.4.x; **group messaging in 0.6.0 does not** — a group message now carries a sender signature so it can be safely relayed, and a device still on 0.4.x/0.5.0 doesn't understand that frame, so **every member of a group needs 0.6.0 to keep exchanging group messages at all**. 1:1 chats are unaffected regardless of version on either end. Version 0.4/0.5/0.6 all use LM4 and cannot communicate with 0.3/0.2 at all; upgrade both ends for that older jump.
 
@@ -64,7 +65,7 @@ UDP 43871 discovery; TCP 43872 messaging. Allow Windows access on a trusted priv
 ## Build and tests
 
 ```powershell
-dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v07
+dotnet build windows/LanMessenger.csproj -c Release --configfile NuGet.Config -o windows-dist-v071
 .\android\build.ps1
 .\tests\run.ps1
 ```
@@ -75,4 +76,4 @@ Windows uses the vendored BouncyCastle.Cryptography 2.7.0 package and license. N
 
 Tests run actual Java/C# engines with isolated data: legacy migration, pairing, encrypted traffic/tampering, identity spoof rejection, restart queues, duplicate handling, group creation/replies/fanout, offline members, images/binary/empty files, unsafe metadata and corrupt files, non-member rejection, immutable group definitions, local clear/tombstones, pending cancellation, unread counts, seen-receipt delivery including group seen aggregation, an offline sender's group message and attachment reaching a returning member through another member without duplicating, an expired group message being rejected on arrival, and an already-expired message being purged locally at startup. Native Windows tests cover private notifications while hidden/minimized, click routing, group rendering, attachment controls, offline compose, and that opening a conversation marks it read and renders seen ticks. `tests/migration_v03.py` optionally tests an actual retained 0.3 build upgrading to 0.4; its arguments are in the file header.
 
-Harnesses use test storage protectors. Physical Android file picking/saving, image preview, Wi-Fi behavior, Android Keystore, production-user DPAPI, visible desktop notifications, large (near-200 MiB) transfers on a real device, and the redesigned UI on a physical Android screen still need user acceptance testing — the automated suite covers the engine and the Windows UI (including the new colors/bubbles, screenshotted), not the Android UI visually. Treat 0.7 as a test release, not a production-certified app.
+Harnesses use test storage protectors. Physical Android file picking/saving, image preview, Wi-Fi behavior, Android Keystore, production-user DPAPI, visible desktop notifications, large (near-200 MiB) transfers on a real device, and the redesigned UI on a physical Android screen still need user acceptance testing — the automated suite covers the engine and the Windows UI (including the new colors/bubbles/mini-avatars, screenshotted), not the Android UI visually. Treat 0.7 as a test release, not a production-certified app.
