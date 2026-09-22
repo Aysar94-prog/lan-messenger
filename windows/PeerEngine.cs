@@ -52,6 +52,13 @@ public sealed partial class PeerEngine : IDisposable
         return m with{Status=seen==total?"Seen":delivered==total?"Delivered":$"Queued ({delivered}/{total} delivered)"};}).ToArray();}}
     public int Pending {get{lock(gate)return messages.Count(m=>m.Status=="Queued");}}
     public void Rename(string name){lock(gate){var old=Name;Name=CleanName(name);try{Save();}catch{Name=old;throw;}}Notify();}
+    string AvatarPath=>Path.Combine(Path.GetDirectoryName(file)!,"avatar.sec");
+    public byte[]? Avatar{get{lock(gate){if(!File.Exists(AvatarPath))return null;try{return protector.Unprotect(File.ReadAllBytes(AvatarPath));}catch{return null;}}}}
+    public void SetAvatar(byte[]? data)
+    {
+        lock(gate){var path=AvatarPath;if(data==null){if(File.Exists(path))File.Delete(path);Notify();return;}
+        var tmp=path+".tmp";File.WriteAllBytes(tmp,protector.Protect(data));File.Move(tmp,path,true);}Notify();
+    }
     public void Queue(string peer,string text)
     {
         QueueContent(peer,text,"",null);
@@ -164,6 +171,8 @@ public sealed partial class PeerEngine : IDisposable
         if(incoming is not null)try{Received?.Invoke(incoming);}catch{}
         await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");Notify();}catch(Exception e){LastConnectionError=e.ToString();}
     }
+    // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
+    static TimeSpan TransferTimeout(int size)=>TimeSpan.FromSeconds(Math.Max(60,30+size/1_000_000));
     static byte[] CanonicalBytes(string id,string group,string sender,long time,string text,string fileName,int fileSize,string fileHash)
         =>Encoding.UTF8.GetBytes($"{id}\t{group}\t{sender}\t{time}\t{Enc(text)}\t{Enc(fileName)}\t{fileSize}\t{fileHash}");
     async Task HandleSync(SecureChannel tls,string group,string knownIdsCsv,string peerId)
@@ -174,7 +183,7 @@ public sealed partial class PeerEngine : IDisposable
         foreach(var m in offer)try{
             await Write(tls,$"LM4\tRELAY\t{m.Id}\t{group}\t{m.From}\t{Enc(DisplayName(m.From))}\t{m.Time}\t{Enc(m.Text)}\t{Enc(m.FileName)}\t{m.FileSize}\t{m.FileHash}\t{m.Signature}");
             var data=m.FileName.Length>0?ReadAttachment(m):Array.Empty<byte>();
-            if(data.Length>0){using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(60));await tls.WriteAsync(data,timeout.Token);}
+            if(data.Length>0){using var timeout=new CancellationTokenSource(TransferTimeout(data.Length));await tls.WriteAsync(data,timeout.Token);}
             if(await Read(tls)!="LM4\tRELAYACK\t"+m.Id)return;
         }catch{return;}
         try{await Write(tls,"LM4\tSYNCDONE");}catch{}
@@ -240,7 +249,7 @@ public sealed partial class PeerEngine : IDisposable
         byte[] data;lock(gate){if(!messages.Any(x=>x.Id==m.Id&&x.To==m.To))continue;data=m.FileName.Length>0?ReadAttachment(m):Array.Empty<byte>();}
         var wire=$"LM4\tMSG\t{m.Id}\t{Id}\t{m.To}\t{Enc(Name)}\t{m.Time}\t{Enc(m.Text)}\t{m.GroupId}\t{Enc(m.FileName)}\t{m.FileSize}\t{m.FileHash}"+(m.GroupId.Length>0?$"\t{m.Signature}":"");
         await Write(tls,wire);
-        if(data.Length>0){using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(60));await tls.WriteAsync(data,timeout.Token);}
+        if(data.Length>0){using var timeout=new CancellationTokenSource(TransferTimeout(data.Length));await tls.WriteAsync(data,timeout.Token);}
         if(await Read(tls)!=$"LM4\tACK\t{m.Id}\t{peer.Id}"||!Trusted(peer.Id,fingerprint))return;
         lock(gate){int i=messages.FindIndex(x=>x.Id==m.Id&&x.To==m.To);if(i<0)continue;var old=messages[i];messages[i]=old with{Status="Delivered"};try{Save();}catch{messages[i]=old;throw;}}Notify();}catch{return;}
         Message[] toConfirm;lock(gate)toConfirm=messages.Where(m=>m.To==Id&&m.From==peer.Id&&m.Status=="Read").ToArray();

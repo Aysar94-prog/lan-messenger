@@ -60,6 +60,10 @@ public final class PeerEngine implements Closeable {
 
   public synchronized int pending(){int n=0;for(Message m:messages)if(m.status.equals("Queued"))n++;return n;}
   public synchronized void rename(String value)throws IOException {String old=name;name=cleanName(value);try{save();}catch(IOException e){name=old;throw e;}notifyChanged();}
+  File avatarPath(){return new File(file.getParentFile(),"avatar.sec");}
+  public synchronized byte[] avatar(){File path=avatarPath();if(!path.exists())return null;try{return protector.unprotect(SecureIdentity.readFile(path));}catch(Exception e){return null;}}
+  public synchronized void setAvatar(byte[] data)throws IOException {File path=avatarPath();if(data==null){if(path.exists()&&!path.delete())throw new IOException("Cannot remove profile picture");notifyChanged();return;}
+    File tmp=new File(path+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}if(!tmp.renameTo(path))throw new IOException("Cannot save profile picture");notifyChanged();}
   public synchronized void queue(String peer,String text)throws IOException {
     queueContent(peer,text,"",null);
   }
@@ -250,7 +254,9 @@ public final class PeerEngine implements Closeable {
   }
 
 
-  public static final int MAX_FILE_SIZE=10*1024*1024;
+  public static final int MAX_FILE_SIZE=200*1024*1024;
+  // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
+  static long transferTimeoutNanos(int size){return TimeUnit.SECONDS.toNanos(Math.max(60,30+size/1_000_000));}
   public static final class Group {
     public final String id,owner,name;public final String[] members;String acknowledged;
     Group(String i,String o,String n,String[] m,String ack){id=i;owner=o;name=n;members=m.clone();acknowledged=ack;}
@@ -277,7 +283,7 @@ public final class PeerEngine implements Closeable {
   public void queueFile(String conversation,String caption,String name,byte[] data)throws IOException {queueContent(conversation,caption,safeFileName(name),data);}
   synchronized void queueContent(String conversation,String text,String fileName,byte[] data)throws IOException {
     text=text.trim();if(text.length()>2000||(data==null&&text.isEmpty()))throw new IOException("Messages must contain 1–2000 characters.");
-    if(data!=null&&data.length>MAX_FILE_SIZE)throw new IOException("Files must be 10 MB or smaller.");
+    if(data!=null&&data.length>MAX_FILE_SIZE)throw new IOException("Files must be "+(MAX_FILE_SIZE/1024/1024)+" MB or smaller.");
     ArrayList<String> recipients=new ArrayList<>();String groupId="";Group group=groups.get(conversation);
     if(group!=null){groupId=group.id;for(String member:group.members)if(!member.equals(id))recipients.add(member);}else if(peers.containsKey(conversation))recipients.add(conversation);else throw new IOException("Choose a conversation first.");
     String messageId=UUID.randomUUID().toString(),hash="";try{if(data!=null)hash=SecureIdentity.hash(data);}catch(Exception e){throw new IOException(e);}long at=System.currentTimeMillis();ArrayList<Message> batch=new ArrayList<>();
@@ -299,7 +305,7 @@ public final class PeerEngine implements Closeable {
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}if(!tmp.renameTo(path))throw new IOException("Cannot save attachment");
   }
   public synchronized byte[] readAttachment(Message m)throws IOException {try{byte[] data=protector.unprotect(SecureIdentity.readFile(attachmentPath(m)));if(data.length!=m.fileSize||!SecureIdentity.hash(data).equals(m.fileHash))throw new IOException("Attachment integrity check failed");return data;}catch(Exception e){throw new IOException(e);}}
-  static byte[] readBytes(Socket s,int size)throws IOException {byte[] data=new byte[size];InputStream in=s.getInputStream();int at=0;long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(60);while(at<size){if(System.nanoTime()>end)throw new IOException("Attachment timeout");int n=in.read(data,at,Math.min(65536,size-at));if(n<0)throw new EOFException();at+=n;}return data;}
+  static byte[] readBytes(Socket s,int size)throws IOException {byte[] data=new byte[size];InputStream in=s.getInputStream();int at=0;long end=System.nanoTime()+transferTimeoutNanos(size);while(at<size){if(System.nanoTime()>end)throw new IOException("Attachment timeout");int n=in.read(data,at,Math.min(65536,size-at));if(n<0)throw new EOFException();at+=n;}return data;}
 
   void notifyChanged(){try{changed.run();}catch(Exception ignored){}}
   public synchronized void close(){running=false;try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();}

@@ -2,7 +2,7 @@ using System.Text;
 namespace LanMessenger;
 public sealed partial class PeerEngine
 {
-    public const int MaxFileSize=10*1024*1024;
+    public const int MaxFileSize=200*1024*1024;
     public sealed record Group(string Id,string Owner,string Name,string[] Members,string Acknowledged="");
     readonly Dictionary<string,Group> groups=[];
     readonly HashSet<string> hidden=[];
@@ -27,7 +27,7 @@ public sealed partial class PeerEngine
     void QueueContent(string conversation,string text,string fileName,byte[]? data)
     {
         text=text.Trim();if(text.Length>2000||(data==null&&text.Length==0))throw new IOException("Messages must contain 1–2000 characters.");
-        if(data!=null&&data.Length>MaxFileSize)throw new IOException("Files must be 10 MB or smaller.");
+        if(data!=null&&data.Length>MaxFileSize)throw new IOException($"Files must be {MaxFileSize/1024/1024} MB or smaller.");
         lock(gate){string[] recipients;string groupId="";
         if(groups.TryGetValue(conversation,out var group)){recipients=group.Members.Where(x=>x!=Id).ToArray();groupId=group.Id;}
         else if(peers.ContainsKey(conversation))recipients=[conversation];else throw new IOException("Choose a conversation first.");
@@ -60,5 +60,5 @@ public sealed partial class PeerEngine
         using(var f=new FileStream(path+".tmp",FileMode.Create,FileAccess.Write)){f.Write(protector.Protect(data));f.Flush(true);}File.Move(path+".tmp",path,true);
     }
     public byte[] ReadAttachment(Message m){lock(gate){var data=protector.Unprotect(File.ReadAllBytes(AttachmentPath(m)));if(data.Length!=m.FileSize||SecureIdentity.Hash(data)!=m.FileHash)throw new IOException("Attachment integrity check failed");return data;}}
-    static async Task<byte[]> ReadBytes(Stream stream,int count){var data=new byte[count];using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(60));await stream.ReadExactlyAsync(data,timeout.Token);return data;}
+    static async Task<byte[]> ReadBytes(Stream stream,int count){var data=new byte[count];using var timeout=new CancellationTokenSource(TransferTimeout(count));await stream.ReadExactlyAsync(data,timeout.Token);return data;}
 }

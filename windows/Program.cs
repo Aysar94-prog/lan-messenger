@@ -23,10 +23,21 @@ sealed class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Save file",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    static readonly Color Accent=Color.FromArgb(47,91,231),Ink=Color.FromArgb(25,39,64);
+    public const string AppVersion="0.7.0";
+    static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
+    static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
+    static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
+    static void RoundCorners(Control c,int radius)
+    {
+        void Apply(object? s,EventArgs e){if(c.Width<=0||c.Height<=0)return;int d=Math.Min(radius*2,Math.Min(c.Width,c.Height));using var path=new System.Drawing.Drawing2D.GraphicsPath();path.AddArc(0,0,d,d,180,90);path.AddArc(c.Width-d,0,d,d,270,90);path.AddArc(c.Width-d,c.Height-d,d,d,0,90);path.AddArc(0,c.Height-d,d,d,90,90);path.CloseFigure();var old=c.Region;c.Region=new Region(path);old?.Dispose();}
+        c.SizeChanged+=Apply;Apply(null,EventArgs.Empty);
+    }
     record FileItem(PeerEngine.Message Message){public override string ToString()=>Message.FileName;}
     readonly Button verify=new(){Text="Verify device",AutoSize=true};
     readonly Label groupNotice=new(){Text="Group messages and their attachments are automatically deleted after 7 days of being sent.",AutoSize=true,ForeColor=Color.SlateGray,Font=new Font("Segoe UI",8.5f),Margin=new Padding(12,10,0,0),Visible=false};
+    readonly PictureBox avatarBox=new(){Width=40,Height=40,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(216,235,248),Margin=new Padding(3,3,8,3)};
+    readonly Button about=new(){Text="About",AutoSize=true};
+    Image? avatarImage;
     bool exiting; string? notificationPeer;
     public int NotificationCount {get;private set;}
     readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
@@ -34,7 +45,7 @@ sealed class ChatWindow : Form
     readonly TextBox profile = new() { Width=180, MaxLength=30, PlaceholderText="Your display name" };
     readonly Label status = new() { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DimGray };
     readonly Label heading = new() { Text="Choose a contact", Dock=DockStyle.Fill, Font=new Font("Segoe UI",17,FontStyle.Bold), AutoSize=false, AutoEllipsis=true };
-    readonly FlowLayoutPanel feed = new() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=Color.FromArgb(249,251,255), Padding=new Padding(8) };
+    readonly FlowLayoutPanel feed = new() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
     readonly FlowLayoutPanel attachmentDraft = new() { Dock=DockStyle.Fill, FlowDirection=FlowDirection.LeftToRight, WrapContents=false, AutoScroll=true, Visible=false, BackColor=Color.FromArgb(235,240,250), Padding=new Padding(8) };
     readonly TextBox composer = new() { Dock=DockStyle.Fill, Multiline=true, MaxLength=2000, PlaceholderText="Write a message…", Enabled=false };
     readonly Button send = new() { Text="Send", Dock=DockStyle.Fill, Enabled=false };
@@ -49,24 +60,29 @@ sealed class ChatWindow : Form
     public ChatWindow(string? dataDirectory,IStorageProtector? protector)
     {
         Text="LAN Messenger"; Size=new Size(1140,810); MinimumSize=new Size(940,650); StartPosition=FormStartPosition.CenterScreen;
-        Font=new Font("Segoe UI",11); BackColor=Color.FromArgb(243,246,252); RightToLeft=RightToLeft.No;
+        Font=new Font("Segoe UI",11); BackColor=PanelBg; RightToLeft=RightToLeft.No;
         var data=dataDirectory??Environment.GetEnvironmentVariable("LAN_MESSENGER_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"LanMessenger");
         engine=new PeerEngine(data,Environment.UserName,protector); profile.Text=engine.Name;
-        var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(20),ColumnCount=1,RowCount=5};
+        var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(0),ColumnCount=1,RowCount=5};
         root.ColumnStyles.Add(new(SizeType.Percent,100));
-        root.RowStyles.Add(new(SizeType.Absolute,70));root.RowStyles.Add(new(SizeType.Absolute,46));root.RowStyles.Add(new(SizeType.Absolute,42));root.RowStyles.Add(new(SizeType.Percent,100));root.RowStyles.Add(new(SizeType.Absolute,36));
-        root.Controls.Add(new Label{Text="LAN Messenger  /  Your local workspace",Font=new Font("Segoe UI",23,FontStyle.Bold),AutoSize=true,ForeColor=Color.FromArgb(20,37,58)},0,0);
-        var toolbar=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};var save=new Button{Text="Save name",AutoSize=true};var scan=new Button{Text="Refresh",AutoSize=true};var add=new Button{Text="Add by IP",AutoSize=true};
-        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([profile,save,scan,add,createGroup]);createGroup.Click+=(_,_)=>CreateGroup();root.Controls.Add(toolbar,0,1);root.Controls.Add(status,0,2);
+        root.RowStyles.Add(new(SizeType.Absolute,64));root.RowStyles.Add(new(SizeType.Absolute,46));root.RowStyles.Add(new(SizeType.Absolute,42));root.RowStyles.Add(new(SizeType.Percent,100));root.RowStyles.Add(new(SizeType.Absolute,32));
+        var headerBar=new Panel{Dock=DockStyle.Fill,BackColor=HeaderDark,Padding=new Padding(20,0,20,0)};
+        headerBar.Controls.Add(new Label{Text="LAN Messenger",Font=new Font("Segoe UI",18,FontStyle.Bold),AutoSize=true,ForeColor=Color.White,Location=new Point(20,14)});
+        root.Controls.Add(headerBar,0,0);
+        var toolbar=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(20,4,0,0),BackColor=PanelBg};var save=new Button{Text="Save name",AutoSize=true};var scan=new Button{Text="Refresh",AutoSize=true};var add=new Button{Text="Add by IP",AutoSize=true};
+        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,about]);createGroup.Click+=(_,_)=>CreateGroup();about.Click+=(_,_)=>ShowAbout();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
         var split=new SplitContainer{Size=new Size(950,460),Dock=DockStyle.Fill,SplitterDistance=300,FixedPanel=FixedPanel.Panel1,Panel1MinSize=220,Panel2MinSize=280};
         var people=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=2,ColumnCount=1};people.ColumnStyles.Add(new(SizeType.Percent,100));people.RowStyles.Add(new(SizeType.Absolute,35));people.RowStyles.Add(new(SizeType.Percent,100));people.Controls.Add(new Label{Text="CONVERSATIONS",AutoSize=true},0,0);people.Controls.Add(contacts,0,1);split.Panel1.Controls.Add(people);
         var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=5};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,clear,groupNotice]);chat.Controls.Add(actions,0,1);chat.Controls.Add(feed,0,2);chat.Controls.Add(attachmentDraft,0,3);
-        var input=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,Padding=new Padding(0,10,0,0)};input.ColumnStyles.Add(new(SizeType.Percent,100));input.ColumnStyles.Add(new(SizeType.Absolute,95));input.Controls.Add(composer,0,0);input.Controls.Add(send,1,0);input.ColumnStyles.Add(new(SizeType.Absolute,85));input.Controls.Add(attach,2,0);chat.Controls.Add(input,0,4);split.Panel2.Controls.Add(chat);root.Controls.Add(split,0,3);
-        root.Controls.Add(new Label{Text="Encrypted connection and local history • Verify the safety code on both devices before chatting",AutoSize=true,ForeColor=Color.DimGray},0,4);Controls.Add(root);
+        var input=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,Padding=new Padding(0,10,0,0)};input.ColumnStyles.Add(new(SizeType.Percent,100));input.ColumnStyles.Add(new(SizeType.Absolute,95));input.Controls.Add(composer,0,0);input.Controls.Add(send,1,0);input.ColumnStyles.Add(new(SizeType.Absolute,85));input.Controls.Add(attach,2,0);chat.Controls.Add(input,0,4);split.Panel2.Controls.Add(chat);
+        var splitPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};splitPanel.Controls.Add(split);root.Controls.Add(splitPanel,0,3);
+        var footerPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};footerPanel.Controls.Add(new Label{Text="Encrypted connection and local history • Verify the safety code on both devices before chatting",AutoSize=true,ForeColor=Color.DimGray,Dock=DockStyle.Left});root.Controls.Add(footerPanel,0,4);Controls.Add(root);
         contacts.DrawMode=DrawMode.OwnerDrawFixed;contacts.ItemHeight=64;contacts.BackColor=Color.White;
-        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(232,239,255):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);using var badge=new SolidBrush(item.Group?Color.FromArgb(227,220,251):Color.FromArgb(216,235,248));e.Graphics.FillEllipse(badge,e.Bounds.X+10,e.Bounds.Y+13,36,36);TextRenderer.DrawText(e.Graphics,item.Group?"G":item.Name[..Math.Min(1,item.Name.Length)].ToUpperInvariant(),Font,new Rectangle(e.Bounds.X+10,e.Bounds.Y+18,36,28),Accent,TextFormatFlags.HorizontalCenter);using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
-            if(item.Unread>0){var count=item.Unread>99?"99+":item.Unread.ToString();int d=22;var badgeRect=new Rectangle(e.Bounds.Right-d-12,e.Bounds.Y+(e.Bounds.Height-d)/2,d,d);using var unread=new SolidBrush(Color.FromArgb(37,211,102));e.Graphics.FillEllipse(unread,badgeRect);using var tiny=new Font("Segoe UI",8,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,count,tiny,badgeRect,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
-        StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
+        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(230,247,234):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);using var badge=new SolidBrush(item.Group?Color.FromArgb(227,220,251):NameColor(item.Id));e.Graphics.FillEllipse(badge,e.Bounds.X+10,e.Bounds.Y+13,36,36);TextRenderer.DrawText(e.Graphics,item.Group?"G":item.Name[..Math.Min(1,item.Name.Length)].ToUpperInvariant(),Font,new Rectangle(e.Bounds.X+10,e.Bounds.Y+18,36,28),Color.White,TextFormatFlags.HorizontalCenter);using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
+            if(item.Unread>0){var count=item.Unread>99?"99+":item.Unread.ToString();int d=22;var badgeRect=new Rectangle(e.Bounds.Right-d-12,e.Bounds.Y+(e.Bounds.Height-d)/2,d,d);using var unread=new SolidBrush(Accent);e.Graphics.FillEllipse(unread,badgeRect);using var tiny=new Font("Segoe UI",8,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,count,tiny,badgeRect,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
+        StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
+        avatarBox.Paint+=(_,e)=>{if(avatarImage==null){using var b=new SolidBrush(Accent);e.Graphics.FillEllipse(b,0,0,avatarBox.Width,avatarBox.Height);TextRenderer.DrawText(e.Graphics,engine.Name.Length>0?engine.Name[..1].ToUpperInvariant():"?",new Font("Segoe UI",14,FontStyle.Bold),avatarBox.ClientRectangle,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
+        try{var raw=engine.Avatar;if(raw!=null){avatarImage=TryImageThumbnail(raw,80,80);avatarBox.Image=avatarImage;}}catch{}
         attach.Click+=async(_,_)=>await AttachFile();clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=(_,_)=>SaveAttachment();preview.Click+=(_,_)=>PreviewImage();
         verify.Click+=(_,_)=>VerifyDevice();
         var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
@@ -106,8 +122,9 @@ sealed class ChatWindow : Form
     Control MessageCard(PeerEngine.Message message)
     {
         bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.ClientSize.Width-45));
-        var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.ClientSize.Width-width-25):4,6,4,6),BackColor=mine?Color.FromArgb(220,233,255):Color.White};
-        card.Controls.Add(MessageLabel(mine?"You":engine.DisplayName(message.From),10,mine?Accent:Ink,width-24,true));
+        var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.ClientSize.Width-width-25):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
+        RoundCorners(card,10);
+        card.Controls.Add(MessageLabel(mine?"You":engine.DisplayName(message.From),10,mine?Accent:NameColor(message.From),width-24,true));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         else{
             var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);
@@ -117,7 +134,7 @@ sealed class ChatWindow : Form
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }
         var when=DateTimeOffset.FromUnixTimeMilliseconds(message.Time).LocalDateTime.ToString("MMM d, HH:mm");
-        if(mine){bool seen=message.Status.StartsWith("Seen");var ticks=seen||message.Status.StartsWith("Delivered")?"✓✓":"✓";card.Controls.Add(MessageLabel($"{when}  ·  {ticks} {message.Status}",9,seen?Accent:Color.SlateGray,width-24));}
+        if(mine){bool seen=message.Status.StartsWith("Seen");var ticks=seen||message.Status.StartsWith("Delivered")?"✓✓":"✓";card.Controls.Add(MessageLabel($"{when}  ·  {ticks} {message.Status}",9,seen?SeenBlue:Color.SlateGray,width-24));}
         else card.Controls.Add(MessageLabel(when,9,Color.SlateGray,width-24));
         return card;
     }
@@ -127,9 +144,9 @@ sealed class ChatWindow : Form
     async Task AttachFile()
     {
         if(selected==null)return;var target=selected;
-        using var dialog=new OpenFileDialog{Title="Share a photo or file · up to 10 MB",Filter="All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif"};
+        using var dialog=new OpenFileDialog{Title=$"Share a photo or file · up to {PeerEngine.MaxFileSize/1024/1024} MB",Filter="All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif"};
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-        try{if(new FileInfo(dialog.FileName).Length>PeerEngine.MaxFileSize)throw new IOException("Files must be 10 MB or smaller.");attach.Enabled=false;var data=await Task.Run(()=>File.ReadAllBytes(dialog.FileName));if(selected!=target)return;pendingAttachment=data;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not prepare file");}finally{attach.Enabled=send.Enabled;}
+        try{if(new FileInfo(dialog.FileName).Length>PeerEngine.MaxFileSize)throw new IOException($"Files must be {PeerEngine.MaxFileSize/1024/1024} MB or smaller.");attach.Enabled=false;var data=await Task.Run(()=>File.ReadAllBytes(dialog.FileName));if(selected!=target)return;pendingAttachment=data;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not prepare file");}finally{attach.Enabled=send.Enabled;}
     }
     void RenderPendingAttachment(){foreach(Control control in attachmentDraft.Controls.Cast<Control>().ToArray())control.Dispose();attachmentDraft.Controls.Clear();if(pendingAttachment==null){attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;return;}attachmentDraft.Visible=true;pendingAttachmentRow.Height=150;var thumb=TryImageThumbnail(pendingAttachment,150,125);if(thumb!=null){var image=new PictureBox{Image=thumb,Width=150,Height=125,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(220,226,237)};image.Click+=(_,_)=>PreviewImage(pendingAttachment,pendingAttachmentName);image.Disposed+=(_,_)=>thumb.Dispose();attachmentDraft.Controls.Add(image);}var details=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+(pendingAttachment.Length/1024.0).ToString("0.#")+" KB\nReady to send",10,Ink,330,true));var remove=new Button{Text="Remove",AutoSize=true};remove.Click+=(_,_)=>ClearPendingAttachment();details.Controls.Add(remove);StyleButtons(details);attachmentDraft.Controls.Add(details);}
     void ClearPendingAttachment(){pendingAttachment=null;pendingAttachmentName="";pendingAttachmentTarget=null;RenderPendingAttachment();}
@@ -189,5 +206,28 @@ sealed class ChatWindow : Form
         var address=new TextBox{Width=420,PlaceholderText="Other device IP, e.g. 192.168.1.20"};var connect=new Button{Text="Find device",AutoSize=true};layout.Controls.Add(address);layout.Controls.Add(connect);dialog.Controls.Add(layout);
         connect.Click+=async(_,_)=>{connect.Enabled=false;try{await engine.AddAddress(address.Text);dialog.Close();Render();}catch(Exception){MessageBox.Show("Device not reachable. Check its IP, LAN Messenger, Wi-Fi and firewall.","Could not find device");}finally{if(!connect.IsDisposed)connect.Enabled=true;}};
         dialog.ShowDialog(this);await Task.CompletedTask;
+    }
+    async Task ChangeAvatar()
+    {
+        using var dialog=new OpenFileDialog{Title="Choose a profile picture",Filter="Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp"};
+        if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+        try{
+            var data=await Task.Run(()=>File.ReadAllBytes(dialog.FileName));
+            var thumb=TryImageThumbnail(data,256,256)??throw new IOException("This file is not a supported image.");
+            using var bytes=new MemoryStream();thumb.Save(bytes,System.Drawing.Imaging.ImageFormat.Png);
+            engine.SetAvatar(bytes.ToArray());
+            avatarImage?.Dispose();avatarImage=thumb;avatarBox.Image=avatarImage;avatarBox.Invalidate();
+        }catch(Exception e){MessageBox.Show(this,e.Message,"Could not set profile picture");}
+    }
+    void ShowAbout()
+    {
+        using var dialog=new Form{Text="About LAN Messenger",Size=new Size(420,260),StartPosition=FormStartPosition.CenterParent,Font=Font,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false};
+        var layout=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(20),FlowDirection=FlowDirection.TopDown,WrapContents=false};
+        layout.Controls.Add(new Label{Text="LAN Messenger",Font=new Font("Segoe UI",16,FontStyle.Bold),ForeColor=HeaderDark,AutoSize=true});
+        layout.Controls.Add(MessageLabel($"Version {AppVersion}",11,Color.SlateGray,360));
+        layout.Controls.Add(MessageLabel("Private Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.",10,Ink,360));
+        layout.Controls.Add(MessageLabel($"Your device ID: {engine.Id}",9,Color.SlateGray,360));
+        var close=new Button{Text="Close",AutoSize=true};close.Click+=(_,_)=>dialog.Close();StyleButtons(layout);layout.Controls.Add(close);
+        dialog.Controls.Add(layout);dialog.ShowDialog(this);
     }
 }
