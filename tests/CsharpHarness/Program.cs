@@ -14,6 +14,9 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="CLEAR")engine.ClearConversation(a[1]);
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
+ if(a[0]=="SETAVATAR")engine.SetAvatar(Convert.FromBase64String(a[1]));
+ if(a[0]=="CLEARAVATAR")engine.SetAvatar(null);
+ if(a[0]=="PEERAVATAR"){var data=engine.PeerAvatar(a[1]);Console.WriteLine(data==null?"PEERAVATAR\tNONE":$"PEERAVATAR\t{SecureIdentity.Hash(data)}\t{data.Length}");}
  if(a[0]=="FILE")engine.QueueFile(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])),Convert.FromBase64String(a[3]));
  if(a[0]=="FILEHASH")foreach(var m in engine.Messages(a[1]).Where(m=>m.Id==a[2])){var data=engine.ReadAttachment(m);Console.WriteLine($"FILEHASH\t{SecureIdentity.Hash(data)}\t{data.Length}");}
  if(a[0]=="CONV")foreach(var m in engine.Messages(a[1]))Print(m);

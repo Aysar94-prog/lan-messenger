@@ -30,6 +30,12 @@ The reader's own status field is reused for this: `Received` becomes `Read` the 
 
 Unread counts are purely local and never touch the wire: a conversation's unread count is the number of its messages still in `Received` status (i.e. not yet marked `Read`). Marking a conversation read is a UI action (opening it while the window is visible and not minimized/backgrounded), not a protocol event.
 
+## Avatar sharing (0.7.3)
+
+A device's profile picture is pushed only to peers it has already verified — the same trust gate as every other frame, and no new key material or signature, since (unlike group relay) an avatar always travels directly between the two devices that verified each other, never through a third party. Each device's periodic peer loop compares its own current avatar's SHA-256 hash against the last hash it successfully delivered to that peer (`Peer.SentAvatarHash`, persisted); on a mismatch (a new photo, a changed photo, or the photo being cleared) it opens a new authenticated, pinned connection and sends `LM4<TAB>AVATAR<TAB>sender-uuid<TAB>hash<TAB>byte-length`, followed by the raw bytes if any. The recipient (only if that sender is already verified) reads exactly that many bytes, rejects on a hash mismatch or a length over 2 MB, stores the result as `avatars/<sender-uuid>.sec` — encrypted the same way as everything else, deleting the file for a zero-length/empty push (a cleared avatar) — replies `LM4<TAB>AVATARACK<TAB>hash`, and records the hash as `Peer.ReceivedAvatarHash`. The sender only updates its own `SentAvatarHash` after a valid ACK, so a dropped connection just retries next cycle, the same retry-by-omission pattern used for queued messages and Seen receipts.
+
+A peer still on an older version simply doesn't understand the `AVATAR` frame and drops the connection like any other unrecognized frame, so this does not affect messaging between mixed-version devices, only whether a photo shows up. A contact's picture is only ever what they explicitly pushed you after mutual verification — never fetched, guessed, or shared onward to anyone else.
+
 ## Verification
 
 Fingerprint = lowercase SHA-256 hex of certificate DER. Sort these two strings ordinally: `localUUID:localFingerprint`, `peerUUID:peerFingerprint`. Safety code = uppercase SHA-256 hex of UTF-8 `LAN Messenger pairing v3\n` followed by the sorted strings separated by LF. Show all 64 hex characters in eight groups.

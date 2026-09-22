@@ -151,6 +151,14 @@ try:
     assert not has(pt,'Old expired local message','Queued')
     pt.stop()
     print('PASS: an already-expired group message is purged locally at startup, before any sync',flush=True)
+    # Profile pictures (0.7.1+ sharing): pushed only to already-verified peers, over the same
+    # verified connection as everything else, never fetched or guessed. Uses b/c (verified with
+    # each other since the start of this file and never stopped/replaced), not a (stopped above).
+    avatar_hash=hashlib.sha256(png).hexdigest()
+    b.command('SETAVATAR\t'+base64.b64encode(png).decode())
+    wait_for(lambda:c.command('PEERAVATAR\t'+bid)[0][1:]==[avatar_hash,str(len(png))],'A verified device pushes its profile picture and the other side receives it')
+    b.command('CLEARAVATAR')
+    wait_for(lambda:c.command('PEERAVATAR\t'+bid)[0][1]=='NONE','Clearing a profile picture removes it from the other side too')
     # Files are protected separately and never stored as raw plaintext.
     for directory in work.glob('*/attachments'):
         for path in directory.glob('*.sec'):

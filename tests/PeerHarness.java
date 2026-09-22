@@ -34,6 +34,9 @@ public class PeerHarness {
    if(a[0].equals("CLEAR"))e.clearConversation(a[1]);
    if(a[0].equals("READ"))e.markRead(a[1]);
    if(a[0].equals("UNREAD"))System.out.println("UNREAD\t"+e.unread(a[1]));
+   if(a[0].equals("SETAVATAR"))e.setAvatar(Base64.getDecoder().decode(a[1]));
+   if(a[0].equals("CLEARAVATAR"))e.setAvatar(null);
+   if(a[0].equals("PEERAVATAR")){byte[] data=e.peerAvatar(a[1]);System.out.println("PEERAVATAR\t"+(data==null?"NONE":SecureIdentity.hash(data)+"\t"+data.length));}
    if(a[0].equals("FILE"))e.queueFile(a[1],PeerEngine.dec(a[2]),Base64.getDecoder().decode(a[3]));
    if(a[0].equals("FILEHASH")){for(PeerEngine.Message m:e.messages(a[1]))if(m.id.equals(a[2])){byte[] data=e.readAttachment(m);System.out.println("FILEHASH\t"+SecureIdentity.hash(data)+"\t"+data.length);}}
    if(a[0].equals("CONV")){for(PeerEngine.Message m:e.messages(a[1]))print(m);}

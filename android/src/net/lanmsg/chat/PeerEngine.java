@@ -11,7 +11,7 @@ import java.util.concurrent.*;
 public final class PeerEngine implements Closeable {
   public static final int DISCOVERY_PORT=43871, MESSAGE_PORT=43872;
   public static final class Peer {
-    public String id,name,host; public int port; public long seen; public String fingerprint="",verified="",publicKey="";
+    public String id,name,host; public int port; public long seen; public String fingerprint="",verified="",publicKey="",sentAvatarHash="",receivedAvatarHash="";
     Peer(String i,String n,String h,int p){id=i;name=n;host=h;port=p;}
     public boolean online(){return System.currentTimeMillis()-seen<12000;}
     public boolean trusted(){return !fingerprint.isEmpty()&&fingerprint.equals(verified);}
@@ -55,7 +55,7 @@ public final class PeerEngine implements Closeable {
   static String dec(String s){return new String(Base64.getDecoder().decode(s),StandardCharsets.UTF_8);}
   static boolean uuid(String s){try{return UUID.fromString(s).toString().equals(s);}catch(Exception e){return false;}}
   static String cleanName(String s){s=s.trim();return s.isEmpty()?"My device":s.substring(0,Math.min(s.length(),30));}
-  public synchronized List<Peer> peers(){ArrayList<Peer> result=new ArrayList<>();for(Peer p:peers.values()){Peer copy=new Peer(p.id,p.name,p.host,p.port);copy.seen=p.seen;copy.fingerprint=p.fingerprint;copy.verified=p.verified;copy.publicKey=p.publicKey;result.add(copy);}return result;}
+  public synchronized List<Peer> peers(){ArrayList<Peer> result=new ArrayList<>();for(Peer p:peers.values()){Peer copy=new Peer(p.id,p.name,p.host,p.port);copy.seen=p.seen;copy.fingerprint=p.fingerprint;copy.verified=p.verified;copy.publicKey=p.publicKey;copy.sentAvatarHash=p.sentAvatarHash;copy.receivedAvatarHash=p.receivedAvatarHash;result.add(copy);}return result;}
   public synchronized List<Message> messages(String peer){LinkedHashMap<String,Message> result=new LinkedHashMap<>();HashMap<String,int[]> counts=new HashMap<>();for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(peer):m.from.equals(peer)||m.to.equals(peer)){String key=m.from+"/"+m.id;if(!result.containsKey(key))result.put(key,m.copy());int[] c=counts.get(key);if(c==null){c=new int[3];counts.put(key,c);}c[0]++;if(m.status.equals("Seen"))c[2]++;if(m.status.equals("Seen")||m.status.equals("Delivered"))c[1]++;}for(Map.Entry<String,Message> entry:result.entrySet()){Message m=entry.getValue();int[] c=counts.get(entry.getKey());if(m.from.equals(id)&&!m.groupId.isEmpty())m.status=c[2]==c[0]?"Seen":c[1]==c[0]?"Delivered":"Queued ("+c[1]+"/"+c[0]+" delivered)";}return new ArrayList<>(result.values());}
 
   public synchronized int pending(){int n=0;for(Message m:messages)if(m.status.equals("Queued"))n++;return n;}
@@ -64,6 +64,14 @@ public final class PeerEngine implements Closeable {
   public synchronized byte[] avatar(){File path=avatarPath();if(!path.exists())return null;try{return protector.unprotect(SecureIdentity.readFile(path));}catch(Exception e){return null;}}
   public synchronized void setAvatar(byte[] data)throws IOException {File path=avatarPath();if(data==null){if(path.exists()&&!path.delete())throw new IOException("Cannot remove profile picture");notifyChanged();return;}
     File tmp=new File(path+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}if(!tmp.renameTo(path))throw new IOException("Cannot save profile picture");notifyChanged();}
+  // A peer's photo, once they've sent it over a verified connection — never fetched or guessed, only what they pushed us.
+  File peerAvatarPath(String peerId){return new File(new File(file.getParentFile(),"avatars"),peerId+".sec");}
+  public synchronized byte[] peerAvatar(String peerId){File path=peerAvatarPath(peerId);if(!path.exists())return null;try{return protector.unprotect(SecureIdentity.readFile(path));}catch(Exception e){return null;}}
+  void setPeerAvatar(String peerId,byte[] data)throws IOException {
+    File path=peerAvatarPath(peerId);if(!path.getParentFile().exists()&&!path.getParentFile().mkdirs())throw new IOException("Cannot create avatar storage");
+    if(data==null||data.length==0){if(path.exists()&&!path.delete())throw new IOException("Cannot remove contact picture");return;}
+    File tmp=new File(path+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}if(!tmp.renameTo(path))throw new IOException("Cannot save contact picture");
+  }
   public synchronized void queue(String peer,String text)throws IOException {
     queueContent(peer,text,"",null);
   }
@@ -75,7 +83,7 @@ public final class PeerEngine implements Closeable {
     String[] h=lines.get(0).split("\t",-1);if(h.length!=3||(!h[0].equals("LMSTORE2")&&!h[0].equals("LMSTORE3")&&!h[0].equals("LMSTORE4"))||!uuid(h[1]))throw new IOException("Invalid storage");
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
-      if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length==8)p.publicKey=a[7];loadedPeers.put(a[1],p);}
+      if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Integer.parseInt(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
       else if(a[0].equals("G")&&a.length==6)loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),a[5]));
       else if(a[0].equals("H")&&a.length==2)loadedHidden.add(a[1]);else throw new IOException("Invalid storage row");}
@@ -84,7 +92,7 @@ public final class PeerEngine implements Closeable {
   }
   synchronized void save()throws IOException {
     StringBuilder text=new StringBuilder("LMSTORE4\t"+id+"\t"+enc(name)+"\n");
-    for(Peer p:peers.values())text.append("P\t").append(p.id).append('\t').append(enc(p.name)).append('\t').append(p.host).append('\t').append(p.port).append('\t').append(p.fingerprint).append('\t').append(p.verified).append('\t').append(p.publicKey).append('\n');
+    for(Peer p:peers.values())text.append("P\t").append(p.id).append('\t').append(enc(p.name)).append('\t').append(p.host).append('\t').append(p.port).append('\t').append(p.fingerprint).append('\t').append(p.verified).append('\t').append(p.publicKey).append('\t').append(p.sentAvatarHash).append('\t').append(p.receivedAvatarHash).append('\n');
     for(Message m:messages)text.append("M\t").append(m.id).append('\t').append(m.from).append('\t').append(m.to).append('\t').append(m.time).append('\t').append(enc(m.text)).append('\t').append(m.status).append("\t1\t").append(m.groupId).append('\t').append(enc(m.fileName)).append('\t').append(m.fileSize).append('\t').append(m.fileHash).append('\t').append(m.signature).append('\t').append(m.ttlEligible?"1":"0").append('\n');
     for(Group g:groups.values())text.append("G\t").append(g.id).append('\t').append(g.owner).append('\t').append(enc(g.name)).append('\t').append(String.join(",",g.members)).append('\t').append(g.acknowledged).append('\n');for(String key:hidden)text.append("H\t").append(key).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
@@ -121,7 +129,7 @@ public final class PeerEngine implements Closeable {
   public synchronized void remember(String peerId,String peerName,String host,int peerPort)throws IOException {
     if(peerId.equals(id))return;
     Peer old=peers.get(peerId);boolean modified=old==null||!old.host.equals(host)||old.port!=peerPort||!old.name.equals(peerName);
-    Peer p=new Peer(peerId,cleanName(peerName),host,peerPort);if(old!=null){p.fingerprint=old.fingerprint;p.verified=old.verified;p.publicKey=old.publicKey;}p.seen=System.currentTimeMillis();peers.put(peerId,p);
+    Peer p=new Peer(peerId,cleanName(peerName),host,peerPort);if(old!=null){p.fingerprint=old.fingerprint;p.verified=old.verified;p.publicKey=old.publicKey;p.sentAvatarHash=old.sentAvatarHash;p.receivedAvatarHash=old.receivedAvatarHash;}p.seen=System.currentTimeMillis();peers.put(peerId,p);
     if(modified)try{save();}catch(IOException e){if(old==null)peers.remove(peerId);else peers.put(peerId,old);throw e;}notifyChanged();
   }
   public void addAddress(String address)throws IOException {
@@ -149,6 +157,7 @@ public final class PeerEngine implements Closeable {
     if(m.length==6&&m[0].equals("LM4")&&m[1].equals("GROUP")){acceptGroup(m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ")&&uuid(m[2])){handleSync(s,m[2],m[3],h[2]);notifyChanged();return;}
+    if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){handleAvatar(s,m[2],m[3],m[4]);notifyChanged();return;}
     if((m.length!=8&&m.length!=12&&m.length!=13)||!m[0].equals("LM4")||!m[1].equals("MSG")||!uuid(m[2])||!m[3].equals(h[2])||!m[4].equals(id))return;
     long at=Long.parseLong(m[6]);if(at<0||at>253402300799999L)return;
     String text=dec(m[7]),group=m.length>=12?m[8]:"",name=m.length>=12?dec(m[9]):"",hash=m.length>=12?m[11]:"";int size=m.length>=12?Integer.parseInt(m[10]):0;String signature=m.length==13?m[12]:"";
@@ -167,6 +176,17 @@ public final class PeerEngine implements Closeable {
     if(incoming!=null)try{received.accept(incoming);}catch(Exception ignored){}
     write(s,"LM4\tACK\t"+m[2]+"\t"+id);notifyChanged();
   }catch(Exception ignored){}}
+  static final int MAX_AVATAR_SIZE=2_000_000;
+  void handleAvatar(Socket s,String senderId,String hash,String lengthText)throws IOException {
+    int length;try{length=Integer.parseInt(lengthText);}catch(NumberFormatException e){return;}
+    if(length<0||length>MAX_AVATAR_SIZE)return;
+    byte[] data=length>0?readBytes(s,length):new byte[0];
+    try{if(length>0&&!SecureIdentity.hash(data).equals(hash))return;}catch(Exception e){throw new IOException(e);}
+    synchronized(this){Peer p=peers.get(senderId);if(p==null||!p.trusted())return;}
+    setPeerAvatar(senderId,length>0?data:null);
+    synchronized(this){Peer p=peers.get(senderId);if(p==null)return;String old=p.receivedAvatarHash;p.receivedAvatarHash=hash;try{save();}catch(IOException e){p.receivedAvatarHash=old;throw e;}}
+    write(s,"LM4\tAVATARACK\t"+hash);
+  }
   synchronized void markSeen(String messageId,String readerId)throws IOException{Message row=null;for(Message x:messages)if(x.id.equals(messageId)&&x.from.equals(id)&&x.to.equals(readerId)&&!x.status.equals("Seen")){row=x;break;}if(row==null)return;String old=row.status;row.status="Seen";try{save();}catch(IOException e){row.status=old;throw e;}}
   static byte[] canonicalBytes(String msgId,String group,String sender,long time,String text,String fileName,int fileSize,String fileHash){
     return (msgId+"\t"+group+"\t"+sender+"\t"+time+"\t"+enc(text)+"\t"+enc(fileName)+"\t"+fileSize+"\t"+fileHash).getBytes(StandardCharsets.UTF_8);
@@ -251,6 +271,16 @@ public final class PeerEngine implements Closeable {
       if(!read(s).equals("LM4\tSEENACK\t"+m.id)||!trusted(p.id,fingerprint))return;
       synchronized(this){if(!messages.contains(m))continue;m.status="Seen";try{save();}catch(IOException e){m.status="Read";throw e;}}notifyChanged();
     }catch(Exception e){return;}
+    if(p.trusted()){
+      byte[] avatarData=avatar();String hash;try{hash=avatarData!=null?SecureIdentity.hash(avatarData):"";}catch(Exception e){return;}
+      if(!p.sentAvatarHash.equals(hash))try(Socket s=connect(p.host,p.port)){
+        String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
+        write(s,"LM4\tAVATAR\t"+id+"\t"+hash+"\t"+(avatarData!=null?avatarData.length:0));
+        if(avatarData!=null&&avatarData.length>0){s.getOutputStream().write(avatarData);s.getOutputStream().flush();}
+        if(!read(s).equals("LM4\tAVATARACK\t"+hash)||!trusted(p.id,fingerprint))return;
+        synchronized(this){Peer current=peers.get(p.id);if(current==null)return;String old=current.sentAvatarHash;current.sentAvatarHash=hash;try{save();}catch(IOException e){current.sentAvatarHash=old;throw e;}}notifyChanged();
+      }catch(Exception e){return;}
+    }
   }
 
 
