@@ -10,11 +10,15 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
   dotnet build tests/CsharpHarness/CsharpHarness.csproj -c Release --configfile NuGet.Config -o "$TestRoot\csharp"
   Check-Result
-  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java
+  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java tests/DailyUploadPolicyTest.java
+  Check-Result
+  & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.DailyUploadPolicyTest "$TestRoot\policy-$([Guid]::NewGuid().ToString('N'))"
   Check-Result
   python tests/integration.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/features.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
+  python tests/upload_policy.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/transfers.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result

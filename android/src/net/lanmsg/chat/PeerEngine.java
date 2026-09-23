@@ -32,6 +32,7 @@ public final class PeerEngine implements Closeable {
     Message copy(){Message m=new Message(id,from,to,text,time,status,groupId,fileName,fileSize,fileHash,signature,ttlEligible);return m;}
   }
   final File file;
+  public final DailyUploadPolicy uploadPolicy;
   final SecureIdentity identity;
   final SecureIdentity.Protector protector;
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
@@ -63,6 +64,7 @@ public final class PeerEngine implements Closeable {
     this.protector=protector;
     if(!directory.exists()&&!directory.mkdirs())throw new IOException("Cannot create message storage.");
     file=new File(directory,"state.txt");
+    uploadPolicy=new DailyUploadPolicy(directory,protector);
     if(file.exists()||new File(file+".bak").exists()) {
       try{load(file);}catch(Exception e){try{load(new File(file+".bak"));}catch(Exception other){throw new IOException("Saved data could not be read. Keep the data folder for recovery.",other);}}
     } else {id=UUID.randomUUID().toString();name=cleanName(defaultName);}
@@ -392,9 +394,9 @@ public final class PeerEngine implements Closeable {
       write(s,"LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count);
       MessageDigest digest;try{digest=MessageDigest.getInstance("SHA-256");}catch(Exception e){throw new IOException(e);}
       OutputStream out=new NetworkTimeoutOutputStream(s);byte[] buffer=new byte[256*1024];long done=0;
-      while(done<count){if(!retained(m)||!trusted(peerId,SecureIdentity.remote((SSLSocket)s)))throw new IOException("Transfer no longer authorized");int n=source.read(buffer,0,(int)Math.min(buffer.length,count-done));if(n<0)throw new EOFException();digest.update(buffer,0,n);out.write(buffer,0,n);done+=n;}
+      while(done<count){if(!retained(m)||!trusted(peerId,SecureIdentity.remote((SSLSocket)s)))throw new IOException("Transfer no longer authorized");int n=source.read(buffer,0,(int)Math.min(buffer.length,count-done));if(n<0)throw new EOFException();digest.update(buffer,0,n);uploadPolicy.write(out,buffer,0,n);done+=n;}
       write(s,"LM4\tPART\t"+hex(digest.digest()));
-    }finally{fileSlots.release();}
+    }finally{try{uploadPolicy.flush();}finally{fileSlots.release();}}
   }
   public void downloadAttachment(Message m)throws IOException{
     if(m.from.equals(id)||hasAttachment(m))return;
@@ -634,5 +636,5 @@ public final class PeerEngine implements Closeable {
   }
 
   void notifyChanged(){try{changed.run();}catch(Exception ignored){}}
-  public synchronized void close(){running=false;try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
+  public synchronized void close(){running=false;try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
 }

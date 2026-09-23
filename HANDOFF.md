@@ -1,6 +1,20 @@
-# LAN Messenger handoff — Windows 0.8.1 / Android 0.8.0 test release
+# LAN Messenger handoff — Windows 0.8.1 / Android 0.8.2 test release
 
 Updated 2026-09-23. Continue this existing project; do not rebuild from scratch.
+
+## Android 0.8.2 — approved daily upload tiers, 2026-09-23
+
+User explicitly approved Android-only implementation to reduce remaining session usage. Implement only the agreed per-device daily upload policy: <2 GiB unlimited, >=2 GiB 30 MiB/s, >=5 GiB 20 MiB/s, >=10 GiB 10 MiB/s, aggregate across all served file streams. No Windows code change and no additional proposed anti-flood rules.
+
+New android/src/net/lanmsg/chat/DailyUploadPolicy.java is Android-independent Java for real-engine testing. It wraps outgoing FETCH payload writes in PeerEngine. Both normal snapshots and original Fast file sources (plus group relays) therefore share accounting/throttling. Text, offers, preparation, incoming files and avatars bypass it. A synchronized policy lock serializes bounded 256 KiB write slices and pacing, independent of the engine state lock. Tier boundaries split slices exactly; monotonic time paces capped output and does not accumulate a large idle burst.
+
+daily-upload.sec is protected by the existing OS storage protector; data format LMUPLOAD1, local date, byte count. Count successful output writes, not offers or attempted writes that throw. Flush every 4 MiB or one second of active output and in transfer finally/service close, with synced temporary file and replacement. Abrupt crashes may lose approximately 4 MiB; graceful restart retains exact completed count. Actual partial socket bytes on a failed write cannot be observed by this OutputStream API. Invalid protected accounting fails startup rather than silently granting a fresh quota. Day advances at local midnight, including while running; backwards clock changes do not reset it. Clearing conversations leaves accounting alone. This is not centralized or tamper-proof against app data deletion, altered apps, rooted devices or manual forward clock changes.
+
+Profile dialog displays uploaded GiB and cap in MiB/s. APK versionName/APP_VERSION 0.8.2, versionCode 16, existing signing key. Windows remains 0.8.1 and uncapped.
+
+Tests: new DailyUploadPolicyTest.java exercises exact 2/5/10 GiB boundaries with an injected clock, concurrent aggregate cap, persistence, midnight, rollback, failed writes and corrupt storage. New upload_policy.py exercises actual Java→C# normal/fast transfers, no accounting before Download, saved usage across engine restart, two simultaneous 32 MiB downloads sharing the 10 MiB/s cap, and live text delivery. Harness-only SEEDUSAGE command reaches higher tiers without uploading 10 GiB; production has no such API. tests/run.ps1 includes the new Java source and policy tests.
+
+Scratch logs/build: new-chat-2/work/android082. Device UI/Keystore performance and real Wi-Fi still require physical Android testing. Release is an APK update and source archive in new-chat-2/outputs. Final verification passed: DailyUploadPolicyTest (all thresholds, concurrency, date/persistence/error cases); upload_policy.py (64 MiB across two concurrent uploads in 8.432 s under the shared 10 MiB/s cap, normal/fast accounting and restart); features.py (groups/files/clear/receipts/relay/expiry/avatars); transfers.py (128 MiB, resume, integrity, authorization and chat during transfer). Android APK built and existing-key v2/v3 signature verification passed. Physical Android Profile/Keystore and Wi-Fi remain untested. No Windows source changes.
 
 ## Windows 0.8.1 — chat switching repair, 2026-09-23
 

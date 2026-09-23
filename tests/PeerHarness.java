@@ -12,6 +12,8 @@ public class PeerHarness {
   BufferedReader input=new BufferedReader(new InputStreamReader(System.in,StandardCharsets.UTF_8));String line;
   while((line=input.readLine())!=null){String[] a=line.split("\t",-1);try{
    if(a[0].equals("STOP"))break;
+   if(a[0].equals("USAGE"))System.out.println("USAGE\t"+e.uploadPolicy.sentToday()+"\t"+e.uploadPolicy.limitBytesPerSecond());
+   if(a[0].equals("SEEDUSAGE"))synchronized(e.uploadPolicy){e.uploadPolicy.bytes=Long.parseLong(a[1]);e.uploadPolicy.dirty=true;e.uploadPolicy.flush();}
    if(a[0].equals("SLOWMS"))slowMs.set(Integer.parseInt(a[1]));
    if(a[0].equals("ADD"))e.addAddress(a[1]);
    if(a[0].equals("CODE"))System.out.println("CODE\t"+e.pairingCode(a[1]));

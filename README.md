@@ -1,8 +1,25 @@
-# LAN Messenger — Windows 0.8.1 / Android 0.8.0 test release
+# LAN Messenger — Windows 0.8.1 / Android 0.8.2 test release
 
 Windows 0.8.1 fixes blank row heights and reentrant layout/repainting when switching scrolled conversations. Android 0.8.0 remains compatible; no Android update is needed for this UI fix.
 
 Private LAN messaging without accounts, a host computer or a cloud server. English interface with Unicode messages. **Update both devices and every group member to 0.8.0 for attachments and group synchronization.**
+
+## Android daily upload policy (0.8.2)
+
+Per app/device identity, all ordinary, Fast file and relayed file payloads share one daily upload counter and one aggregate speed cap:
+
+| Payload sent today | Aggregate upload cap |
+|---|---|
+| Below 2 GiB | Unlimited |
+| 2–5 GiB | 30 MiB/s |
+| 5–10 GiB | 20 MiB/s |
+| 10 GiB and above | 10 MiB/s |
+
+Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The cap changes within a transfer at the threshold, rather than waiting for the next file. Repeated uploads, retries and group relay bytes count again because they consume bandwidth. Offers, local preparation, downloads, text, avatars and TLS overhead do not count. Each completed socket payload write is counted; it is not an acknowledgement of recipient disk storage.
+
+Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
+
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.2.apk over the existing app without uninstalling.
 
 ## Sending files
 
