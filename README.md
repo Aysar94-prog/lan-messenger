@@ -1,4 +1,6 @@
-# LAN Messenger 0.8.0 — Windows and Android test release
+# LAN Messenger — Windows 0.8.1 / Android 0.8.0 test release
+
+Windows 0.8.1 fixes blank row heights and reentrant layout/repainting when switching scrolled conversations. Android 0.8.0 remains compatible; no Android update is needed for this UI fix.
 
 Private LAN messaging without accounts, a host computer or a cloud server. English interface with Unicode messages. **Update both devices and every group member to 0.8.0 for attachments and group synchronization.**
 
@@ -27,7 +29,7 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 Android: install LanMessenger-0.8.0.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.0.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.1.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
 Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing, but attachments and group sync need 0.8.0 on both ends. Do not downgrade.
 

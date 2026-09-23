@@ -85,6 +85,21 @@ class Check
     await Wait(()=>engine.HasAttachment(offer),"Download button explicitly receives the attachment");Call("Render");
     using(var manualShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(manualShot,new Rectangle(0,0,form.Width,form.Height));manualShot.Save(Path.Combine(root,"windows-download.png"));}
     Console.WriteLine("PASS: progress and append retain existing cards; manual download works");
+    for(int cycle=0;cycle<6;cycle++){
+      Call("RestoreWindow",cycle%2==0?groupId:second.Id);await Task.Delay(80);Call("Render");
+      var panel=(FlowLayoutPanel)Field("feed");
+      panel.AutoScrollPosition=new Point(0,panel.VerticalScroll.Maximum);await Task.Delay(30);
+      var visibleCards=panel.Controls.Cast<Control>().ToArray();
+      for(int i=0;i<visibleCards.Length;i++){
+        var card=visibleCards[i];
+        if(card.Controls[0].Height>50)throw new Exception("Sender row retained default blank height");
+        if(i>0&&card.Top<visibleCards[i-1].Bottom)throw new Exception("Cards overlap after chat switch");
+        foreach(var actions in card.Controls.OfType<FlowLayoutPanel>().Where(p=>p.Controls.OfType<Button>().Any()))
+          if(actions.Height>60)throw new Exception("File actions retained default blank height");
+      }
+    }
+    using(var switchShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(switchShot,new Rectangle(0,0,form.Width,form.Height));switchShot.Save(Path.Combine(root,"windows-switch.png"));}
+    Console.WriteLine("PASS: repeated scrolled chat switching keeps rows compact and cards separate");
     Call("RestoreWindow",groupId);engine.ClearConversation(groupId);Call("Render");if(((ComboBox)Field("files")).Items.Count!=0||engine.Messages(groupId).Length!=0)throw new Exception("Cleared UI retained attachments");
    }catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
    finally{type.GetField("exiting",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,true);form.Close();if(engine.Running||trayVisible())Environment.ExitCode=1;Application.ExitThread();}

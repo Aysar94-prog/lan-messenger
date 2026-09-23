@@ -1,8 +1,19 @@
-# LAN Messenger handoff — 0.8.0 (Android and Windows) test release
+# LAN Messenger handoff — Windows 0.8.1 / Android 0.8.0 test release
 
 Updated 2026-09-23. Continue this existing project; do not rebuild from scratch.
 
-## Current continuation — 0.8.0, 2026-09-23
+## Windows 0.8.1 — chat switching repair, 2026-09-23
+
+User reported white/overlapping areas when switching chats. Windows-only UI patch:
+- Nested sender/action FlowLayoutPanels now use GrowAndShrink instead of retaining their default blank height.
+- Render is guarded against layout/Resize reentrancy; a pending update is deferred until the current render completes.
+- Switching/rebuilding resets the old scroll offset before removing controls. Scroll and switched feed invalidate child windows to repaint exposed areas.
+- Existing card retention for progress/new messages remains intact. No protocol, storage or Android change.
+- Windows version 0.8.1; Android stays 0.8.0 and is compatible.
+- Native UI suite passed (exit 0), including six repeated switches between a group and direct conversation while scrolled, compact sender/action row heights, non-overlapping cards, progress retention, notifications and explicit Download. Build 0 warnings/errors. Screenshot windows-switch.png visually inspected under new-chat-2/work/v081-ui/results/ui-4f705664ae1c4114a9d30e184e811abb.
+- Deliver updated Windows ZIP in new-chat-2/outputs. Exit the old app through tray Exit, extract and run the updated executable. Local data stays in the existing app-data directory. User's exact physical desktop/DPI remains an acceptance check.
+
+## Previous continuation — 0.8.0, 2026-09-23
 
 Scope accepted by the user: fix transfer-induced chat latency and Windows blinking, blue/gray presence, dedicated fast-large-file action separate from the normal 1 GiB action, and recipient-triggered Download for **both** modes. Continue locally; do not add a remote or push. Original source tree retained; untracked windows-dist-v07.7z was left untouched.
 
