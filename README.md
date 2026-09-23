@@ -44,7 +44,7 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.0.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-0.8.2.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
 Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.1.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
