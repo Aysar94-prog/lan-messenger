@@ -98,7 +98,11 @@ public final class PeerEngine implements Closeable {
     File tmp=new File(path+"."+UUID.randomUUID()+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}atomicReplace(tmp,path);
   }
   public void queue(String peer,String text)throws IOException {
-    queueContentStream(peer,text,"",null,0,null);flush();
+    queueContentStream(peer,text,"",null,0,null);
+  }
+  // Persist a text message before attempting network delivery, so the UI can show it immediately.
+  public void queueLocal(String peer,String text)throws IOException {
+    queueContentStream(peer,text,"",null,0,null,false);
   }
 
   synchronized void load(File source)throws IOException {
@@ -513,6 +517,9 @@ public final class PeerEngine implements Closeable {
     queueContentStream(conversation,caption,safeFileName(name),source,size,onProgress);
   }
   void queueContentStream(String conversation,String text,String fileName,InputStream data,long declaredSize,BiConsumer<Long,Long> onProgress)throws IOException {
+    queueContentStream(conversation,text,fileName,data,declaredSize,onProgress,true);
+  }
+  void queueContentStream(String conversation,String text,String fileName,InputStream data,long declaredSize,BiConsumer<Long,Long> onProgress,boolean dispatch)throws IOException {
     text=text.trim();if(text.length()>2000||(data==null&&text.isEmpty()))throw new IOException("Messages must contain 1–2000 characters.");
     if(data!=null&&declaredSize>MAX_FILE_SIZE)throw new IOException("Files must be "+(MAX_FILE_SIZE/1024/1024)+" MB or smaller.");
     ArrayList<String> recipients=new ArrayList<>();String groupId="";
@@ -532,7 +539,7 @@ public final class PeerEngine implements Closeable {
     synchronized(this){
       messages.addAll(batch);try{save();}catch(IOException e){messages.removeAll(batch);if(fileName!=null&&!fileName.isEmpty())try{attachmentPath(batch.get(0)).delete();}catch(IOException ignored){}throw e;}
     }
-    notifyChanged();queueEpoch.incrementAndGet();flush();
+    notifyChanged();queueEpoch.incrementAndGet();if(dispatch)flush();
   }
   public synchronized void clearConversation(String conversation)throws IOException {
     ArrayList<Message> removed=new ArrayList<>(),old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);

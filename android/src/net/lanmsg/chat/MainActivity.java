@@ -36,6 +36,11 @@ public class MainActivity extends Activity {
   static final long THUMBNAIL_PREVIEW_CAP=20*1024*1024;
   // (bytesDone, bytesTotal) per in-flight message id — transient, never persisted.
   final Map<String,long[]> transferProgress=new HashMap<>();
+  final Map<String,Integer> visibleMessageCounts=new HashMap<>();
+  final android.util.LruCache<String,Bitmap> thumbnailCache=new android.util.LruCache<String,Bitmap>(16*1024*1024){
+    @Override protected int sizeOf(String key,Bitmap bitmap){return bitmap.getByteCount();}
+  };
+  boolean loadingEarlier;
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -74,7 +79,7 @@ public class MainActivity extends Activity {
   }
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
-  void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))clearPendingAttachment();selected=id;lastSignature="";frame();
+  void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))clearPendingAttachment();selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
     PeerEngine chatEngine=MessengerService.engine;boolean isGroup=false;String chatInitial="?";int chatColor=accent;
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
       if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
@@ -87,6 +92,14 @@ public class MainActivity extends Activity {
     final boolean isGroupFinal=isGroup;
     final TextView[] noticeHolder={null};if(isGroupFinal){noticeHolder[0]=label("Group messages and their attachments are automatically deleted after 7 days of being sent.",12);noticeHolder[0].setTextColor(Color.rgb(112,128,144));root.addView(noticeHolder[0]);}
     scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(chatBg);feed=column();feed.setPadding(dp(6),dp(6),dp(6),dp(6));scroll.addView(feed);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    scroll.setOnScrollChangeListener((View.OnScrollChangeListener)(view,x,y,oldX,oldY)->{
+      if(loadingEarlier||y>dp(24)||oldY<=y||selected==null)return;
+      PeerEngine engine=MessengerService.engine;if(engine==null)return;
+      int current=visibleMessageCounts.getOrDefault(selected,10);
+      if(engine.messages(selected).size()<=current)return;
+      loadingEarlier=true;int previousHeight=feed.getHeight();visibleMessageCounts.put(selected,current+20);lastSignature="";render();
+      scroll.post(()->{scroll.scrollTo(0,Math.max(0,feed.getHeight()-previousHeight));loadingEarlier=false;});
+    });
     attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->capturePhoto());photo.setOnClickListener(v->pickFile(true));file.setOnClickListener(v->pickFile(false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->pickFastFile());HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
     send.setOnClickListener(v->{
       PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}
@@ -104,8 +117,9 @@ public class MainActivity extends Activity {
               e.queueFileStream(target,caption,in,size,name,(done,tot)->ui.post(()->{if(status!=null&&tot>0)status.setText("Preparing to send… "+(done*100/tot)+"%");}));
             }
             if(cameraFile2!=null)cameraFile2.delete();
-          }else e.queue(target,caption);
+          }else e.queueLocal(target,caption);
           ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)clearPendingAttachment();sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);lastSignature="";render();});
+          if(uri==null)try{e.flush();}catch(Exception ignored){}
         }catch(Exception error){ui.post(()->{sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);problem(error);});}
       },"lan-send").start();
     });renderPendingAttachment();render();
@@ -163,11 +177,12 @@ public class MainActivity extends Activity {
       return;
     }
     PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;heading.setText(group!=null?group.name+" · "+group.members.length+" members":peer.name+" · "+(peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy);List<PeerEngine.Message> messages=e.messages(selected);
-    StringBuilder signature=new StringBuilder(selected);for(PeerEngine.Message m:messages)signature.append(m.id).append(m.status).append(e.hasAttachment(m)).append(e.downloading(m));if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();progressLabels.clear();
+    int visibleCount=visibleMessageCounts.getOrDefault(selected,10);int start=Math.max(0,messages.size()-visibleCount);
+    StringBuilder signature=new StringBuilder(selected).append(start);for(int i=start;i<messages.size();i++){PeerEngine.Message m=messages.get(i);signature.append(m.id).append(m.status).append(e.hasAttachment(m)).append(e.downloading(m));}if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();progressLabels.clear();
     if(messages.isEmpty())feed.addView(label("Verify this device before chatting.\n\nQueued messages send after both verified devices reconnect. Delivered means saved on the other device.",17));
     int maxBubble=Math.min(dp(320),(int)(getResources().getDisplayMetrics().widthPixels*0.78));
     byte[] ownAvatarRaw=e.avatar();Bitmap ownAvatarBmp=ownAvatarRaw==null?null:inlineBitmap(ownAvatarRaw);
-    for(PeerEngine.Message m:messages){boolean mine=m.from.equals(e.id);LinearLayout card=column();card.setPadding(dp(12),dp(6),dp(12),dp(8));card.setBackground(bg(mine?bubbleMine:Color.WHITE));
+    for(int messageIndex=start;messageIndex<messages.size();messageIndex++){PeerEngine.Message m=messages.get(messageIndex);boolean mine=m.from.equals(e.id);LinearLayout card=column();card.setPadding(dp(12),dp(6),dp(12),dp(8));card.setBackground(bg(mine?bubbleMine:Color.WHITE));
       LinearLayout whoRow=new LinearLayout(this);whoRow.setOrientation(LinearLayout.HORIZONTAL);whoRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
       String whoName=mine?"You":e.displayName(m.from);int whoColor=mine?accent:nameColor(m.from);
       LinearLayout.LayoutParams miniAvatarParams=new LinearLayout.LayoutParams(dp(18),dp(18));miniAvatarParams.setMargins(0,0,dp(6),0);
@@ -181,16 +196,16 @@ public class MainActivity extends Activity {
       if(mine){row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));row.addView(card,new LinearLayout.LayoutParams(-2,-2));}else{row.addView(card,new LinearLayout.LayoutParams(-2,-2));row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));}
       LinearLayout.LayoutParams rowParams=new LinearLayout.LayoutParams(-1,-2);rowParams.setMargins(0,dp(5),0,dp(5));feed.addView(row,rowParams);}
     updateProgressLabels(e);
-    if(bottom)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
+    if(bottom&&!loadingEarlier)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
   }
   void updateProgressLabels(PeerEngine e){if(selected==null)return;for(PeerEngine.Message m:e.messages(selected)){TextView view=progressLabels.get(m.id);if(view!=null){long[] p=transferProgress.get(m.id);view.setText(e.downloading(m)?p!=null&&p[1]>0?"Downloading "+(p[0]*100/p[1])+"%":"Waiting for sender…":e.hasAttachment(m)?"":"Tap Download to receive this file");}}}
   // Guarded by size: decoding an inline thumbnail means fully decrypting the attachment into
   // memory (readAttachment), which must stay off the table for anything near the 1 GB cap —
   // rendering a whole conversation's history would otherwise decrypt every large file in it.
-  Bitmap inlineBitmap(PeerEngine engine,PeerEngine.Message message){if(message.fileSize>THUMBNAIL_PREVIEW_CAP)return null;try{return inlineBitmap(engine.readAttachment(message));}catch(Exception ignored){return null;}}
+  Bitmap inlineBitmap(PeerEngine engine,PeerEngine.Message message){if(!PeerEngine.isImageAttachment(message)||message.fileSize>THUMBNAIL_PREVIEW_CAP||!engine.hasAttachment(message))return null;String key=message.from+"/"+message.id+"/"+message.fileHash;Bitmap cached=thumbnailCache.get(key);if(cached!=null&&!cached.isRecycled())return cached;try{Bitmap bitmap=inlineBitmap(engine.readAttachment(message));if(bitmap!=null)thumbnailCache.put(key,bitmap);return bitmap;}catch(Exception ignored){return null;}}
   static String formatSize(long bytes){return bytes>=1024*1024?String.format(Locale.ROOT,"%.1f MB",bytes/1024.0/1024.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
   Bitmap inlineBitmap(byte[] bytes){try{BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>32000000)return null;bounds.inSampleSize=1;while(bounds.outWidth/bounds.inSampleSize>1000||bounds.outHeight/bounds.inSampleSize>800)bounds.inSampleSize*=2;bounds.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);}catch(Exception ignored){return null;}}
-  void releaseImages(View view){if(view instanceof ImageView){ImageView image=(ImageView)view;if(image.getDrawable() instanceof android.graphics.drawable.BitmapDrawable){Bitmap bitmap=((android.graphics.drawable.BitmapDrawable)image.getDrawable()).getBitmap();image.setImageDrawable(null);if(bitmap!=null&&!bitmap.isRecycled())bitmap.recycle();}}else if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)releaseImages(group.getChildAt(i));}}
+  void releaseImages(View view){if(view instanceof ImageView){((ImageView)view).setImageDrawable(null);}else if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)releaseImages(group.getChildAt(i));}}
   void verifyDevice(){PeerEngine e=MessengerService.engine;if(e==null||selected==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;final PeerEngine.Peer target=peer;
     try{final String code=e.pairingCode(target.id);StringBuilder formatted=new StringBuilder();for(int i=0;i<8;i++)formatted.append(code.substring(i*8,i*8+8)).append(i%2==0?" ":"\n");
       TextView text=label((target.keyChanged()?"KEY CHANGED. Check with this person before trusting their device again.\n\n":"Compare this entire safety code on BOTH devices in person or through a trusted channel.\n\n")+formatted+"\nOpen Verify device on the other device too. Confirm on each device only if every group matches.",16);text.setPadding(dp(20),dp(10),dp(20),dp(10));text.setTextIsSelectable(true);
@@ -283,7 +298,7 @@ public class MainActivity extends Activity {
   void previewBytes(byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-draft-preview").start();}
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
 
-  static final String APP_VERSION="0.8.3";
+  static final String APP_VERSION="0.8.4";
   void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+APP_VERSION+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
   void changeAvatar(){PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online first.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
   void profile(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.\n\n"+e.uploadPolicy.summary()).setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNeutralButton("Go offline",(d,w)->{stopService(new Intent(this,MessengerService.class));}).setNegativeButton("Cancel",null).show();}
