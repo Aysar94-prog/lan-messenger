@@ -13,17 +13,23 @@ static class Program
         try{Application.Run(new ChatWindow());}catch(Exception e){MessageBox.Show("LAN Messenger could not start. "+e.Message,"LAN Messenger");}
     }
 }
+sealed class BufferedFeed : FlowLayoutPanel { public BufferedFeed(){DoubleBuffered=true;} }
 sealed class ChatWindow : Form
 {
     readonly PeerEngine engine;
     readonly NotifyIcon tray=new(){Icon=SystemIcons.Information,Text="LAN Messenger",Visible=true};
     readonly Button attach=new(){Text="Attach",AutoSize=true};
+    readonly Button fastTransfer=new(){Text="Fast file",AutoSize=true};
+    bool pendingFast,sendBusy;
+    readonly Dictionary<string,(Control card,string content)> cards=[];
+    string feedConversation=""; int feedWidth;
+    readonly Dictionary<string,Label> statusLabels=[];
     readonly Button clear=new(){Text="Clear chat",AutoSize=true};
     readonly Button members=new(){Text="Members",AutoSize=true};
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Save file",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.7.5";
+    public const string AppVersion="0.8.0";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -45,7 +51,7 @@ sealed class ChatWindow : Form
     readonly TextBox profile = new() { Width=180, MaxLength=30, PlaceholderText="Your display name" };
     readonly Label status = new() { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DimGray };
     readonly Label heading = new() { Text="Choose a contact", Dock=DockStyle.Fill, Font=new Font("Segoe UI",17,FontStyle.Bold), AutoSize=false, AutoEllipsis=true };
-    readonly FlowLayoutPanel feed = new() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
+    readonly FlowLayoutPanel feed = new BufferedFeed() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
     readonly FlowLayoutPanel attachmentDraft = new() { Dock=DockStyle.Fill, FlowDirection=FlowDirection.LeftToRight, WrapContents=false, AutoScroll=true, Visible=false, BackColor=Color.FromArgb(235,240,250), Padding=new Padding(8) };
     readonly TextBox composer = new() { Dock=DockStyle.Fill, Multiline=true, MaxLength=2000, PlaceholderText="Write a message…", Enabled=false };
     readonly Button send = new() { Text="Send", Dock=DockStyle.Fill, Enabled=false };
@@ -53,7 +59,7 @@ sealed class ChatWindow : Form
     string? selected;
     // The picked file's path, not its bytes — a 1 GB attachment is never fully read into memory
     // just to sit in the compose draft; it's streamed from disk only once actually queued to send.
-    string? pendingAttachmentPath; string pendingAttachmentName=""; string? pendingAttachmentTarget; RowStyle pendingAttachmentRow=null!;
+    string? pendingAttachmentPath; string pendingAttachmentName=""; string? pendingAttachmentTarget; RowStyle pendingAttachmentRow=null!; RowStyle groupNoticeRow=null!;
     const long ThumbnailPreviewCap=20*1024*1024;
     readonly Dictionary<string,(long done,long total)> transferProgress=[];
     // Decoded once per contact-list rebuild (not per paint, which owner-draw would otherwise do on
@@ -61,7 +67,7 @@ sealed class ChatWindow : Form
     readonly Dictionary<string,Image> avatarCache=[];
     string lastFeed="", lastContacts="";
     bool rendering;
-    record ContactItem(string Id,string Name,string Detail,bool Group=false,int Unread=0,long LastActivity=0) { public override string ToString()=>Name; }
+    record ContactItem(string Id,string Name,string Detail,bool Group=false,int Unread=0,long LastActivity=0,bool Online=false) { public override string ToString()=>Name; }
 
     public ChatWindow() : this(null,null) {}
     public ChatWindow(string? dataDirectory,IStorageProtector? protector)
@@ -80,8 +86,8 @@ sealed class ChatWindow : Form
         var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,about]);createGroup.Click+=(_,_)=>CreateGroup();about.Click+=(_,_)=>ShowAbout();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
         var split=new SplitContainer{Size=new Size(950,460),Dock=DockStyle.Fill,SplitterDistance=300,FixedPanel=FixedPanel.Panel1,Panel1MinSize=220,Panel2MinSize=280};
         var people=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=2,ColumnCount=1};people.ColumnStyles.Add(new(SizeType.Percent,100));people.RowStyles.Add(new(SizeType.Absolute,35));people.RowStyles.Add(new(SizeType.Percent,100));people.Controls.Add(new Label{Text="CONVERSATIONS",AutoSize=true},0,0);people.Controls.Add(contacts,0,1);split.Panel1.Controls.Add(people);
-        var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=5};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,clear,groupNotice]);chat.Controls.Add(actions,0,1);chat.Controls.Add(feed,0,2);chat.Controls.Add(attachmentDraft,0,3);
-        var input=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,Padding=new Padding(0,10,0,0)};input.ColumnStyles.Add(new(SizeType.Percent,100));input.ColumnStyles.Add(new(SizeType.Absolute,95));input.Controls.Add(composer,0,0);input.Controls.Add(send,1,0);input.ColumnStyles.Add(new(SizeType.Absolute,85));input.Controls.Add(attach,2,0);chat.Controls.Add(input,0,4);split.Panel2.Controls.Add(chat);
+        var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=6};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));groupNoticeRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(groupNoticeRow);chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,clear,fastTransfer]);chat.Controls.Add(actions,0,1);groupNotice.AutoSize=false;groupNotice.Dock=DockStyle.Fill;groupNotice.Margin=new Padding(0,2,0,0);chat.Controls.Add(groupNotice,0,2);chat.Controls.Add(feed,0,3);chat.Controls.Add(attachmentDraft,0,4);
+        var input=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,Padding=new Padding(0,10,0,0)};input.ColumnStyles.Add(new(SizeType.Percent,100));input.ColumnStyles.Add(new(SizeType.Absolute,95));input.Controls.Add(composer,0,0);input.Controls.Add(send,1,0);input.ColumnStyles.Add(new(SizeType.Absolute,85));input.Controls.Add(attach,2,0);chat.Controls.Add(input,0,5);split.Panel2.Controls.Add(chat);
         var splitPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};splitPanel.Controls.Add(split);root.Controls.Add(splitPanel,0,3);
         var footerPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};footerPanel.Controls.Add(new Label{Text="Encrypted connection and local history • Verify the safety code on both devices before chatting",AutoSize=true,ForeColor=Color.DimGray,Dock=DockStyle.Left});root.Controls.Add(footerPanel,0,4);Controls.Add(root);
         contacts.DrawMode=DrawMode.OwnerDrawFixed;contacts.ItemHeight=64;contacts.BackColor=Color.White;
@@ -91,18 +97,19 @@ sealed class ChatWindow : Form
                 var oldClip=e.Graphics.Clip;using var clipPath=new System.Drawing.Drawing2D.GraphicsPath();clipPath.AddEllipse(avatarRect);e.Graphics.SetClip(clipPath,System.Drawing.Drawing2D.CombineMode.Intersect);
                 e.Graphics.DrawImage(photo,avatarRect);e.Graphics.Clip=oldClip;
             }else{using var badge=new SolidBrush(item.Group?Color.FromArgb(227,220,251):NameColor(item.Id));e.Graphics.FillEllipse(badge,avatarRect);TextRenderer.DrawText(e.Graphics,item.Group?"G":item.Name[..Math.Min(1,item.Name.Length)].ToUpperInvariant(),Font,new Rectangle(e.Bounds.X+10,e.Bounds.Y+18,36,28),Color.White,TextFormatFlags.HorizontalCenter);}
+            if(!item.Group){var dot=new Rectangle(avatarRect.Right-10,avatarRect.Bottom-10,12,12);using var ring=new SolidBrush(Color.White);e.Graphics.FillEllipse(ring,Rectangle.Inflate(dot,2,2));using var online=new SolidBrush(item.Online?Color.FromArgb(33,150,243):Color.Gray);e.Graphics.FillEllipse(online,dot);}
             using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
             if(item.Unread>0){var count=item.Unread>99?"99+":item.Unread.ToString();int d=22;var badgeRect=new Rectangle(e.Bounds.Right-d-12,e.Bounds.Y+(e.Bounds.Height-d)/2,d,d);using var unread=new SolidBrush(Accent);e.Graphics.FillEllipse(unread,badgeRect);using var tiny=new Font("Segoe UI",8,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,count,tiny,badgeRect,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
         StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
         avatarBox.Paint+=(_,e)=>{if(avatarImage==null){using var b=new SolidBrush(Accent);e.Graphics.FillEllipse(b,0,0,avatarBox.Width,avatarBox.Height);TextRenderer.DrawText(e.Graphics,engine.Name.Length>0?engine.Name[..1].ToUpperInvariant():"?",new Font("Segoe UI",14,FontStyle.Bold),avatarBox.ClientRectangle,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
         try{var raw=engine.Avatar;if(raw!=null){avatarImage=TryImageThumbnail(raw,80,80);avatarBox.Image=avatarImage;}}catch{}
-        attach.Click+=async(_,_)=>await AttachFile();clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=(_,_)=>SaveAttachment();preview.Click+=(_,_)=>PreviewImage();
+        attach.Click+=async(_,_)=>await AttachFile();fastTransfer.Click+=async(_,_)=>await PickAttachment(true);clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=(_,_)=>SaveAttachment();preview.Click+=(_,_)=>PreviewImage();
         verify.Click+=(_,_)=>VerifyDevice();
         var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
         engine.Received+=m=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();var peer=engine.Peers.FirstOrDefault(p=>p.Id==m.From);ShowNotification(m.GroupId.Length>0?m.GroupId:m.From,m.GroupId.Length>0?engine.DisplayName(m.GroupId):peer?.Name??"LAN Messenger","New encrypted message");}));}catch{}};
         // Attachment transfers run on background connection threads, not the UI thread — marshal
         // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
-        engine.TransferProgress+=(id,done,total)=>{if(IsDisposed||!IsHandleCreated)return;try{BeginInvoke(new Action(()=>{if(IsDisposed)return;if(done>=total)transferProgress.Remove(id);else transferProgress[id]=(done,total);lastFeed="";Render();}));}catch{}};
+        engine.TransferProgress+=(id,done,total)=>{if(IsDisposed||!IsHandleCreated)return;try{BeginInvoke(new Action(()=>{if(IsDisposed)return;if(done>=total)transferProgress.Remove(id);else transferProgress[id]=(done,total);UpdateTransferLabels();}));}catch{}};
         FormClosing+=(_,e)=>{if(!exiting&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();ShowNotification(null,"LAN Messenger","Still running. Right-click the tray icon and choose Exit to stop.");}};
         save.Click+=(_,_)=>{try{engine.Rename(profile.Text);profile.Text=engine.Name;}catch(Exception e){MessageBox.Show(e.Message,"Could not save name");}};
         scan.Click+=async(_,_)=>{await engine.Announce();Render();};add.Click+=async(_,_)=>await AddAddress();
@@ -110,24 +117,23 @@ sealed class ChatWindow : Form
         send.Click+=async(_,_)=>await Send();composer.KeyDown+=async(_,e)=>{if(e.KeyCode==Keys.Enter&&!e.Shift){e.SuppressKeyPress=true;await Send();}};
         timer.Tick+=(_,_)=>Render();Shown+=(_,_)=>{try{engine.Start();timer.Start();Render();}catch(Exception e){status.Text="Could not start: "+e.Message;}};
         FormClosed+=(_,_)=>{timer.Stop();tray.Visible=false;tray.Dispose();engine.Dispose();};
-        feed.Controls.Add(MessageLabel("People running LAN Messenger on your network appear automatically.\n\nContacts and messages stay saved after you close the app.\n\nOffline? Write a message now. It stays Queued until both devices are connected.\n\nNo contacts yet? Open the new app on another device on the same Wi-Fi. You can use Add by IP if discovery is blocked.",11,Ink,Math.Max(300,feed.ClientSize.Width-30)));
+        feed.Controls.Add(MessageLabel("People running LAN Messenger on your network appear automatically.\n\nContacts and messages stay saved after you close the app.\n\nOffline? Write a message now. It stays Queued until both devices are connected.\n\nNo contacts yet? Open the new app on another device on the same Wi-Fi. You can use Add by IP if discovery is blocked.",11,Ink,Math.Max(300,feed.Width-30)));
     }
     async Task Send()
     {
         if(selected==null||!send.Enabled||(pendingAttachmentPath==null&&string.IsNullOrWhiteSpace(composer.Text)))return;
-        var target=selected;var path=pendingAttachmentPath;var name=pendingAttachmentName;var caption=composer.Text;var originalStatus=status.Text;
-        send.Enabled=false;attach.Enabled=false;
+        var target=selected;var path=pendingAttachmentPath;var name=pendingAttachmentName;var caption=composer.Text;var originalStatus=status.Text;var fast=pendingFast;sendBusy=true;
+        send.Enabled=false;attach.Enabled=false;fastTransfer.Enabled=false;composer.Enabled=false;send.Text="Preparing…";
         try{
             if(path!=null){
                 var total=new FileInfo(path).Length;
-                // Runs on the UI thread already (no cross-thread marshal needed): every await in
-                // this call chain started from this UI-thread click and never leaves that context.
-                await engine.QueueFileFromPathAsync(target,caption,path,done=>{if(!IsDisposed)status.Text=$"Preparing to send… {(total>0?done*100/total:100)}%";},name);
+                status.Text="Preparing file…";
+                await Task.Run(async()=>{if(fast)await engine.QueueFastFileAsync(target,caption,path,name);else await engine.QueueFileFromPathAsync(target,caption,path,null,name);});
             }else engine.Queue(target,caption);
-            if(selected==target){composer.Clear();drafts.Remove(target);ClearPendingAttachment();}
+            if(selected==target&&pendingAttachmentPath==path){composer.Clear();drafts.Remove(target);ClearPendingAttachment();}
         }
         catch(Exception e){MessageBox.Show(this,e.Message,"Message not saved");}
-        finally{if(!IsDisposed){status.Text=originalStatus;send.Enabled=true;attach.Enabled=true;Render();}}
+        finally{sendBusy=false;if(!IsDisposed){status.Text=originalStatus;send.Enabled=true;attach.Enabled=true;Render();}}
     }
     void Render()
     {
@@ -137,7 +143,7 @@ sealed class ChatWindow : Form
         var groups=engine.Groups;
         // Most recently active conversation first, like a typical chat app — not name/online order.
         long LastActivity(string conversation){var items=engine.Messages(conversation);return items.Length>0?items.Max(m=>m.Time):0;}
-        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members",true,engine.Unread(g.Id),LastActivity(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id),LastActivity(p.Id)))).OrderByDescending(e=>e.LastActivity).ThenBy(e=>e.Name).ToArray();
+        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members",true,engine.Unread(g.Id),LastActivity(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id),LastActivity(p.Id),p.Online))).OrderByDescending(e=>e.LastActivity).ThenBy(e=>e.Name).ToArray();
         string signature=string.Join("|",entries.Select(p=>$"{p.Id}:{p.Name}:{p.Detail}:{p.Unread}:{p.LastActivity}"))+"|"+string.Join(",",peers.Select(p=>p.Id+":"+p.ReceivedAvatarHash));
         if(signature!=lastContacts){
             rendering=true;contacts.BeginUpdate();contacts.Items.Clear();contacts.Items.AddRange(entries);for(int i=0;i<contacts.Items.Count;i++)if(((ContactItem)contacts.Items[i]).Id==selected)contacts.SelectedIndex=i;contacts.EndUpdate();rendering=false;lastContacts=signature;
@@ -146,17 +152,29 @@ sealed class ChatWindow : Form
             foreach(var p in peers)try{var raw=engine.PeerAvatar(p.Id);if(raw!=null){var img=TryImageThumbnail(raw,72,72);if(img!=null)avatarCache[p.Id]=img;}}catch{}
         }
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
-        verify.Enabled=peer!=null;members.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=group!=null||peer?.Trusted==true;attach.Enabled=send.Enabled;composer.Enabled=selected!=null;groupNotice.Visible=group!=null;
+        verify.Enabled=peer!=null;members.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
         heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members":$"{peer!.Name} · {(peer.Online?"Online":"Offline")}";
-        var items=engine.Messages(selected!);var signatureFeed=selected+string.Join("|",items.Select(m=>m.Id+":"+m.Status));
-        if(lastFeed!=signatureFeed){lastFeed=signatureFeed;ClearFeed();
-            if(items.Length==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.\n\nMessages are encrypted between verified devices.",11,Ink,Math.Max(300,feed.ClientSize.Width-30)));
-            foreach(var m in items)feed.Controls.Add(MessageCard(m));
-            feed.PerformLayout();feed.AutoScrollPosition=new Point(0,feed.VerticalScroll.Maximum);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
+        var items=engine.Messages(selected!);var signatureFeed=selected+":"+feed.Width+string.Join("|",items.Select(m=>m.From+":"+m.Id+":"+m.Status+":"+engine.HasAttachment(m)+":"+engine.Downloading(m)));
+        if(lastFeed!=signatureFeed){lastFeed=signatureFeed;
+            bool reset=feedConversation!=selected||feedWidth!=feed.Width;
+            bool bottom=reset||!feed.VerticalScroll.Visible||-feed.AutoScrollPosition.Y+feed.ClientSize.Height>=feed.DisplayRectangle.Height-60;
+            var scroll=-feed.AutoScrollPosition.Y;
+            feed.SuspendLayout();
+            if(reset){ClearFeed();feedConversation=selected!;feedWidth=feed.Width;}
+            var keys=items.Select(m=>m.From+"/"+m.Id).ToHashSet();
+            foreach(var key in cards.Keys.Where(k=>!keys.Contains(k)).ToArray()){cards[key].card.Dispose();cards.Remove(key);statusLabels.Remove(key);}
+            if(cards.Count==0)foreach(Control c in feed.Controls.Cast<Control>().ToArray())c.Dispose();
+            foreach(var m in items){var key=m.From+"/"+m.Id;var content=engine.HasAttachment(m)+":"+engine.Downloading(m);
+                if(cards.TryGetValue(key,out var old)&&old.content==content)continue;
+                int index=old.card==null?feed.Controls.Count:feed.Controls.GetChildIndex(old.card);
+                old.card?.Dispose();var card=MessageCard(m);cards[key]=(card,content);feed.Controls.Add(card);feed.Controls.SetChildIndex(card,index);}
+            if(items.Length==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30)));
+            feed.ResumeLayout(true);UpdateTransferLabels();
+            feed.AutoScrollPosition=new Point(0,bottom?feed.VerticalScroll.Maximum:scroll);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
         files.Enabled=saveFile.Enabled=preview.Enabled=files.Items.Count>0;
     }
-    void ClearFeed(){foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();feed.Controls.Clear();}
+    void ClearFeed(){cards.Clear();statusLabels.Clear();foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();feed.Controls.Clear();}
     static Label MessageLabel(string text,float size,Color color,int width,bool bold=false)=>new(){Text=text,AutoSize=true,MaximumSize=new Size(width,0),Font=new Font("Segoe UI",size,bold?FontStyle.Bold:FontStyle.Regular),ForeColor=color,Margin=new Padding(0,2,0,2)};
     static Bitmap DrawInitialCircle(string initial,Color color,int size)
     {
@@ -183,8 +201,8 @@ sealed class ChatWindow : Form
     }
     Control MessageCard(PeerEngine.Message message)
     {
-        bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.ClientSize.Width-45));
-        var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.ClientSize.Width-width-25):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
+        bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.Width-65));
+        var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.Width-width-60):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
         RoundCorners(card,10);
         card.Controls.Add(SenderRow(mine,message.From,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
@@ -192,17 +210,24 @@ sealed class ChatWindow : Form
             var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);
             if(thumbnail!=null){var picture=new PictureBox{Image=thumbnail,SizeMode=PictureBoxSizeMode.Zoom,Width=width-24,Height=Math.Max(150,Math.Min(320,(int)Math.Round((double)(width-24)*thumbnail.Height/thumbnail.Width))),Cursor=Cursors.Hand,BackColor=Color.FromArgb(232,236,243),Margin=new Padding(0,4,0,4)};picture.Click+=(_,_)=>PreviewImage(message);picture.Disposed+=(_,_)=>thumbnail.Dispose();card.Controls.Add(picture);}
             card.Controls.Add(MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24));
-            var actions=new FlowLayoutPanel{AutoSize=true,WrapContents=false,Margin=new Padding(0)};var save=new Button{Text="Save",AutoSize=true};save.Click+=(_,_)=>SaveAttachment(message);actions.Controls.Add(save);if(thumbnail!=null){var open=new Button{Text="Open",AutoSize=true};open.Click+=(_,_)=>PreviewImage(message);actions.Controls.Add(open);}StyleButtons(actions);card.Controls.Add(actions);
+            var actions=new FlowLayoutPanel{AutoSize=true,WrapContents=false,Margin=new Padding(0)};var available=engine.HasAttachment(message);var save=new Button{Text=available?"Save":engine.Downloading(message)?"Pause":"Download",AutoSize=true};save.Click+=async(_,_)=>{if(available)SaveAttachment(message);else if(engine.Downloading(message)){engine.CancelDownload(message);}else{var download=Task.Run(()=>engine.DownloadAttachmentAsync(message));await Task.Delay(50);Render();try{await download;}catch(OperationCanceledException){}catch(Exception ex){if(!IsDisposed)MessageBox.Show(this,ex.Message,"Download");}if(!IsDisposed)Render();}};actions.Controls.Add(save);if(thumbnail!=null){var open=new Button{Text="Open",AutoSize=true};open.Click+=(_,_)=>PreviewImage(message);actions.Controls.Add(open);}StyleButtons(actions);card.Controls.Add(actions);
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }
+        var statusLabel=MessageLabel("",9,Color.SlateGray,width-24);statusLabels[message.From+"/"+message.Id]=statusLabel;card.Controls.Add(statusLabel);
+        SetStatus(message,statusLabel);
+        return card;
+    }
+    void SetStatus(PeerEngine.Message message,Label label)
+    {
+        bool mine=message.From==engine.Id;
         var when=DateTimeOffset.FromUnixTimeMilliseconds(message.Time).LocalDateTime.ToString("MMM d, HH:mm");
         if(mine){bool seen=message.Status.StartsWith("Seen");var ticks=seen||message.Status.StartsWith("Delivered")?"✓✓":"✓";
             var statusText=message.Status;
             if(message.Status=="Queued"&&message.FileName.Length>0&&transferProgress.TryGetValue(message.Id,out var progress)&&progress.total>0)statusText=$"Sending {progress.done*100/progress.total}%";
-            card.Controls.Add(MessageLabel($"{when}  ·  {ticks} {statusText}",9,seen?SeenBlue:Color.SlateGray,width-24));}
-        else card.Controls.Add(MessageLabel(when,9,Color.SlateGray,width-24));
-        return card;
+            label.Text=$"{when}  ·  {ticks} {statusText}";label.ForeColor=seen?SeenBlue:Color.SlateGray;}
+        else label.Text=when+(engine.Downloading(message)?transferProgress.TryGetValue(message.Id,out var p)&&p.total>0?$"  ·  Downloading {p.done*100/p.total}%":"  ·  Waiting for sender…":"");
     }
+    void UpdateTransferLabels(){if(selected==null)return;foreach(var m in engine.Messages(selected))if(statusLabels.TryGetValue(m.From+"/"+m.Id,out var label))SetStatus(m,label);}
     // Guarded by size: decoding an inline thumbnail means fully decrypting the attachment into
     // memory (ReadAttachment), which must stay off the table for anything near the 1 GB cap —
     // rendering a whole conversation's history would otherwise decrypt every large file in it.
@@ -210,16 +235,17 @@ sealed class ChatWindow : Form
     static Image? TryImageThumbnail(byte[] data,int maxWidth,int maxHeight){try{using var stream=new MemoryStream(data);using var source=Image.FromStream(stream);if((long)source.Width*source.Height>32000000)throw new IOException();double scale=Math.Min(1,Math.Min((double)maxWidth/source.Width,(double)maxHeight/source.Height));var result=new Bitmap(Math.Max(1,(int)(source.Width*scale)),Math.Max(1,(int)(source.Height*scale)));using var graphics=Graphics.FromImage(result);graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(source,new Rectangle(0,0,result.Width,result.Height));return result;}catch{return null;}}
     static string FormatSize(long bytes)=>bytes>=1024*1024?$"{bytes/1024.0/1024.0:0.#} MB":$"{bytes/1024.0:0.#} KB";
     static void StyleButtons(Control root){foreach(Control c in root.Controls){if(c is Button b){b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderColor=Color.FromArgb(217,226,239);b.BackColor=Color.White;b.ForeColor=Ink;b.Padding=new Padding(2);b.Cursor=Cursors.Hand;}StyleButtons(c);}}
-    async Task AttachFile()
+    Task AttachFile()=>PickAttachment(false);
+    async Task PickAttachment(bool fast)
     {
         if(selected==null)return;var target=selected;
-        using var dialog=new OpenFileDialog{Title=$"Share a photo or file · up to {PeerEngine.MaxFileSize/1024/1024} MB",Filter="All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif"};
+        using var dialog=new OpenFileDialog{Title=fast?"Fast file · keep the original available":$"Share a photo or file · up to {PeerEngine.MaxFileSize/1024/1024} MB",Filter="All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif"};
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         try{
             var size=await Task.Run(()=>new FileInfo(dialog.FileName).Length);
-            if(size>PeerEngine.MaxFileSize)throw new IOException($"Files must be {PeerEngine.MaxFileSize/1024/1024} MB or smaller.");
+            if(size>(fast?PeerEngine.MaxFastFileSize:PeerEngine.MaxFileSize))throw new IOException(fast?"Fast transfer limit is 1 TiB.":"Files must be 1 GiB or smaller.");
             if(selected!=target)return;
-            pendingAttachmentPath=dialog.FileName;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();
+            pendingFast=fast;pendingAttachmentPath=dialog.FileName;pendingAttachmentName=Path.GetFileName(dialog.FileName);pendingAttachmentTarget=target;RenderPendingAttachment();composer.Focus();
         }catch(Exception e){MessageBox.Show(this,e.Message,"Could not prepare file");}
     }
     void RenderPendingAttachment()
@@ -233,7 +259,7 @@ sealed class ChatWindow : Form
         if(size>0&&size<=ThumbnailPreviewCap){Image? thumb=null;try{thumb=TryImageThumbnail(File.ReadAllBytes(path),150,125);}catch{}
             if(thumb!=null){var image=new PictureBox{Image=thumb,Width=150,Height=125,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(220,226,237)};image.Click+=(_,_)=>PreviewImagePath(path,pendingAttachmentName);image.Disposed+=(_,_)=>thumb.Dispose();attachmentDraft.Controls.Add(image);}}
         var details=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};
-        details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+FormatSize(size)+"\nReady to send",10,Ink,330,true));
+        details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+FormatSize(size)+(pendingFast?"\nFast transfer · keep original until downloaded":"\nReady to send"),10,Ink,330,true));
         var remove=new Button{Text="Remove",AutoSize=true};remove.Click+=(_,_)=>ClearPendingAttachment();details.Controls.Add(remove);StyleButtons(details);attachmentDraft.Controls.Add(details);
     }
     void ClearPendingAttachment(){pendingAttachmentPath=null;pendingAttachmentName="";pendingAttachmentTarget=null;RenderPendingAttachment();}
@@ -241,7 +267,7 @@ sealed class ChatWindow : Form
     void SaveAttachment(PeerEngine.Message message){using var dialog=new SaveFileDialog{FileName=message.FileName,Title="Save attachment",Filter="All files|*.*"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;_=ExportAttachment(message,dialog.FileName);}
     // Streams straight to the destination file, decrypting on the fly — an export never needs
     // the whole attachment in memory either, same reasoning as the send/receive path.
-    async Task ExportAttachment(PeerEngine.Message message,string destination){try{await engine.ExportAttachmentAsync(message,destination);}catch(Exception e){if(!IsDisposed)MessageBox.Show(this,e.Message,"Could not save attachment");}}
+    async Task ExportAttachment(PeerEngine.Message message,string destination){try{await Task.Run(()=>engine.ExportAttachmentAsync(message,destination));}catch(Exception e){if(!IsDisposed)MessageBox.Show(this,e.Message,"Could not save attachment");}}
     void PreviewImage(){if(files.SelectedItem is FileItem item)PreviewImage(item.Message);}
     void PreviewImage(PeerEngine.Message message){try{PreviewImageCore(engine.ReadAttachment(message),message.FileName);}catch{MessageBox.Show(this,"This attachment cannot be opened as an image. Use Save to export it.","Image preview");}}
     void PreviewImagePath(string path,string name){try{PreviewImageCore(File.ReadAllBytes(path),name);}catch{MessageBox.Show(this,"This file is not a supported image.","Image preview");}}

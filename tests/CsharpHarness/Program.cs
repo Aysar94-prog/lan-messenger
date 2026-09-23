@@ -18,6 +18,12 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="CLEARAVATAR")engine.SetAvatar(null);
  if(a[0]=="PEERAVATAR"){var data=engine.PeerAvatar(a[1]);Console.WriteLine(data==null?"PEERAVATAR\tNONE":$"PEERAVATAR\t{SecureIdentity.Hash(data)}\t{data.Length}");}
  if(a[0]=="FILE")engine.QueueFile(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])),Convert.FromBase64String(a[3]));
+ if(a[0]=="FASTFILE")await engine.QueueFastFileAsync(a[1],"",a[2]);
+ if(a[0]=="DOWNLOAD")await engine.DownloadAttachmentAsync(engine.Messages(a[1]).First(m=>m.Id==a[2]));
+ if(a[0]=="HASFILE")Console.WriteLine("HASFILE\t"+engine.HasAttachment(engine.Messages(a[1]).First(m=>m.Id==a[2])).ToString().ToLowerInvariant());
+ if(a[0]=="DOWNLOADASYNC"){var m=engine.Messages(a[1]).First(m=>m.Id==a[2]);_=Task.Run(async()=>{try{await engine.DownloadAttachmentAsync(m);}catch{}});}
+ if(a[0]=="CANCEL")engine.CancelDownload(engine.Messages(a[1]).First(m=>m.Id==a[2]));
+ if(a[0]=="EXPORT")await engine.ExportAttachmentAsync(engine.Messages(a[1]).First(m=>m.Id==a[2]),a[3]);
  if(a[0]=="FILEHASH")foreach(var m in engine.Messages(a[1]).Where(m=>m.Id==a[2])){var data=engine.ReadAttachment(m);Console.WriteLine($"FILEHASH\t{SecureIdentity.Hash(data)}\t{data.Length}");}
  if(a[0]=="CONV")foreach(var m in engine.Messages(a[1]))Print(m);
  if(a[0]=="SEND")engine.Queue(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])));

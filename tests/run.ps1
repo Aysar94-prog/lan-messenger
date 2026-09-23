@@ -16,6 +16,8 @@ try {
   Check-Result
   python tests/features.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
+  python tests/transfers.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
   dotnet build tests/WindowsUi/WindowsUi.csproj -c Release --configfile NuGet.Config -o "$TestRoot\ui"
   Check-Result
   dotnet "$TestRoot\ui\WindowsUi.dll" "$TestRoot\ui-results"

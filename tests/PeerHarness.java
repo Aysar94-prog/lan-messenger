@@ -5,16 +5,20 @@ import java.nio.charset.StandardCharsets;
 public class PeerHarness {
  public static void main(String[] args)throws Exception {
   PeerEngine e=new PeerEngine(new File(args[0]),args[1],new TestProtector(new File(args[0])));e.start(args[2],Integer.parseInt(args[3]),Integer.parseInt(args[4]));
+  java.util.concurrent.atomic.AtomicInteger slowMs=new java.util.concurrent.atomic.AtomicInteger();
+  e.sourceOpener=reference->new FilterInputStream(new FileInputStream(reference)){public int read(byte[] bytes,int offset,int length)throws IOException{int delay=slowMs.get();if(delay>0)try{Thread.sleep(delay);}catch(InterruptedException ex){throw new IOException(ex);}return in.read(bytes,offset,length);}};
   java.util.concurrent.atomic.AtomicInteger notifications=new java.util.concurrent.atomic.AtomicInteger();e.received=m->notifications.incrementAndGet();
   System.out.println("READY\t"+e.id);
   BufferedReader input=new BufferedReader(new InputStreamReader(System.in,StandardCharsets.UTF_8));String line;
   while((line=input.readLine())!=null){String[] a=line.split("\t",-1);try{
    if(a[0].equals("STOP"))break;
+   if(a[0].equals("SLOWMS"))slowMs.set(Integer.parseInt(a[1]));
    if(a[0].equals("ADD"))e.addAddress(a[1]);
    if(a[0].equals("CODE"))System.out.println("CODE\t"+e.pairingCode(a[1]));
    if(a[0].equals("VERIFY"))e.verify(a[1],a[2]);
    if(a[0].equals("REVOKE"))e.revoke(a[1]);
    if(a[0].equals("NOTIFYCOUNT"))System.out.println("COUNT\t"+notifications.get());
+   if(a[0].equals("RAWFETCH")){try(java.net.Socket socket=e.connect(a[1],Integer.parseInt(a[2]))){PeerEngine.write(socket,e.hello());PeerEngine.read(socket);if(!PeerEngine.read(socket).equals("LM4\tREADY"))throw new IOException("Not trusted");PeerEngine.write(socket,"LM4\tFETCH\t"+a[3]+"\t"+a[4]+"\t"+a[5]+"\t"+a[6]);System.out.println("FETCHREPLY\t"+PeerEngine.enc(PeerEngine.read(socket)));}}
    if(a[0].equals("RAWGROUP")){try(java.net.Socket socket=e.connect(a[1],Integer.parseInt(a[2]))){PeerEngine.write(socket,e.hello());PeerEngine.read(socket);String ready=PeerEngine.read(socket);if(!ready.equals("LM4\tREADY"))throw new IOException("Not trusted");PeerEngine.write(socket,"LM4\tGROUP\t"+a[3]+"\t"+a[4]+"\t"+a[5]+"\t"+a[6]);String reply;try{reply=PeerEngine.read(socket);}catch(IOException error){reply="REJECTED";}System.out.println("WIRE\t"+PeerEngine.enc(reply));}}
    if(a[0].equals("RAW")){
      try(java.net.Socket socket=e.connect(a[1],Integer.parseInt(a[2]))){
@@ -38,6 +42,15 @@ public class PeerHarness {
    if(a[0].equals("CLEARAVATAR"))e.setAvatar(null);
    if(a[0].equals("PEERAVATAR")){byte[] data=e.peerAvatar(a[1]);System.out.println("PEERAVATAR\t"+(data==null?"NONE":SecureIdentity.hash(data)+"\t"+data.length));}
    if(a[0].equals("FILE"))e.queueFile(a[1],PeerEngine.dec(a[2]),Base64.getDecoder().decode(a[3]));
+   if(a[0].equals("FASTFILE"))e.queueFastFile(a[1],"",a[2],new File(a[2]).length(),new File(a[2]).getName());
+   if(a[0].equals("DOWNLOAD")||a[0].equals("HASFILE")||a[0].equals("DOWNLOADASYNC")||a[0].equals("CANCEL")||a[0].equals("EXPORT")||a[0].equals("VERIFYFILE"))for(PeerEngine.Message m:e.messages(a[1]))if(m.id.equals(a[2])){
+     if(a[0].equals("DOWNLOAD"))e.downloadAttachment(m);
+     if(a[0].equals("HASFILE"))System.out.println("HASFILE\t"+e.hasAttachment(m));
+     if(a[0].equals("CANCEL"))e.cancelDownload(m);
+     if(a[0].equals("DOWNLOADASYNC"))new Thread(()->{try{e.downloadAttachment(m);}catch(Exception ignored){}}).start();
+     if(a[0].equals("VERIFYFILE"))e.readAttachmentStream(m,OutputStream.nullOutputStream(),null);
+     if(a[0].equals("EXPORT"))try(OutputStream out=new FileOutputStream(a[3])){e.readAttachmentStream(m,out,null);}
+   }
    if(a[0].equals("FILEHASH")){for(PeerEngine.Message m:e.messages(a[1]))if(m.id.equals(a[2])){byte[] data=e.readAttachment(m);System.out.println("FILEHASH\t"+SecureIdentity.hash(data)+"\t"+data.length);}}
    if(a[0].equals("CONV")){for(PeerEngine.Message m:e.messages(a[1]))print(m);}
    if(a[0].equals("SEND"))e.queue(a[1],new String(Base64.getDecoder().decode(a[2]),StandardCharsets.UTF_8));

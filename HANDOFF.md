@@ -1,6 +1,56 @@
-# LAN Messenger handoff — 0.7.5 (Android) / 0.7.5 (Windows) test release
+# LAN Messenger handoff — 0.8.0 (Android and Windows) test release
 
-Updated 2026-09-22. Continue this existing project; do not rebuild from scratch.
+Updated 2026-09-23. Continue this existing project; do not rebuild from scratch.
+
+## Current continuation — 0.8.0, 2026-09-23
+
+Scope accepted by the user: fix transfer-induced chat latency and Windows blinking, blue/gray presence, dedicated fast-large-file action separate from the normal 1 GiB action, and recipient-triggered Download for **both** modes. Continue locally; do not add a remote or push. Original source tree retained; untracked windows-dist-v07.7z was left untouched.
+
+### Implementation
+
+- Both engines now send file OFFER metadata without bodies; group SYNCREQ2/META also carries metadata only. Legacy pushed file MSG is rejected before body consumption. An ACK/Delivered status confirms the offer, not downloaded bytes. Both ends need 0.8.0 for attachments/group synchronization.
+- New FETCH/DATA/PART flow uses independent mutual-TLS pinned connections, authorized against retained direct recipients or group members. Two concurrent serving streams reserve capacity for chat. Bad ranges/unauthorized requesters are rejected.
+- Normal action remains 1 GiB and keeps the encrypted snapshot. Fast file supports metadata up to 1 TiB with a protected original source reference (Windows path / Android persisted document URI). Preparation hashes the original once without a staging encryption/copy. The original must remain unchanged/available; changed content fails final verification. External originals are never deleted by chat clear.
+- 100 MiB checkpoint segments, small buffers, encrypted partial storage, segment hashes and final full-file hash. Pending segments only become resumable after verification. Pause keeps completed segments; connection loss retries during the consented running download. Restart requires pressing Download again. Group members can serve complete downloads; metadata-only holders cannot.
+- Original file sources seek directly. Completed segmented copies open at the requested segment without decrypting earlier segments. Ordinary encrypted snapshots still decrypt/skip preceding bytes for later segment requests (bounded by their 1 GiB limit). No parallel striping or TLS downgrade.
+- Immediate outbox wake with generation tracking prevents the timer race when messages are added during another delivery. Text/seen delivery precedes group sync. Android incoming and outgoing workers are separate. TCP_NODELAY enabled. Buffered Java encrypted reads avoid small disk reads.
+- Windows retains keyed cards; statuses/progress update labels, new messages append, and resize width uses outer feed width so scrollbar appearance does not rebuild cards. Double-buffered feed. Group expiry notice has its own row. Notifications remain one per received offer/message, never per segment.
+- Both platforms show blue/gray presence dots. File drafts still require Send. Android keeps Send visible beside scrollable attachment actions and stages unknown-size normal files with bounded disk buffers. Preparation blocks duplicate Send actions. Windows snapshot preparation/export runs off the UI thread; synchronous QueueFile wrapper no longer deadlocks on a UI synchronization context.
+- Clear/expiry cancels transfers and removes generated snapshot/source-reference/segment storage. Group signatures now required for incoming group frames; relayed metadata additionally validates sender IDs, text and timestamps.
+
+### Changed areas
+
+Windows: PeerEngine.cs, Conversations.cs, new Transfers.cs, Program.cs, version in csproj.
+Android: PeerEngine.java, MainActivity.java, MessengerService.java source resolver, manifest versionCode 15/versionName 0.8.0, build output name. Windows About and Android APP_VERSION both 0.8.0.
+Tests: linked Transfers.cs into C# harness; explicit download/fast/pause/export/FETCH commands; adapted feature tests for manual consent; new transfers.py and optional large_transfer.py; native Windows card-retention/manual-download regressions. README and PROTOCOL describe current behavior rather than old automatic pushes.
+
+### Verification and actual measurements
+
+Scratch results: C:\Users\user\Documents\Codex\2026-09-20\new-chat-2\work\v08-tests.
+
+- C# harness and standalone Windows release build: 0 errors, 0 warnings.
+- Real Java/C# secure integration suite passed: migration, discovery, verification, encryption/tampering, identity spoof rejection, retries/restarts.
+- Group/attachment/clear/receipt/relay/expiry/avatar feature suite passed, including multi-chunk ~7 MiB payloads, empty files, corrupt storage and independent download consent.
+- transfers.py passed with Java -Xmx64m: 128 MiB fast file in both directions, no sender snapshot, no recipient data before consent, cancellation after the first verified 100 MiB, restart retaining that segment, full hash-checked export, unauthorized/misaligned FETCH, and same-size source mutation rejection.
+- Local throttled-transfer text latency: median 0.419 s, max 0.458 s across five messages. Final 128 MiB Windows-to-Java download + encrypted storage + verification: 3.349 s (38.2 MiB/s); an earlier run was 1.893 s (67.6 MiB/s), showing local measurement variability. Java preparation 0.179 s; C# preparation 0.699 s in the final regular run. Resume remaining 28 MiB plus full verification: 1.513 s.
+- Optional large_transfer.py passed: **1025 MiB**, C# to Java with a 64 MiB heap, no payload before Download, full integrity check; preparation 2.924 s, download + encrypted storage + complete verification 12.221 s (83.9 MiB/s). Fixture generated locally and deleted after the test.
+- Native Windows UI initially caught scrollbar-triggered card rebuilding; fixed and rerun. Its final clear assertion was corrected to select the group being cleared (the newly added manual-download test leaves another conversation selected). ui-final.log ends successfully; exit code 0. Checks cover draft-before-Send, minimized/hidden notifications, seen receipts, existing-card identity across 99 progress callbacks and a new message, explicit Download, and local clear.
+- Actual screenshots viewed: compact group with Fast file/expiry notice/blue dots and direct conversation after Download with gray offline dot. Latest successful UI directory: ui-results/ui-d8ea4bdd3c7d48b2a362fa5c495b32cb. Screenshots use synthetic test accounts/1px fixture images, not real photos. Narrow Windows feed can still show a horizontal scrollbar; its appearance no longer causes card reconstruction.
+- Android 0.8.0 APK built with the existing key; apksigner verification passed v2/v3. No key regeneration or exposure. Physical Android UI/camera/SAF/Keystore/background behavior was not exercised. All transfer numbers above are loopback on one Windows host, not Wi-Fi/device guarantees.
+
+Logs: final-run.log covers the engine/transfer suites (and the superseded UI clear assertion); ui-final.log is the successful corrected UI run; large-test.log and android-build.log cover the large-file test and APK. No need to rerun unaffected suites solely because the final UI assertion changed.
+
+### Delivery / follow-up
+
+Release outputs are placed only in new-chat-2/outputs with 0.8.0 names: Windows ZIP, APK, source ZIP, release notes, checksums and a Windows preview. .NET Desktop Runtime 9 is required. Install over the existing Android app; update all devices to preserve manual-download semantics. Source archive comes from tracked local Git content and excludes signing keys, build caches and the user's untracked archive.
+
+Remaining acceptance work: real Android/Wi-Fi testing, background/manufacturer behavior, provider-specific seek speed and files beyond 1025 MiB. 1 TiB is a metadata bound, not an exercised size. Fast preparation still makes a full SHA-256 read; receivers retain encrypted private copies before export. TLS remains enabled. There is no parallel multi-stream striping. Download retries while waiting for offline/unavailable sources until Pause. Profile avatars remain automatic, distinct from user-sent image attachments.
+
+## Historical handoff through 0.7.5
+
+The sections below are retained history. The current 0.8.0 section and README/PROTOCOL supersede conflicting old behavior, release paths and “not committed” notes.
+
+
 
 ## Locations
 

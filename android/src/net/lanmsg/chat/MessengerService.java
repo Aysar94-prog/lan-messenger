@@ -28,6 +28,7 @@ public class MessengerService extends Service {
       WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
       if(wifi!=null){multicast=wifi.createMulticastLock("lan-messenger-discovery");multicast.setReferenceCounted(false);multicast.acquire();}
       PeerEngine peer=new PeerEngine(new java.io.File(getFilesDir(),"peer-data"),Build.MODEL,new AndroidProtector());
+      peer.sourceOpener=reference->{java.io.InputStream input=getContentResolver().openInputStream(android.net.Uri.parse(reference));if(input==null)throw new java.io.IOException("Source is unavailable");return input;};
       peer.received=m->{
         String conversation=m.groupId.isEmpty()?m.from:m.groupId;String sender=peer.displayName(conversation);
         PendingIntent open=PendingIntent.getActivity(this,conversation.hashCode(),new Intent(this,MainActivity.class).setAction(conversation).putExtra("conversation",conversation).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);

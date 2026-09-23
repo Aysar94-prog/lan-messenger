@@ -70,7 +70,22 @@ class Check
     using(var seenShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(seenShot,new Rectangle(0,0,form.Width,form.Height));seenShot.Save(Path.Combine(root,"windows-seen.png"));}
     Console.WriteLine("Screenshot: "+Path.Combine(root,"windows-seen.png"));
     Console.WriteLine("PASS: opening a conversation marks messages read and renders seen ticks");
-    engine.ClearConversation(groupId);Call("Render");if(((ComboBox)Field("files")).Items.Count!=0||engine.Messages(groupId).Length!=0)throw new Exception("Cleared UI retained attachments");
+    var liveFeed=(Control)Field("feed");var firstCard=liveFeed.Controls[0];int notices=Count();
+    for(int i=1;i<100;i++)typeof(PeerEngine).GetMethod("ReportProgress",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(engine,new object[]{"synthetic-progress",(long)i,100L});
+    await Task.Delay(200);Call("Render");
+    if(!ReferenceEquals(firstCard,liveFeed.Controls[0])||Count()!=notices)throw new Exception("Progress rebuilt cards or generated notifications");
+    second.Queue(engine.Id,"Append without blinking");
+    await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Append without blinking"),"Next message arrives");
+    Call("Render");if(!ReferenceEquals(firstCard,liveFeed.Controls[0]))throw new Exception("Appending a message rebuilt existing cards");
+    second.QueueFile(engine.Id,"manual-download.png",picture);
+    await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="manual-download.png"),"Incoming file offer arrives");
+    var offer=engine.Messages(second.Id).First(m=>m.FileName=="manual-download.png");Call("Render");
+    if(engine.HasAttachment(offer)||!TextIn(liveFeed).Contains("Download"))throw new Exception("Incoming attachment downloaded before click or no Download button");
+    var downloadButton=liveFeed.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().First(b=>b.Text=="Download");downloadButton.PerformClick();
+    await Wait(()=>engine.HasAttachment(offer),"Download button explicitly receives the attachment");Call("Render");
+    using(var manualShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(manualShot,new Rectangle(0,0,form.Width,form.Height));manualShot.Save(Path.Combine(root,"windows-download.png"));}
+    Console.WriteLine("PASS: progress and append retain existing cards; manual download works");
+    Call("RestoreWindow",groupId);engine.ClearConversation(groupId);Call("Render");if(((ComboBox)Field("files")).Items.Count!=0||engine.Messages(groupId).Length!=0)throw new Exception("Cleared UI retained attachments");
    }catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
    finally{type.GetField("exiting",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,true);form.Close();if(engine.Running||trayVisible())Environment.ExitCode=1;Application.ExitThread();}
   bool trayVisible()=>((NotifyIcon)Field("tray")).Visible;

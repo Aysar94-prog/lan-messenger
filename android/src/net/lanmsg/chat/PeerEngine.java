@@ -25,10 +25,10 @@ public final class PeerEngine implements Closeable {
   }
   static final long GROUP_TTL_MS=168L*3600*1000;
   public static final class Message {
-    public String id,from,to,text,status,groupId="",fileName="",fileHash="",signature=""; public long time; public int fileSize; public boolean ttlEligible;
+    public String id,from,to,text,status,groupId="",fileName="",fileHash="",signature=""; public long time; public long fileSize; public boolean ttlEligible;
     Message(String i,String f,String t,String x,long at,String s){id=i;from=f;to=t;text=x;time=at;status=s;}
-    Message(String i,String f,String t,String x,long at,String s,String g,String n,int size,String hash){this(i,f,t,x,at,s);groupId=g;fileName=n;fileSize=size;fileHash=hash;}
-    Message(String i,String f,String t,String x,long at,String s,String g,String n,int size,String hash,String sig,boolean eligible){this(i,f,t,x,at,s,g,n,size,hash);signature=sig;ttlEligible=eligible;}
+    Message(String i,String f,String t,String x,long at,String s,String g,String n,long size,String hash){this(i,f,t,x,at,s);groupId=g;fileName=n;fileSize=size;fileHash=hash;}
+    Message(String i,String f,String t,String x,long at,String s,String g,String n,long size,String hash,String sig,boolean eligible){this(i,f,t,x,at,s,g,n,size,hash);signature=sig;ttlEligible=eligible;}
     Message copy(){Message m=new Message(id,from,to,text,time,status,groupId,fileName,fileSize,fileHash,signature,ttlEligible);return m;}
   }
   final File file;
@@ -37,7 +37,8 @@ public final class PeerEngine implements Closeable {
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
   final LinkedHashMap<String,Peer> peers=new LinkedHashMap<>();
   final ArrayList<Message> messages=new ArrayList<>();
-  final ExecutorService connections=new ThreadPoolExecutor(2,6,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(32),new ThreadPoolExecutor.AbortPolicy());
+  final ExecutorService connections=new ThreadPoolExecutor(8,16,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(32),new ThreadPoolExecutor.AbortPolicy());
+  final ExecutorService outgoing=Executors.newFixedThreadPool(4);
   final ScheduledExecutorService timer=Executors.newScheduledThreadPool(2);
   final Set<String> sending=ConcurrentHashMap.newKeySet();
   ServerSocket listener; DatagramSocket discovery;
@@ -85,17 +86,17 @@ public final class PeerEngine implements Closeable {
   // correct cross-platform equivalent of "atomically replace whatever's already there".
   static void atomicReplace(File tmp,File dest)throws IOException{java.nio.file.Files.move(tmp.toPath(),dest.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);}
   public synchronized void setAvatar(byte[] data)throws IOException {File path=avatarPath();if(data==null){if(path.exists()&&!path.delete())throw new IOException("Cannot remove profile picture");notifyChanged();return;}
-    File tmp=new File(path+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}atomicReplace(tmp,path);notifyChanged();}
+    File tmp=new File(path+"."+UUID.randomUUID()+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}atomicReplace(tmp,path);notifyChanged();}
   // A peer's photo, once they've sent it over a verified connection — never fetched or guessed, only what they pushed us.
   File peerAvatarPath(String peerId){return new File(new File(file.getParentFile(),"avatars"),peerId+".sec");}
   public synchronized byte[] peerAvatar(String peerId){File path=peerAvatarPath(peerId);if(!path.exists())return null;try{return protector.unprotect(SecureIdentity.readFile(path));}catch(Exception e){return null;}}
   void setPeerAvatar(String peerId,byte[] data)throws IOException {
     File path=peerAvatarPath(peerId);if(!path.getParentFile().exists()&&!path.getParentFile().mkdirs())throw new IOException("Cannot create avatar storage");
     if(data==null||data.length==0){if(path.exists()&&!path.delete())throw new IOException("Cannot remove contact picture");return;}
-    File tmp=new File(path+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}atomicReplace(tmp,path);
+    File tmp=new File(path+"."+UUID.randomUUID()+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data));out.getFD().sync();}catch(Exception e){throw new IOException(e);}atomicReplace(tmp,path);
   }
   public void queue(String peer,String text)throws IOException {
-    queueContentStream(peer,text,"",null,0,null);
+    queueContentStream(peer,text,"",null,0,null);flush();
   }
 
   synchronized void load(File source)throws IOException {
@@ -106,7 +107,7 @@ public final class PeerEngine implements Closeable {
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
-      else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Integer.parseInt(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
+      else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
       else if(a[0].equals("G")&&a.length==6)loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),a[5]));
       else if(a[0].equals("H")&&a.length==2)loadedHidden.add(a[1]);else throw new IOException("Invalid storage row");}
     groups.clear();groups.putAll(loadedGroups);hidden.clear();hidden.addAll(loadedHidden);
@@ -160,7 +161,7 @@ public final class PeerEngine implements Closeable {
     int targetPort=a.length==2?Integer.parseInt(a[1]):MESSAGE_PORT;
     try(Socket s=connect(a[0],targetPort)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))throw new IOException("No other LAN Messenger device at this address.");remember(h[2],dec(h[3]),a[0],Integer.parseInt(h[4]));try{recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){throw new IOException(e);}}
   }
-  Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.startHandshake();return s;}catch(IOException e){s.close();throw e;}}
+  Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();return s;}catch(IOException e){s.close();throw e;}}
   static String read(Socket s)throws IOException {ByteArrayOutputStream b=new ByteArrayOutputStream();int c;InputStream in=s.getInputStream();while((c=in.read())!=-1){if(c==10)return new String(b.toByteArray(),StandardCharsets.UTF_8);if(b.size()>=16384)throw new IOException("Frame too large");b.write(c);}throw new EOFException();}
   static void write(Socket s,String line)throws IOException {OutputStream out=new NetworkTimeoutOutputStream(s);out.write((line+"\n").getBytes(StandardCharsets.UTF_8));out.flush();}
   public synchronized String pairingCode(String peerId)throws IOException {
@@ -173,30 +174,28 @@ public final class PeerEngine implements Closeable {
   public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;p.verified="";try{save();}catch(IOException e){p.verified=old;throw e;}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
   synchronized boolean trusted(String peerId,String fingerprint){Peer p=peers.get(peerId);return p!=null&&!p.verified.isEmpty()&&p.verified.equals(fingerprint);}
-  void receive(Socket socket){try(SSLSocket s=(SSLSocket)socket){s.setSoTimeout(6000);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
+  void receive(Socket socket){try(SSLSocket s=(SSLSocket)socket){s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
     if(!trusted(h[2],fingerprint)){write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
     String[] m=read(s).split("\t",-1);
     if(m.length==6&&m[0].equals("LM4")&&m[1].equals("GROUP")){acceptGroup(m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
-    if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ")&&uuid(m[2])){handleSync(s,m[2],m[3],h[2]);notifyChanged();return;}
+    if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ2")&&uuid(m[2])){handleSync(s,m[2],m[3],h[2]);notifyChanged();return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){handleAvatar(s,m[2],m[3],m[4]);notifyChanged();return;}
-    if((m.length!=8&&m.length!=12&&m.length!=13)||!m[0].equals("LM4")||!m[1].equals("MSG")||!uuid(m[2])||!m[3].equals(h[2])||!m[4].equals(id))return;
+    if(m.length==6&&m[0].equals("LM4")&&m[1].equals("FETCH")){serveDownload(s,m,h[2]);return;}
+    if((m.length!=8&&m.length!=12&&m.length!=13)||!m[0].equals("LM4")||(!m[1].equals("MSG")&&!m[1].equals("OFFER"))||!uuid(m[2])||!m[3].equals(h[2])||!m[4].equals(id))return;
     long at=Long.parseLong(m[6]);if(at<0||at>253402300799999L)return;
-    String text=dec(m[7]),group=m.length>=12?m[8]:"",name=m.length>=12?dec(m[9]):"",hash=m.length>=12?m[11]:"";int size=m.length>=12?Integer.parseInt(m[10]):0;String signature=m.length==13?m[12]:"";
+    String text=dec(m[7]),group=m.length>=12?m[8]:"",name=m.length>=12?dec(m[9]):"",hash=m.length>=12?m[11]:"";long size=m.length>=12?Long.parseLong(m[10]):0;String signature=m.length==13?m[12]:"";
     if(m.length==13&&group.isEmpty())return;
     if(text.length()>2000||(name.isEmpty()&&text.trim().isEmpty()))return;
     if(!group.isEmpty()&&System.currentTimeMillis()>at+GROUP_TTL_MS)return;
+    if(!group.isEmpty()&&signature.isEmpty())return;
     if(!signature.isEmpty()){
       String peerKey;synchronized(this){Peer sp=peers.get(h[2]);peerKey=sp!=null?sp.publicKey:"";}
       if(peerKey.isEmpty()||!SecureIdentity.verify(Base64.getDecoder().decode(peerKey),canonicalBytes(m[2],group,m[3],at,text,name,size,hash),Base64.getDecoder().decode(signature)))return;
     }
     validateFile(name,size,hash);synchronized(this){if(!allowedGroup(group,h[2]))return;}
     Message msg=new Message(m[2],m[3],id,text,at,"Received",group,name,size,hash,signature,!signature.isEmpty());
-    if(!name.isEmpty()){
-      String computed;
-      try{computed=storeAttachmentFromSocket(msg,s,size,m[2]);}catch(IOException e){return;}
-      if(!computed.equals(hash)){try{attachmentPath(msg).delete();}catch(IOException ignored){}return;}
-    }
+    if(!name.isEmpty()&&!m[1].equals("OFFER"))return; // Refuse unsolicited payloads, even from old clients.
     Message incoming=null;
     // A retransmitted duplicate of a message we already have must never delete the attachment we
     // already legitimately stored for it — only a cleared/hidden conversation (never resurrect)
@@ -224,7 +223,7 @@ public final class PeerEngine implements Closeable {
     write(s,"LM4\tAVATARACK\t"+hash);
   }
   synchronized void markSeen(String messageId,String readerId)throws IOException{Message row=null;for(Message x:messages)if(x.id.equals(messageId)&&x.from.equals(id)&&x.to.equals(readerId)&&!x.status.equals("Seen")){row=x;break;}if(row==null)return;String old=row.status;row.status="Seen";try{save();}catch(IOException e){row.status=old;throw e;}}
-  static byte[] canonicalBytes(String msgId,String group,String sender,long time,String text,String fileName,int fileSize,String fileHash){
+  static byte[] canonicalBytes(String msgId,String group,String sender,long time,String text,String fileName,long fileSize,String fileHash){
     return (msgId+"\t"+group+"\t"+sender+"\t"+time+"\t"+enc(text)+"\t"+enc(fileName)+"\t"+fileSize+"\t"+fileHash).getBytes(StandardCharsets.UTF_8);
   }
   void handleSync(SSLSocket s,String group,String knownIdsCsv,String peerId){
@@ -235,8 +234,8 @@ public final class PeerEngine implements Closeable {
     }
     try{
       for(Message m:offer){
-        write(s,"LM4\tRELAY\t"+m.id+"\t"+group+"\t"+m.from+"\t"+enc(displayName(m.from))+"\t"+m.time+"\t"+enc(m.text)+"\t"+enc(m.fileName)+"\t"+m.fileSize+"\t"+m.fileHash+"\t"+m.signature);
-        if(!m.fileName.isEmpty())sendAttachmentToSocket(m,s,m.id);
+        write(s,"LM4\tMETA\t"+m.id+"\t"+group+"\t"+m.from+"\t"+enc(displayName(m.from))+"\t"+m.time+"\t"+enc(m.text)+"\t"+enc(m.fileName)+"\t"+m.fileSize+"\t"+m.fileHash+"\t"+m.signature);
+        // Data moves only after the receiver requests FETCH.
         if(!read(s).equals("LM4\tRELAYACK\t"+m.id))return;
       }
       write(s,"LM4\tSYNCDONE");
@@ -249,7 +248,7 @@ public final class PeerEngine implements Closeable {
       ArrayList<Message> old=new ArrayList<>(messages);messages.removeAll(expired);
       try{save();}catch(IOException e){messages.clear();messages.addAll(old);throw e;}
     }
-    for(Message m:expired)if(!m.fileName.isEmpty())try{attachmentPath(m).delete();}catch(IOException ignored){}
+    for(Message m:expired)if(!m.fileName.isEmpty())deleteTransfer(m);
     notifyChanged();
   }
   public synchronized void markRead(String conversation)throws IOException {
@@ -260,7 +259,9 @@ public final class PeerEngine implements Closeable {
     notifyChanged();
   }
   public synchronized int unread(String conversation){int n=0;for(Message m:messages)if(m.to.equals(id)&&m.status.equals("Received")&&(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)))n++;return n;}
-  void flush(){if(!running)return;for(Peer p:peers())if(sending.add(p.id))try{connections.execute(()->{try{deliver(p);}finally{sending.remove(p.id);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
+  final java.util.concurrent.atomic.AtomicLong queueEpoch=new java.util.concurrent.atomic.AtomicLong();
+  void flush(){if(!running)return;for(Peer p:peers())startDelivery(p);}
+  void startDelivery(Peer p){if(!running||!sending.add(p.id))return;try{outgoing.execute(()->{long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&observed!=queueEpoch.get());}finally{sending.remove(p.id);if(running&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
     for(Group g:groups())if(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&!Arrays.asList(g.acknowledged.split(",")).contains(p.id))try(Socket s=connect(p.host,p.port)){
@@ -268,26 +269,36 @@ public final class PeerEngine implements Closeable {
       write(s,"LM4\tGROUP\t"+g.id+"\t"+g.owner+"\t"+enc(g.name)+"\t"+String.join(",",g.members));if(!read(s).equals("LM4\tGROUPACK\t"+g.id)||!trusted(p.id,fingerprint))return;
       synchronized(this){Group current=groups.get(g.id);String old=current.acknowledged;current.acknowledged=old.isEmpty()?p.id:old+","+p.id;try{save();}catch(IOException e){current.acknowledged=old;throw e;}}
     }catch(Exception e){return;}
+    ArrayList<Message> queued=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(p.id)&&m.status.equals("Queued"))queued.add(m);}
+    for(Message m:queued)try(Socket s=connect(p.host,p.port)){String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
+      boolean exists;synchronized(this){exists=messages.contains(m);}if(!exists)continue;
+      write(s,"LM4\t"+(m.fileName.isEmpty()?"MSG":"OFFER")+"\t"+m.id+"\t"+id+"\t"+m.to+"\t"+enc(name)+"\t"+m.time+"\t"+enc(m.text)+"\t"+m.groupId+"\t"+enc(m.fileName)+"\t"+m.fileSize+"\t"+m.fileHash+(m.groupId.isEmpty()?"":"\t"+m.signature));
+      // Data moves only after the receiver requests FETCH.
+      String ack=read(s);if(!ack.equals("LM4\tACK\t"+m.id+"\t"+p.id)||!trusted(p.id,fingerprint))return;synchronized(this){if(!messages.contains(m))continue;m.status="Delivered";try{save();}catch(IOException e){m.status="Queued";throw e;}}notifyChanged();}catch(Exception e){return;}
+    ArrayList<Message> toConfirm=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(id)&&m.from.equals(p.id)&&m.status.equals("Read"))toConfirm.add(m);}
+    for(Message m:toConfirm)try(Socket s=connect(p.host,p.port)){String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
+      write(s,"LM4\tSEEN\t"+m.id+"\t"+id);
+      if(!read(s).equals("LM4\tSEENACK\t"+m.id)||!trusted(p.id,fingerprint))return;
+      synchronized(this){if(!messages.contains(m))continue;m.status="Seen";try{save();}catch(IOException e){m.status="Read";throw e;}}notifyChanged();
+    }catch(Exception e){return;}
     for(Group g:groups())if(Arrays.asList(g.members).contains(id)&&Arrays.asList(g.members).contains(p.id))try(Socket s=connect(p.host,p.port)){
       String fp=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fp))return;write(s,hello());String[] hello=read(s).split("\t",-1);if(!validHello(hello)||!hello[2].equals(p.id)||!read(s).equals("LM4\tREADY"))return;
       ArrayList<String> known=new ArrayList<>();LinkedHashSet<String> seen=new LinkedHashSet<>();synchronized(this){for(Message m:messages)if(m.groupId.equals(g.id)&&!m.signature.isEmpty()&&System.currentTimeMillis()<=m.time+GROUP_TTL_MS&&seen.add(m.id))known.add(m.id);}
-      write(s,"LM4\tSYNCREQ\t"+g.id+"\t"+String.join(",",known));
+      write(s,"LM4\tSYNCREQ2\t"+g.id+"\t"+String.join(",",known));
       while(true){
         String[] reply=read(s).split("\t",-1);
         if(reply.length==2&&reply[0].equals("LM4")&&reply[1].equals("SYNCDONE"))break;
-        if(reply.length!=12||!reply[0].equals("LM4")||!reply[1].equals("RELAY")||!uuid(reply[2])||!reply[3].equals(g.id))return;
-        String rid=reply[2],origSender=reply[4];long at;int fileSize;
-        try{at=Long.parseLong(reply[6]);fileSize=Integer.parseInt(reply[9]);}catch(NumberFormatException e){write(s,"LM4\tRELAYACK\t"+rid);continue;}
-        if(at<0){write(s,"LM4\tRELAYACK\t"+rid);continue;}
+        if(reply.length!=12||!reply[0].equals("LM4")||!reply[1].equals("META")||!uuid(reply[2])||!reply[3].equals(g.id))return;
+        String rid=reply[2],origSender=reply[4];long at;long fileSize;
+        try{at=Long.parseLong(reply[6]);fileSize=Long.parseLong(reply[9]);}catch(NumberFormatException e){write(s,"LM4\tRELAYACK\t"+rid);continue;}
+        if(at<0||at>System.currentTimeMillis()+300000||!uuid(origSender)){write(s,"LM4\tRELAYACK\t"+rid);continue;}
         String rtext=dec(reply[7]),rfileName=dec(reply[8]),rfileHash=reply[10],rsignature=reply[11];
         if(System.currentTimeMillis()>at+GROUP_TTL_MS){write(s,"LM4\tRELAYACK\t"+rid);continue;}
+        if(rtext.length()>2000||(rfileName.isEmpty()&&rtext.trim().isEmpty()))return;
         validateFile(rfileName,fileSize,rfileHash);
         Message msg=new Message(rid,origSender,id,rtext,at,"Received",g.id,rfileName,fileSize,rfileHash,rsignature,true);
-        boolean fileOk=rfileName.isEmpty();
-        if(!rfileName.isEmpty()){
-          try{fileOk=storeAttachmentFromSocket(msg,s,fileSize,rid).equals(rfileHash);}catch(IOException e){fileOk=false;}
-          if(!fileOk)try{attachmentPath(msg).delete();}catch(IOException ignored){}
-        }
+        boolean fileOk=true;
+
         Message incoming=null;
         // As in receive(): a re-sync of a message we already have must never delete the
         // attachment we already legitimately stored for it.
@@ -305,18 +316,6 @@ public final class PeerEngine implements Closeable {
         if(incoming!=null){try{received.accept(incoming);}catch(Exception ignored){}notifyChanged();}
       }
     }catch(Exception e){return;}
-    ArrayList<Message> queued=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(p.id)&&m.status.equals("Queued"))queued.add(m);}
-    for(Message m:queued)try(Socket s=connect(p.host,p.port)){String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
-      boolean exists;synchronized(this){exists=messages.contains(m);}if(!exists)continue;
-      write(s,"LM4\tMSG\t"+m.id+"\t"+id+"\t"+m.to+"\t"+enc(name)+"\t"+m.time+"\t"+enc(m.text)+"\t"+m.groupId+"\t"+enc(m.fileName)+"\t"+m.fileSize+"\t"+m.fileHash+(m.groupId.isEmpty()?"":"\t"+m.signature));
-      if(!m.fileName.isEmpty())sendAttachmentToSocket(m,s,m.id);
-      String ack=read(s);if(!ack.equals("LM4\tACK\t"+m.id+"\t"+p.id)||!trusted(p.id,fingerprint))return;synchronized(this){if(!messages.contains(m))continue;m.status="Delivered";try{save();}catch(IOException e){m.status="Queued";throw e;}}notifyChanged();}catch(Exception e){return;}
-    ArrayList<Message> toConfirm=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(id)&&m.from.equals(p.id)&&m.status.equals("Read"))toConfirm.add(m);}
-    for(Message m:toConfirm)try(Socket s=connect(p.host,p.port)){String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
-      write(s,"LM4\tSEEN\t"+m.id+"\t"+id);
-      if(!read(s).equals("LM4\tSEENACK\t"+m.id)||!trusted(p.id,fingerprint))return;
-      synchronized(this){if(!messages.contains(m))continue;m.status="Seen";try{save();}catch(IOException e){m.status="Read";throw e;}}notifyChanged();
-    }catch(Exception e){return;}
     if(p.trusted()){
       byte[] avatarData=avatar();String hash;try{hash=avatarData!=null?SecureIdentity.hash(avatarData):"";}catch(Exception e){return;}
       if(!p.sentAvatarHash.equals(hash))try(Socket s=connect(p.host,p.port)){
@@ -329,6 +328,116 @@ public final class PeerEngine implements Closeable {
     }
   }
 
+
+
+  public static final long MAX_FAST_FILE_SIZE=1024L*1024*1024*1024;
+  static final long SEGMENT_SIZE=100L*1024*1024;
+  final Semaphore fileSlots=new Semaphore(2);
+  final ConcurrentHashMap<String,Boolean> downloads=new ConcurrentHashMap<>();
+  public interface SourceOpener{InputStream open(String reference)throws IOException;}
+  public volatile SourceOpener sourceOpener=reference->new FileInputStream(reference);
+  File sourcePath(Message m)throws IOException{return new File(attachmentPath(m)+".source");}
+  File partsPath(Message m)throws IOException{return new File(attachmentPath(m)+".parts");}
+  File segmentPath(Message m,int part)throws IOException{return new File(partsPath(m),part+".sec");}
+  public boolean hasAttachment(Message m){try{return !m.fileName.isEmpty()&&(attachmentPath(m).exists()||sourcePath(m).exists()||new File(partsPath(m),"complete").exists());}catch(Exception e){return false;}}
+  synchronized boolean retained(Message m){if(hidden.contains(m.from+"/"+m.id)||(m.ttlEligible&&System.currentTimeMillis()>m.time+GROUP_TTL_MS))return false;for(Message row:messages)if(row.from.equals(m.from)&&row.id.equals(m.id))return true;return false;}
+  public boolean downloading(Message m){return downloads.containsKey(m.from+"/"+m.id);}
+  public void cancelDownload(Message m){downloads.computeIfPresent(m.from+"/"+m.id,(key,value)->false);}
+  void deleteTransfer(Message m){cancelDownload(m);try{attachmentPath(m).delete();sourcePath(m).delete();deleteParts(m);}catch(Exception ignored){}}
+  void deleteParts(Message m)throws IOException{File dir=partsPath(m);File[] children=dir.listFiles();if(children!=null)for(File child:children)child.delete();dir.delete();}
+  String hashStream(InputStream in)throws IOException{try{MessageDigest hash=MessageDigest.getInstance("SHA-256");byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1)hash.update(b,0,n);return hex(hash.digest());}catch(GeneralSecurityException e){throw new IOException(e);}}
+  static String hex(byte[] bytes){StringBuilder text=new StringBuilder();for(byte b:bytes)text.append(String.format(Locale.ROOT,"%02x",b&255));return text.toString();}
+  public void queueFastFile(String conversation,String caption,String reference,long size,String name)throws IOException{
+    if(size<0||size>MAX_FAST_FILE_SIZE)throw new IOException("Fast transfer limit is 1 TiB.");
+    caption=caption.trim();if(caption.length()>2000)throw new IOException("Caption too long.");
+    ArrayList<String> recipients=new ArrayList<>();String group="";
+    synchronized(this){Group g=groups.get(conversation);if(g!=null){group=g.id;for(String member:g.members)if(!member.equals(id))recipients.add(member);}else if(peers.containsKey(conversation))recipients.add(conversation);else throw new IOException("Choose a conversation");}
+    String hash;try(InputStream in=sourceOpener.open(reference)){if(in==null)throw new IOException("Source unavailable");try{MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[262144];long total=0;int n;while((n=in.read(buffer))!=-1){total+=n;if(total>size)throw new IOException("Source changed");digest.update(buffer,0,n);}if(total!=size)throw new IOException("Source changed");hash=hex(digest.digest());}catch(GeneralSecurityException error){throw new IOException(error);}}
+    String mid=UUID.randomUUID().toString();long at=System.currentTimeMillis();name=safeFileName(name);String signature="";
+    try{if(!group.isEmpty())signature=Base64.getEncoder().encodeToString(identity.sign(canonicalBytes(mid,group,id,at,caption,name,size,hash)));}catch(Exception e){throw new IOException(e);}
+    ArrayList<Message> batch=new ArrayList<>();for(String to:recipients)batch.add(new Message(mid,id,to,caption,at,"Queued",group,name,size,hash,signature,!group.isEmpty()));
+    File path=sourcePath(batch.get(0));path.getParentFile().mkdirs();
+    try(FileOutputStream out=new FileOutputStream(path)){out.write(protector.protect(reference.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw new IOException(e);}
+    synchronized(this){messages.addAll(batch);try{save();}catch(IOException e){messages.removeAll(batch);path.delete();throw e;}}
+    notifyChanged();queueEpoch.incrementAndGet();flush();
+  }
+  InputStream openContent(Message m)throws IOException{
+    File source=sourcePath(m);
+    if(source.exists())try{return sourceOpener.open(new String(protector.unprotect(SecureIdentity.readFile(source)),StandardCharsets.UTF_8));}catch(Exception e){throw new IOException(e);}
+    if(attachmentPath(m).exists())return openAttachmentPlaintext(attachmentPath(m));
+    if(!new File(partsPath(m),"complete").exists())throw new IOException("Download this attachment first.");
+    return openParts(m);
+  }
+  InputStream openParts(Message m)throws IOException{return openParts(m,0);}
+  InputStream openParts(Message m,int start)throws IOException{
+    final int count=(int)Math.max(1,(m.fileSize+SEGMENT_SIZE-1)/SEGMENT_SIZE);
+    return new InputStream(){int index=start;InputStream current;
+      public int read()throws IOException{byte[] b=new byte[1];return read(b,0,1)<0?-1:b[0]&255;}
+      public int read(byte[] b,int offset,int length)throws IOException{
+        if(length==0)return 0;
+        while(true){if(current==null){if(index>=count)return -1;current=openAttachmentPlaintext(segmentPath(m,index++));}int n=current.read(b,offset,length);if(n>=0)return n;current.close();current=null;}
+      }
+      public void close()throws IOException{if(current!=null)current.close();}
+    };
+  }
+  void serveDownload(Socket s,String[] request,String peerId)throws Exception{
+    if(!uuid(request[2])||!uuid(request[3]))return;
+    long offset,count;try{offset=Long.parseLong(request[4]);count=Long.parseLong(request[5]);}catch(Exception e){return;}
+    Message m=null;synchronized(this){for(Message row:messages)if(row.from.equals(request[2])&&row.id.equals(request[3])&&(!row.groupId.isEmpty()?allowedGroup(row.groupId,peerId):row.from.equals(id)&&row.to.equals(peerId))){m=row;break;}}
+    if(m==null||!retained(m)||!hasAttachment(m)||offset<0||count<0||count>SEGMENT_SIZE||offset>m.fileSize||count>m.fileSize-offset||offset%SEGMENT_SIZE!=0||count!=Math.min(SEGMENT_SIZE,m.fileSize-offset)){write(s,"LM4\tUNAVAILABLE");return;}
+    if(!fileSlots.tryAcquire()){write(s,"LM4\tBUSY");return;}
+    boolean segmented=!sourcePath(m).exists()&&!attachmentPath(m).exists();
+    try(InputStream source=segmented?openParts(m,(int)(offset/SEGMENT_SIZE)):openContent(m)){
+      long skip=segmented?0:offset;while(skip>0){long n=source.skip(skip);if(n==0){if(source.read()<0)throw new EOFException();n=1;}skip-=n;}
+      write(s,"LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count);
+      MessageDigest digest;try{digest=MessageDigest.getInstance("SHA-256");}catch(Exception e){throw new IOException(e);}
+      OutputStream out=new NetworkTimeoutOutputStream(s);byte[] buffer=new byte[256*1024];long done=0;
+      while(done<count){if(!retained(m)||!trusted(peerId,SecureIdentity.remote((SSLSocket)s)))throw new IOException("Transfer no longer authorized");int n=source.read(buffer,0,(int)Math.min(buffer.length,count-done));if(n<0)throw new EOFException();digest.update(buffer,0,n);out.write(buffer,0,n);done+=n;}
+      write(s,"LM4\tPART\t"+hex(digest.digest()));
+    }finally{fileSlots.release();}
+  }
+  public void downloadAttachment(Message m)throws IOException{
+    if(m.from.equals(id)||hasAttachment(m))return;
+    String key=m.from+"/"+m.id;if(downloads.putIfAbsent(key,true)!=null)return;
+    try{
+      partsPath(m).mkdirs();int parts=(int)Math.max(1,(m.fileSize+SEGMENT_SIZE-1)/SEGMENT_SIZE);
+      for(int i=0;i<parts;i++){
+        long offset=i*SEGMENT_SIZE,count=Math.min(SEGMENT_SIZE,m.fileSize-offset);File part=segmentPath(m,i),pending=new File(part+".pending");
+        if(part.exists()){reportProgress(m.id,offset+count,m.fileSize);continue;}
+        while(true){
+          if(!running||!Boolean.TRUE.equals(downloads.get(key)))throw new IOException("Download paused");
+          if(!retained(m))throw new IOException("Attachment cleared or expired");
+          boolean fetched=false;
+          for(Peer p:peers()){
+            if(!p.trusted()||(!m.groupId.isEmpty()?!allowedGroup(m.groupId,p.id):!p.id.equals(m.from)))continue;
+            try(Socket s=connect(p.host,p.port)){
+              String fp=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fp))continue;
+              write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))continue;
+              write(s,"LM4\tFETCH\t"+m.from+"\t"+m.id+"\t"+offset+"\t"+count);
+              if(!read(s).equals("LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count))continue;
+              final long base=offset;
+              String hash=storeAttachmentStreamAt(m,s.getInputStream(),count,(done,total)->{
+                if(!Boolean.TRUE.equals(downloads.get(key)))try{s.close();}catch(IOException ignored){}
+                reportProgress(m.id,base+done,m.fileSize);
+              },pending);
+              if(!read(s).equals("LM4\tPART\t"+hash))throw new IOException("Segment integrity check failed");
+              if(!retained(m)||!trusted(p.id,fp))throw new IOException("Attachment no longer authorized");
+              if(!pending.renameTo(part))throw new IOException("Cannot commit segment");
+              fetched=true;break;
+            }catch(Exception e){pending.delete();}
+          }
+          if(fetched)break;
+          try{Thread.sleep(2000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException("Download paused",e);}
+        }
+      }
+      String hash;try(InputStream in=openParts(m)){hash=hashStream(in);}
+      if(!hash.equals(m.fileHash)){deleteParts(m);throw new IOException("Source changed or attachment is corrupt. Retry download.");}
+      if(!retained(m))throw new IOException("Attachment cleared or expired");
+      if(!Boolean.TRUE.equals(downloads.get(key)))throw new IOException("Download paused");
+      try(FileOutputStream out=new FileOutputStream(new File(partsPath(m),"complete"))){out.write(hash.getBytes(StandardCharsets.US_ASCII));}
+      notifyChanged();
+    }finally{downloads.remove(key);notifyChanged();}
+  }
 
   public static final int MAX_FILE_SIZE=1024*1024*1024;
   // Chunk size for every streamed read/write (local store, export, network) — attachments up to
@@ -406,16 +515,16 @@ public final class PeerEngine implements Closeable {
     synchronized(this){
       messages.addAll(batch);try{save();}catch(IOException e){messages.removeAll(batch);if(fileName!=null&&!fileName.isEmpty())try{attachmentPath(batch.get(0)).delete();}catch(IOException ignored){}throw e;}
     }
-    notifyChanged();
+    notifyChanged();queueEpoch.incrementAndGet();flush();
   }
   public synchronized void clearConversation(String conversation)throws IOException {
     ArrayList<Message> removed=new ArrayList<>(),old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
     for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)||m.to.equals(conversation)){removed.add(m);hidden.add(m.from+"/"+m.id);}
     messages.removeAll(removed);try{save();}catch(IOException e){messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);throw e;}save();
-    for(Message m:removed)if(!m.fileName.isEmpty())attachmentPath(m).delete();notifyChanged();
+    for(Message m:removed)if(!m.fileName.isEmpty())deleteTransfer(m);notifyChanged();
   }
   public static String safeFileName(String name){String[] parts=name.replace('\\','/').split("/",-1);name=parts[parts.length-1];StringBuilder b=new StringBuilder();for(char c:name.toCharArray())if(c>=32&&"<>:\"/\\|?*".indexOf(c)<0)b.append(c);name=b.toString().trim().replaceAll("^\\.+|\\.+$","");return name.isEmpty()?"attachment":name.substring(0,Math.min(120,name.length()));}
-  static void validateFile(String name,int size,String hash)throws IOException {if(size<0||size>MAX_FILE_SIZE||(name.isEmpty()?(size!=0||!hash.isEmpty()):(!name.equals(safeFileName(name))||!hash.matches("[0-9a-f]{64}"))))throw new IOException("Invalid attachment metadata");}
+  static void validateFile(String name,long size,String hash)throws IOException {if(size<0||size>MAX_FAST_FILE_SIZE||(name.isEmpty()?(size!=0||!hash.isEmpty()):(!name.equals(safeFileName(name))||!hash.matches("[0-9a-f]{64}"))))throw new IOException("Invalid attachment metadata");}
   File attachmentPath(Message m)throws IOException {if(!uuid(m.from)||!uuid(m.id))throw new IOException("Invalid attachment ID");return new File(new File(file.getParentFile(),"attachments"),m.from+"-"+m.id+".sec");}
   // `totalBytes` is read as an exact count, not "until EOF" — required for a network source, which
   // has no natural end-of-stream mid-connection (more protocol frames follow after it). A
@@ -426,9 +535,10 @@ public final class PeerEngine implements Closeable {
   // replaces protecting the whole blob at once. Confidentiality-only at rest (no per-chunk
   // authentication); the existing end-to-end SHA-256 hash still catches corruption/tampering,
   // same as before, and the TLS channel content travels over is itself authenticated.
-  String storeAttachmentStream(Message m,InputStream source,long totalBytes,BiConsumer<Long,Long> onProgress)throws IOException {
-    File path=attachmentPath(m);if(!path.getParentFile().exists()&&!path.getParentFile().mkdirs())throw new IOException("Cannot create attachment storage");
-    File tmp=new File(path+".tmp");
+  String storeAttachmentStream(Message m,InputStream source,long totalBytes,BiConsumer<Long,Long> onProgress)throws IOException {return storeAttachmentStreamAt(m,source,totalBytes,onProgress,attachmentPath(m));}
+  String storeAttachmentStreamAt(Message m,InputStream source,long totalBytes,BiConsumer<Long,Long> onProgress,File destination)throws IOException {
+    File path=destination;if(!path.getParentFile().exists()&&!path.getParentFile().mkdirs())throw new IOException("Cannot create attachment storage");
+    File tmp=new File(path+"."+UUID.randomUUID()+".tmp");
     try{
       byte[] key=new byte[32],iv=new byte[16];SecureRandom random=new SecureRandom();random.nextBytes(key);random.nextBytes(iv);
       byte[] combined=new byte[48];System.arraycopy(key,0,combined,0,32);System.arraycopy(iv,0,combined,32,16);
@@ -470,12 +580,12 @@ public final class PeerEngine implements Closeable {
       byte[] head=new byte[ATTACHMENT_MAGIC.length];readFully(probe,head);
       if(Arrays.equals(head,ATTACHMENT_MAGIC)){
         byte[] lenBuf=new byte[4];readFully(probe,lenBuf);int headerLen=ByteBuffer.wrap(lenBuf).getInt();
-        byte[] header=new byte[headerLen];readFully(probe,header);
+        if(headerLen<1||headerLen>65536)throw new IOException("Invalid attachment header");byte[] header=new byte[headerLen];readFully(probe,header);
         byte[] raw;try{raw=protector.unprotect(header);}catch(Exception e){probe.close();throw new IOException(e);}
         byte[] key=Arrays.copyOfRange(raw,0,32),iv=Arrays.copyOfRange(raw,32,48);
         try{
           Cipher cipher=Cipher.getInstance("AES/CBC/PKCS5Padding");cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new IvParameterSpec(iv));
-          return new CipherInputStream(probe,cipher);
+          return new CipherInputStream(new BufferedInputStream(probe,256*1024),cipher);
         }catch(GeneralSecurityException e){probe.close();throw new IOException(e);}
       }
       probe.close();
@@ -486,7 +596,7 @@ public final class PeerEngine implements Closeable {
   // Small attachments and callers that need a byte[] (thumbnails, exports below a threshold,
   // tests). Not used for the actual network send/receive path — that streams, see below.
   public byte[] readAttachment(Message m)throws IOException {
-    try(InputStream plain=openAttachmentPlaintext(attachmentPath(m));ByteArrayOutputStream buffer=new ByteArrayOutputStream()){
+    try(InputStream plain=openContent(m);ByteArrayOutputStream buffer=new ByteArrayOutputStream()){
       byte[] chunk=new byte[CHUNK_SIZE];int n;while((n=plain.read(chunk))!=-1)buffer.write(chunk,0,n);
       byte[] data=buffer.toByteArray();
       if(data.length!=m.fileSize||!SecureIdentity.hash(data).equals(m.fileHash))throw new IOException("Attachment integrity check failed");
@@ -499,7 +609,7 @@ public final class PeerEngine implements Closeable {
   public void readAttachmentStream(Message m,OutputStream destination,BiConsumer<Long,Long> onProgress)throws IOException {
     MessageDigest digest;try{digest=MessageDigest.getInstance("SHA-256");}catch(Exception e){throw new IOException(e);}
     long total=0;
-    try(InputStream plain=openAttachmentPlaintext(attachmentPath(m))){
+    try(InputStream plain=openContent(m)){
       byte[] buffer=new byte[CHUNK_SIZE];int n;
       while((n=plain.read(buffer))!=-1){
         digest.update(buffer,0,n);destination.write(buffer,0,n);
@@ -524,5 +634,5 @@ public final class PeerEngine implements Closeable {
   }
 
   void notifyChanged(){try{changed.run();}catch(Exception ignored){}}
-  public synchronized void close(){running=false;try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();}
+  public synchronized void close(){running=false;try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
 }

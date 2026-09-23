@@ -15,6 +15,7 @@ def raw(a,b,recipient,text,group='',name='',data=b'',size=None,digest=None,messa
 
 def verify_file(p,conversation,name,data):
     record=file_message(p,conversation,name);assert record is not None
+    p.command('DOWNLOAD\t'+conversation+'\t'+record[1])
     result=p.command('FILEHASH\t'+conversation+'\t'+record[1])[0]
     assert result[1:]==[hashlib.sha256(data).hexdigest(),str(len(data))]
     return record
@@ -34,25 +35,30 @@ try:
     data=bytes(range(256))*1024
     send_file(a,bid,'photo.png',png)
     wait_for(lambda:file_message(b,aid,'photo.png') is not None,'Java image reaches Windows')
+    assert b.command('HASFILE\t'+aid+'\t'+file_message(b,aid,'photo.png')[1])[0][1]=='false'
     verify_file(b,aid,'photo.png',png)
     send_file(b,aid,'document.bin',data)
     wait_for(lambda:file_message(a,bid,'document.bin') is not None,'Windows binary file reaches Java')
+    assert a.command('HASFILE\t'+bid+'\t'+file_message(a,bid,'document.bin')[1])[0][1]=='false'
     verify_file(a,bid,'document.bin',data)
-    # Bigger than one streaming chunk (1 MiB) on both platforms, so this exercises the actual
+    # Bigger than one streaming chunk (3 MiB) on both platforms, so this exercises the actual
     # multi-chunk loop in the new streaming encrypt/store/send/receive/decrypt path, not just a
     # single-chunk payload small enough to hide a chunking bug.
-    large_data=bytes(range(256))*12000
+    large_data=bytes(range(256))*28000
     send_file(a,bid,'large.bin',large_data)
-    wait_for(lambda:file_message(b,aid,'large.bin') is not None,'A multi-chunk (~3 MB) attachment streams correctly end to end')
+    wait_for(lambda:file_message(b,aid,'large.bin') is not None,'A multi-chunk (~7 MB) attachment streams correctly end to end')
     verify_file(b,aid,'large.bin',large_data)
     send_file(a,gid,'group.bin',data)
     wait_for(lambda:file_message(b,gid,'group.bin') is not None and file_message(c,gid,'group.bin') is not None,'Encrypted group attachment reaches all members')
-    group_file=verify_file(b,gid,'group.bin',data);verify_file(c,gid,'group.bin',data)
+    assert c.command('HASFILE\t'+gid+'\t'+file_message(c,gid,'group.bin')[1])[0][1]=='false'
+    group_file=verify_file(b,gid,'group.bin',data)
+    assert c.command('HASFILE\t'+gid+'\t'+file_message(c,gid,'group.bin')[1])[0][1]=='false'
+    verify_file(c,gid,'group.bin',data)
     send_file(b,aid,'empty.txt',b'')
     wait_for(lambda:file_message(a,bid,'empty.txt') is not None,'Empty attachment accepted with validated hash')
     verify_file(a,bid,'empty.txt',b'')
     # Reject over-limit metadata before allocating a body, unsafe paths and corrupt content.
-    for kwargs in [dict(name='huge.bin',size=10485761,digest='a'*64),dict(name='../escape.txt',data=b'x'),dict(name='corrupt.bin',data=b'bad',digest='0'*64),dict(text='Unknown group',group=str(uuid.uuid4()))]:
+    for kwargs in [dict(name='huge.bin',size=1099511627777,digest='a'*64),dict(name='../escape.txt',data=b'x'),dict(name='corrupt.bin',data=b'bad',digest='0'*64),dict(text='Unknown group',group=str(uuid.uuid4()))]:
         params=dict(text='',recipient=bid);params.update(kwargs)
         try:result=raw(a,b,**params)
         except AssertionError:pass
@@ -66,7 +72,7 @@ try:
     result=a.command('RAWGROUP\t'+b.ip+'\t44972\t'+gid+'\t'+aid+'\t'+b64('Replaced group')+'\t'+','.join(sorted([aid,bid,cid])))
     assert base64.b64decode(result[0][1]).decode()=='REJECTED'
     assert any(r[0]=='G' and r[1]==gid and r[2]==b64('Team مجموعة') for r in b.state())
-    blob=work/'Windows-B'/'attachments'/(aid+'-'+group_file[1]+'.sec');original=blob.read_bytes();blob.write_bytes(original[:-1]+bytes([original[-1]^1]))
+    blob=work/'Windows-B'/'attachments'/(aid+'-'+group_file[1]+'.sec.parts')/'0.sec';original=blob.read_bytes();blob.write_bytes(original[:-1]+bytes([original[-1]^1]))
     try:b.command('FILEHASH\t'+gid+'\t'+group_file[1])
     except AssertionError:pass
     else:raise AssertionError('Corrupt stored attachment was accepted')
@@ -76,11 +82,12 @@ try:
     notice=b.command('NOTIFYCOUNT')[0][1]
     b.command('CLEAR\t'+gid);assert conv(b,gid)==[] and gid in groups(b)
     assert file_message(b,aid,'photo.png') is not None and file_message(c,gid,'group.bin') is not None
-    result=raw(a,b,bid,'',gid,'group.bin',data,message_id=group_file[1])
-    assert base64.b64decode(result[0][1]).decode()=='LM4\tACK\t'+group_file[1]+'\t'+bid
+    result=raw(a,b,bid,'',gid,'group.bin',size=len(data),digest=hashlib.sha256(data).hexdigest(),message_id=group_file[1])
+    assert base64.b64decode(result[0][1]).decode()=='REJECTED' # legacy pushed file metadata is never accepted
     assert conv(b,gid)==[] and b.command('NOTIFYCOUNT')[0][1]==notice
     assert not (work/'Windows-B'/'attachments'/(aid+'-'+group_file[1]+'.sec')).exists()
     b.stop();b=Peer('cs','Windows-B','127.0.0.3');assert conv(b,gid)==[] and gid in groups(b)
+    assert b.command('HASFILE\t'+aid+'\t'+file_message(b,aid,'photo.png')[1])[0][1]=='true'
     verify_file(b,aid,'photo.png',png)
     a.command('CLEAR\t'+bid);assert conv(a,bid)==[] and len(conv(a,gid))>0
     a.stop();a=Peer('java','Phone-A','127.0.0.2');assert conv(a,bid)==[] and gid in groups(a)

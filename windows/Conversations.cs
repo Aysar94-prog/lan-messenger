@@ -29,7 +29,7 @@ public sealed partial class PeerEngine
     }
     public void QueueFile(string conversation,string name,byte[] data)=>QueueFile(conversation,"",name,data);
     public void QueueFile(string conversation,string caption,string name,byte[] data)
-        =>QueueContentAsync(conversation,caption,SafeFileName(name),new MemoryStream(data),data.Length,null).GetAwaiter().GetResult();
+        =>Task.Run(()=>QueueContentAsync(conversation,caption,SafeFileName(name),new MemoryStream(data),data.Length,null)).GetAwaiter().GetResult();
     // Streams straight from disk into the encrypted attachment store — the file is never held
     // whole in memory, so this is what a large (up to 1 GB) attachment must go through.
     // `displayName` lets the caller keep whatever name it already showed the user in the draft
@@ -60,7 +60,7 @@ public sealed partial class PeerEngine
         var signature=groupId.Length>0?Convert.ToBase64String(identity.Sign(CanonicalBytes(id,groupId,Id,at,text,fileName,declaredSize,hash))):"";
         var batch=recipients.Select(to=>new Message(id,Id,to,text,at,"Queued",groupId,fileName,declaredSize,hash,signature,groupId.Length>0)).ToArray();
         lock(gate){messages.AddRange(batch);try{Save();}catch{messages.RemoveAll(m=>m.Id==id&&m.From==Id);if(fileName.Length>0)try{File.Delete(AttachmentPath(batch[0]));}catch{}throw;}}
-        Notify();
+        Notify();WakeDelivery();
     }
     public void ClearConversation(string conversation)
     {
@@ -68,16 +68,16 @@ public sealed partial class PeerEngine
         var old=messages.ToArray();var oldHidden=hidden.ToArray();foreach(var m in removed)hidden.Add(m.From+"/"+m.Id);messages.RemoveAll(m=>removed.Contains(m));
         try{Save();}catch{messages.Clear();messages.AddRange(old);hidden.Clear();hidden.UnionWith(oldHidden);throw;}
         Save(); // Replace the backup too; cleared content must not return on recovery.
-        foreach(var m in removed.Where(m=>m.FileName.Length>0))try{File.Delete(AttachmentPath(m));}catch{}}
+        foreach(var m in removed.Where(m=>m.FileName.Length>0))DeleteTransfer(m);}
         Notify();
     }
     public static string SafeFileName(string name)
     {
         name=name.Replace('\\','/').Split('/').Last();name=new string(name.Where(c=>c>=32&&!"<>:\"/\\|?*".Contains(c)).ToArray()).Trim().Trim('.');return name.Length==0?"attachment":name[..Math.Min(120,name.Length)];
     }
-    static void ValidateFile(string name,int size,string hash)
+    static void ValidateFile(string name,long size,string hash)
     {
-        if(size<0||size>MaxFileSize||(name.Length==0?(size!=0||hash.Length!=0):(name!=SafeFileName(name)||hash.Length!=64||hash.Any(c=>!"0123456789abcdef".Contains(c)))))throw new IOException("Invalid attachment metadata");
+        if(size<0||size>MaxFastFileSize||(name.Length==0?(size!=0||hash.Length!=0):(name!=SafeFileName(name)||hash.Length!=64||hash.Any(c=>!"0123456789abcdef".Contains(c)))))throw new IOException("Invalid attachment metadata");
     }
     string AttachmentPath(Message m){if(!Uuid(m.From)||!Uuid(m.Id))throw new IOException("Invalid attachment ID");return Path.Combine(Path.GetDirectoryName(file)!,"attachments",m.From+"-"+m.Id+".sec");}
     // Encrypts a stream of plaintext into the attachment file without ever buffering the whole
@@ -89,13 +89,14 @@ public sealed partial class PeerEngine
     // `totalBytes` is read as an exact count, not "until EOF" — required for a network source,
     // which has no natural end-of-stream mid-connection (more protocol frames follow after it).
     // A FileStream/MemoryStream source works the same way since its length is already known too.
-    async Task<string> StoreAttachmentStream(Message m,Stream source,long totalBytes,Action<long>? onProgress)
+    async Task<string> StoreAttachmentStream(Message m,Stream source,long totalBytes,Action<long>? onProgress,string? destination=null)
     {
-        var path=AttachmentPath(m);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp=path+".tmp";
+        var path=destination??AttachmentPath(m);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var tmp=path+"."+Guid.NewGuid().ToString("N")+".tmp";
         using var aes=Aes.Create();aes.KeySize=256;aes.GenerateKey();aes.GenerateIV();
         var header=protector.Protect([..aes.Key,..aes.IV]);
         using var sha=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);long total=0;
+        try{
         using(var f=new FileStream(tmp,FileMode.Create,FileAccess.Write))
         {
             f.Write(AttachmentMagic);
@@ -118,6 +119,7 @@ public sealed partial class PeerEngine
         }
         try{File.Move(tmp,path,true);}catch{try{File.Delete(tmp);}catch{}throw;}
         return Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+        }finally{try{File.Delete(tmp);}catch{}}
     }
     void StoreAttachment(Message m,byte[] data)=>StoreAttachmentStream(m,new MemoryStream(data),data.Length,null).GetAwaiter().GetResult();
     static bool IsStreamedFormat(FileStream file)
@@ -135,7 +137,7 @@ public sealed partial class PeerEngine
         if(!IsStreamedFormat(f)){f.Dispose();return new MemoryStream(protector.Unprotect(File.ReadAllBytes(path)));}
         f.Position=AttachmentMagic.Length;
         var lengthBytes=new byte[4];f.ReadExactly(lengthBytes);if(BitConverter.IsLittleEndian)Array.Reverse(lengthBytes);int headerLen=BitConverter.ToInt32(lengthBytes);
-        var header=new byte[headerLen];f.ReadExactly(header);
+        if(headerLen<1||headerLen>65536)throw new IOException("Invalid attachment header");var header=new byte[headerLen];f.ReadExactly(header);
         var raw=protector.Unprotect(header);
         using var aes=Aes.Create();aes.KeySize=256;aes.Key=raw[..32];aes.IV=raw[32..48];
         return new CryptoStream(f,aes.CreateDecryptor(),CryptoStreamMode.Read);
@@ -144,7 +146,7 @@ public sealed partial class PeerEngine
     // tests). Not used for the actual network send/receive path — that streams, see below.
     public byte[] ReadAttachment(Message m)
     {
-        using var plain=OpenAttachmentPlaintext(AttachmentPath(m));
+        using var plain=OpenContent(m);
         using var buffer=new MemoryStream();plain.CopyTo(buffer);var data=buffer.ToArray();
         if(data.Length!=m.FileSize||SecureIdentity.Hash(data)!=m.FileHash)throw new IOException("Attachment integrity check failed");
         return data;
@@ -156,7 +158,7 @@ public sealed partial class PeerEngine
     {
         var path=AttachmentPath(m);
         using var sha=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);long total=0;
-        using(var plain=OpenAttachmentPlaintext(path))
+        using(var plain=OpenContent(m))
         {
             var buffer=new byte[ChunkSize];int n;
             while((n=await plain.ReadAsync(buffer))>0)
