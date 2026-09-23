@@ -1,6 +1,6 @@
-# LAN Messenger — Windows 0.8.1 / Android 0.8.2 test release
+# LAN Messenger — Windows and Android 0.8.3 test release
 
-Windows 0.8.1 fixes blank row heights and reentrant layout/repainting when switching scrolled conversations. Android 0.8.0 remains compatible; no Android update is needed for this UI fix.
+0.8.3 automatically downloads incoming photos and renders supported images inline. Other files still require Download. Windows layout fixes and the Android daily upload policy remain. Update each receiving device to 0.8.3 for automatic photos.
 
 Private LAN messaging without accounts, a host computer or a cloud server. English interface with Unicode messages. **Update both devices and every group member to 0.8.0 for attachments and group synchronization.**
 
@@ -19,7 +19,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.2.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.3.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -28,11 +28,11 @@ Both attachment actions show a draft preview. Choosing a file does not send it: 
 - **Attach / Photo / File / Camera:** up to 1 GiB; prepares an encrypted local snapshot.
 - **Fast file:** a dedicated action for large files, capped at 1 TiB in metadata. It stores a protected reference to the original instead of another encrypted sender copy. Preparation reads the original once to calculate SHA-256. Keep the source unchanged and available until recipients finish.
 
-The receiver gets only the name, size, caption and integrity metadata. **No attachment or image bytes arrive until Download is pressed**, in both modes. Images appear inline after download. Profile avatars remain a separate automatic verified-peer feature.
+The receiver first gets name, size, caption and integrity metadata. **Incoming images download automatically** (JPG/JPEG, PNG, GIF, BMP, WebP, TIFF, HEIC/HEIF and AVIF filename extensions). Other files require Download, in both normal and Fast file modes. Supported downloaded images appear inline; the existing 20 MiB/32-megapixel preview guards and platform decoder support still apply. The original image remains available to Save when preview is unsupported. Profile avatars remain separate. Two background image downloads run at a time; pending incoming images can resume automatically after restart. Pause stops that image for the current session; manual Download can retry. Source must be reachable and verified, or a verified group member must hold the complete image. Sender preview and explicit Send remain unchanged.
 
 Downloads use separate connections and small streaming buffers. Two simultaneous file-serving streams are allowed; queued text precedes group sync and dispatches promptly. TLS and device verification remain enabled.
 
-Verified **100 MiB segments** allow resume: Pause keeps finished segments. Connection loss retries during the running download. After an app restart, press Download again. Only the incomplete segment restarts. This is sequential streaming; 100 MiB is a checkpoint size, not a RAM buffer or parallel striping.
+Verified **100 MiB segments** allow resume: Pause keeps finished segments. Connection loss retries during the running download. After an app restart, press Download again for other files; pending images are scheduled automatically. Only the incomplete segment restarts. This is sequential streaming; 100 MiB is a checkpoint size, not a RAM buffer or parallel striping.
 
 Save exports a completed download to your chosen location. Encrypted downloaded storage and the exported file need separate disk space. Speed depends on network, storage, CPU and the Android file provider; no real-Wi-Fi throughput guarantee is made.
 
@@ -44,9 +44,9 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.2.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-0.8.3.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.1.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.3.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
 Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing, but attachments and group sync need 0.8.0 on both ends. Do not downgrade.
 

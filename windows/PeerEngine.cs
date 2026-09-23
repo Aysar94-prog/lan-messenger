@@ -143,7 +143,7 @@ public sealed partial class PeerEngine : IDisposable
     long queueEpoch;
     void WakeDelivery(){Interlocked.Increment(ref queueEpoch);foreach(var p in Peers)StartDelivery(p);}
     void StartDelivery(Peer p){if(Running&&sending.TryAdd(p.Id,0))_=Task.Run(async()=>{long observed=-1;try{do{observed=Interlocked.Read(ref queueEpoch);await Deliver(p);}while(Running&&observed!=Interlocked.Read(ref queueEpoch));}finally{sending.TryRemove(p.Id,out _);if(Running&&observed!=Interlocked.Read(ref queueEpoch))StartDelivery(p);}});}
-    async Task TimerLoop(){while(!stop.IsCancellationRequested){try{PurgeExpired();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,stop.Token);}catch(OperationCanceledException){break;}catch{await Task.Delay(500);}}}
+    async Task TimerLoop(){while(!stop.IsCancellationRequested){try{PurgeExpired();QueueImageDownloads();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,stop.Token);}catch(OperationCanceledException){break;}catch{await Task.Delay(500);}}}
     async Task<TcpClient> Connect(string host,int peerPort){var client=new TcpClient(new IPEndPoint(bind,0)){NoDelay=true};try{using var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);timeout.CancelAfter(1800);await client.ConnectAsync(IPAddress.Parse(host),peerPort,timeout.Token);return client;}catch{client.Dispose();throw;}}
     static async Task<string> Read(Stream stream)
     {
@@ -205,7 +205,7 @@ public sealed partial class PeerEngine : IDisposable
             else if(name.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}}
 
         if(incoming is not null)try{Received?.Invoke(incoming);}catch{}
-        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");Notify();}catch(Exception e){LastConnectionError=e.ToString();}
+        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");QueueImageDownloads();Notify();}catch(Exception e){LastConnectionError=e.ToString();}
     }
     // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
     static TimeSpan TransferTimeout(int size)=>TimeSpan.FromSeconds(Math.Max(60,30+size/1_000_000));

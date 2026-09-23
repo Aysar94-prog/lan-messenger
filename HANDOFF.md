@@ -1,6 +1,18 @@
-# LAN Messenger handoff — Windows 0.8.1 / Android 0.8.2 test release
+# LAN Messenger handoff — Windows and Android 0.8.3 test release
 
 Updated 2026-09-23. Continue this existing project; do not rebuild from scratch.
+
+## 0.8.3 — automatic incoming images, 2026-09-23
+
+User explicitly changed the manual-download requirement: images should download automatically and display normally in chat. Other attachments remain manual. Applied to BOTH Windows and Android; no mode switch or additional approval is required.
+
+Both engines recognize JPG/JPEG, PNG, GIF, BMP, WebP, TIFF, HEIC/HEIF and AVIF extensions case-insensitively. Automatic background tasks call the existing authenticated FETCH downloader, capped at two automatic image tasks per device. Saved incoming image offers are considered after startup/reconnection too. Only verified/reachable candidate sources are scheduled; group members can supply complete images. No payload was added to OFFER/META and no protocol downgrade. Existing integrity checks, resumable segments and Android daily upload accounting continue unchanged. Sender drafts still require explicit Send.
+
+Each image gets one automatic attempt per session; Pause or final integrity failure will not be immediately overridden by the periodic scheduler. User can manually retry. Session restart may automatically try pending images again. Offline sources keep an already-started downloader retrying as before. Classification is by filename extension; raster decoding occurs only after full integrity verification, using existing decoder/pixel/20 MiB guards. Unsupported formats or oversized previews can still require Save/opening externally. This change does not add new image codecs.
+
+Windows version 0.8.3; Android versionName/APP_VERSION 0.8.3, versionCode 17, original signing key. Each RECEIVER needs this update for automatic photos; existing 0.8 senders remain wire-compatible. Windows remains uncapped; Android daily tiers remain active.
+
+Tests updated for automatic images versus explicit Download for binary files. New images.py checks group auto-download on Java/C# and that videos/double-extension .png.exe offers remain manual. Native Windows test separately verifies automatic image completion and an inline PictureBox without clicking Download. Work/results: new-chat-2/work/v083. APK built/signature verified; standalone Windows build has 0 warnings/errors. Verification complete: full tests/run.ps1 passed (secure integration, features, daily policy, real capped uploads, resumable large transfers, native Windows UI). Additional images.py passed separately: group images fetched without DOWNLOAD commands on Java and C#, videos and .png.exe stayed manual. Native UI confirms automatic-photo.png becomes an inline PictureBox without a click, and chat-switch/card-retention regressions pass. Visually inspected windows-switch.png under v083/ui-results/ui-194252c2e0a3466c8c6f86df48117213 (synthetic 1px fixture, not a real photo). APK signature v2/v3 verified. Physical Android UI/codec behavior remains untested. Release outputs: LanMessenger-0.8.3.apk, LanMessenger-Windows-0.8.3.zip, source archive, notes and checksums in new-chat-2/outputs.
 
 ## Android 0.8.2 — approved daily upload tiers, 2026-09-23
 

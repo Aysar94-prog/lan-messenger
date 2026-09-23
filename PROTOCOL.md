@@ -1,4 +1,4 @@
-# LAN Messenger LM4 protocol — 0.8.0
+# LAN Messenger LM4 protocol — 0.8.3 (0.8 wire format)
 
 The manual-transfer rules below supersede historical pushed attachments. Both ends require 0.8.0 for attachments and group sync.
 
@@ -119,7 +119,7 @@ M snapshot rows grow two more fields for this: `...<TAB>base64-signature-or-empt
 
 ## Explicit range download (0.8.0)
 
-Only Download starts FETCH. Discovery, offers, thumbnails and group sync never call it. Each range uses a separate pinned mutual-TLS HELLO/READY connection.
+In 0.8.3, Download starts FETCH for ordinary files; a background scheduler starts FETCH automatically for incoming image offers, based on the supported filename-extension allowlist. It also considers saved pending image offers after restart. No unsolicited bytes are pushed in OFFER/META. Two automatic image tasks run at a time. Range authorization, checksums, encryption and the Android upload budget remain identical. Each range uses a separate pinned mutual-TLS HELLO/READY connection.
 
 - Request: `LM4<TAB>FETCH<TAB>original-sender-uuid<TAB>message-id<TAB>offset<TAB>count`.
 - Offset is a multiple of 104857600 (100 MiB). Count equals min(100 MiB, file-size minus offset), including zero for an empty file.
@@ -127,7 +127,7 @@ Only Download starts FETCH. Discovery, offers, thumbnails and group sync never c
 - Response: `LM4<TAB>DATA<TAB>message-id<TAB>offset<TAB>count`, exactly count raw bytes, then `LM4<TAB>PART<TAB>sha256-of-range`.
 - Receiver encrypts a pending range, verifies PART on authenticated TLS, rechecks retention/trust, then commits it. Interrupted/unverified ranges are discarded. Completed segments persist for resume.
 - Full concatenated plaintext SHA-256 must match the offer before a completion marker enables preview/export/relay.
-- Pause retains verified segments. Connection loss retries while that consented download runs. App restart requires Download again. Group downloads may switch to another verified member with complete data.
+- Pause retains verified segments. Connection loss retries while that consented download runs. App restart requires Download again for other files; pending images are automatically scheduled. Group downloads may switch to another verified member with complete data.
 - Normal sources are encrypted snapshots; Fast file sources use protected original-file references. Paths/URIs never travel on the wire. Keep originals unchanged and available.
 - Checkpoints do not allocate 100 MiB in RAM or imply parallel striping. Completed stored segments can be served without replaying earlier segments. Final integrity verification reads complete content once.
 - Clear/expiry cancels downloads and deletes generated storage, never external originals. Serving rechecks retention/trust. Legacy pushed MSG/SYNCREQ cannot trigger automatic downloading.

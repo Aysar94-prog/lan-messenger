@@ -9,6 +9,22 @@ public sealed partial class PeerEngine
     const long SegmentSize=100L*1024*1024;
     readonly SemaphoreSlim fileSlots=new(2);
     readonly ConcurrentDictionary<string,CancellationTokenSource> downloads=new();
+    readonly SemaphoreSlim imageSlots=new(2);
+    readonly ConcurrentDictionary<string,byte> imageAttempts=new();
+    public static bool IsImageAttachment(Message m)=>new[]{".jpg",".jpeg",".png",".gif",".bmp",".webp",".tif",".tiff",".heic",".heif",".avif"}.Contains(Path.GetExtension(m.FileName).ToLowerInvariant());
+    void QueueImageDownloads()
+    {
+        if(!Running)return;
+        Message[] images;lock(gate)images=messages.Where(m=>m.From!=Id&&IsImageAttachment(m)).ToArray();
+        foreach(var m in images){
+            var key=m.From+"/"+m.Id;
+            if(HasAttachment(m)||Downloading(m)||imageAttempts.ContainsKey(key)||!Retained(m))continue;
+            if(!Peers.Any(p=>p.Trusted&&p.Online&&(p.Id==m.From||(m.GroupId.Length>0&&Groups.Any(g=>g.Id==m.GroupId&&g.Members.Contains(p.Id))))))continue;
+            if(!imageSlots.Wait(0))break;
+            if(!imageAttempts.TryAdd(key,0)){imageSlots.Release();continue;}
+            _=Task.Run(async()=>{try{await DownloadAttachmentAsync(m);}catch{}finally{imageSlots.Release();Notify();}});
+        }
+    }
     public bool Downloading(Message m)=>downloads.ContainsKey(m.From+"/"+m.Id);
     string SourcePath(Message m)=>AttachmentPath(m)+".source";
     string PartsPath(Message m)=>AttachmentPath(m)+".parts";

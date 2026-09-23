@@ -262,7 +262,7 @@ public final class PeerEngine implements Closeable {
   }
   public synchronized int unread(String conversation){int n=0;for(Message m:messages)if(m.to.equals(id)&&m.status.equals("Received")&&(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)))n++;return n;}
   final java.util.concurrent.atomic.AtomicLong queueEpoch=new java.util.concurrent.atomic.AtomicLong();
-  void flush(){if(!running)return;for(Peer p:peers())startDelivery(p);}
+  void flush(){if(!running)return;queueImageDownloads();for(Peer p:peers())startDelivery(p);}
   void startDelivery(Peer p){if(!running||!sending.add(p.id))return;try{outgoing.execute(()->{long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&observed!=queueEpoch.get());}finally{sending.remove(p.id);if(running&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
@@ -343,6 +343,21 @@ public final class PeerEngine implements Closeable {
   File segmentPath(Message m,int part)throws IOException{return new File(partsPath(m),part+".sec");}
   public boolean hasAttachment(Message m){try{return !m.fileName.isEmpty()&&(attachmentPath(m).exists()||sourcePath(m).exists()||new File(partsPath(m),"complete").exists());}catch(Exception e){return false;}}
   synchronized boolean retained(Message m){if(hidden.contains(m.from+"/"+m.id)||(m.ttlEligible&&System.currentTimeMillis()>m.time+GROUP_TTL_MS))return false;for(Message row:messages)if(row.from.equals(m.from)&&row.id.equals(m.id))return true;return false;}
+  final Semaphore imageSlots=new Semaphore(2);
+  final Set<String> imageAttempts=ConcurrentHashMap.newKeySet();
+  public static boolean isImageAttachment(Message m){String name=m.fileName.toLowerCase(Locale.ROOT);int dot=name.lastIndexOf('.');return dot>=0&&Arrays.asList(".jpg",".jpeg",".png",".gif",".bmp",".webp",".tif",".tiff",".heic",".heif",".avif").contains(name.substring(dot));}
+  void queueImageDownloads(){
+    if(!running)return;ArrayList<Message> images=new ArrayList<>();
+    synchronized(this){for(Message m:messages)if(!m.from.equals(id)&&isImageAttachment(m))images.add(m.copy());}
+    for(Message m:images){
+      String key=m.from+"/"+m.id;
+      if(hasAttachment(m)||downloading(m)||imageAttempts.contains(key)||!retained(m))continue;
+      boolean reachable=false;for(Peer p:peers())if(p.trusted()&&p.online()&&(p.id.equals(m.from)||(!m.groupId.isEmpty()&&allowedGroup(m.groupId,p.id)))){reachable=true;break;}
+      if(!reachable)continue;if(!imageSlots.tryAcquire())break;
+      if(!imageAttempts.add(key)){imageSlots.release();continue;}
+      Thread worker=new Thread(()->{try{downloadAttachment(m);}catch(Exception ignored){}finally{imageSlots.release();notifyChanged();}},"lan-image-download");worker.setDaemon(true);worker.start();
+    }
+  }
   public boolean downloading(Message m){return downloads.containsKey(m.from+"/"+m.id);}
   public void cancelDownload(Message m){downloads.computeIfPresent(m.from+"/"+m.id,(key,value)->false);}
   void deleteTransfer(Message m){cancelDownload(m);try{attachmentPath(m).delete();sourcePath(m).delete();deleteParts(m);}catch(Exception ignored){}}

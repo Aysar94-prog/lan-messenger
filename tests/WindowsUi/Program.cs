@@ -77,14 +77,22 @@ class Check
     second.Queue(engine.Id,"Append without blinking");
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Append without blinking"),"Next message arrives");
     Call("Render");if(!ReferenceEquals(firstCard,liveFeed.Controls[0]))throw new Exception("Appending a message rebuilt existing cards");
-    second.QueueFile(engine.Id,"manual-download.png",picture);
-    await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="manual-download.png"),"Incoming file offer arrives");
-    var offer=engine.Messages(second.Id).First(m=>m.FileName=="manual-download.png");Call("Render");
+    second.QueueFile(engine.Id,"manual-download.bin",picture);
+    await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="manual-download.bin"),"Incoming file offer arrives");
+    var offer=engine.Messages(second.Id).First(m=>m.FileName=="manual-download.bin");Call("Render");
     if(engine.HasAttachment(offer)||!TextIn(liveFeed).Contains("Download"))throw new Exception("Incoming attachment downloaded before click or no Download button");
     var downloadButton=liveFeed.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().First(b=>b.Text=="Download");downloadButton.PerformClick();
     await Wait(()=>engine.HasAttachment(offer),"Download button explicitly receives the attachment");Call("Render");
     using(var manualShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(manualShot,new Rectangle(0,0,form.Width,form.Height));manualShot.Save(Path.Combine(root,"windows-download.png"));}
     Console.WriteLine("PASS: progress and append retain existing cards; manual download works");
+    second.QueueFile(engine.Id,"automatic-photo.png",picture);
+    await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="automatic-photo.png"&&engine.HasAttachment(m)),"Image downloads without clicking Download");
+    Call("Render");
+    var imageMessage=engine.Messages(second.Id).First(m=>m.FileName=="automatic-photo.png");
+    var imageCard=liveFeed.Controls.Cast<Control>().First(c=>TextIn(c).Contains(imageMessage.FileName));
+    if(!imageCard.Controls.OfType<PictureBox>().Any())throw new Exception("Automatic image missing inline preview");
+    if(TextIn(imageCard).Contains("Download"))throw new Exception("Downloaded image still asks for Download");
+    Console.WriteLine("PASS: automatic photo renders inline");
     for(int cycle=0;cycle<6;cycle++){
       Call("RestoreWindow",cycle%2==0?groupId:second.Id);await Task.Delay(80);Call("Render");
       var panel=(FlowLayoutPanel)Field("feed");

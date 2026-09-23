@@ -16,6 +16,7 @@ def raw(a,b,recipient,text,group='',name='',data=b'',size=None,digest=None,messa
 def verify_file(p,conversation,name,data):
     record=file_message(p,conversation,name);assert record is not None
     p.command('DOWNLOAD\t'+conversation+'\t'+record[1])
+    wait_for(lambda:p.command('HASFILE\t'+conversation+'\t'+record[1])[0][1]=='true','Attachment available: '+name)
     result=p.command('FILEHASH\t'+conversation+'\t'+record[1])[0]
     assert result[1:]==[hashlib.sha256(data).hexdigest(),str(len(data))]
     return record
@@ -35,8 +36,11 @@ try:
     data=bytes(range(256))*1024
     send_file(a,bid,'photo.png',png)
     wait_for(lambda:file_message(b,aid,'photo.png') is not None,'Java image reaches Windows')
-    assert b.command('HASFILE\t'+aid+'\t'+file_message(b,aid,'photo.png')[1])[0][1]=='false'
+    wait_for(lambda:b.command('HASFILE\t'+aid+'\t'+file_message(b,aid,'photo.png')[1])[0][1]=='true','Image downloads automatically on Windows')
     verify_file(b,aid,'photo.png',png)
+    send_file(b,aid,'automatic.PNG',png)
+    wait_for(lambda:file_message(a,bid,'automatic.PNG') is not None and a.command('HASFILE\t'+bid+'\t'+file_message(a,bid,'automatic.PNG')[1])[0][1]=='true','Image downloads automatically on Android, case-insensitive extension')
+    verify_file(a,bid,'automatic.PNG',png)
     send_file(b,aid,'document.bin',data)
     wait_for(lambda:file_message(a,bid,'document.bin') is not None,'Windows binary file reaches Java')
     assert a.command('HASFILE\t'+bid+'\t'+file_message(a,bid,'document.bin')[1])[0][1]=='false'
@@ -48,6 +52,8 @@ try:
     send_file(a,bid,'large.bin',large_data)
     wait_for(lambda:file_message(b,aid,'large.bin') is not None,'A multi-chunk (~7 MB) attachment streams correctly end to end')
     verify_file(b,aid,'large.bin',large_data)
+    send_file(a,gid,'group-photo.png',png)
+    wait_for(lambda:all(file_message(p,gid,'group-photo.png') is not None and p.command('HASFILE\t'+gid+'\t'+file_message(p,gid,'group-photo.png')[1])[0][1]=='true' for p in [b,c]),'Group images download automatically for both recipients')
     send_file(a,gid,'group.bin',data)
     wait_for(lambda:file_message(b,gid,'group.bin') is not None and file_message(c,gid,'group.bin') is not None,'Encrypted group attachment reaches all members')
     assert c.command('HASFILE\t'+gid+'\t'+file_message(c,gid,'group.bin')[1])[0][1]=='false'
@@ -140,6 +146,7 @@ try:
     a.stop()
     c=Peer('java','Phone-C','127.0.0.4');assert c.id==cid
     wait_for(lambda:has(c,'Relay while C is away','Received') and file_message(c,gid4,'relay.png') is not None,"Member who reconnects receives an offline sender's message and attachment from another member")
+    wait_for(lambda:c.command('HASFILE\t'+gid4+'\t'+file_message(c,gid4,'relay.png')[1])[0][1]=='true','Relayed image downloads automatically with original sender offline')
     verify_file(c,gid4,'relay.png',relay_png)
     print('PASS: group relay delivers a message and attachment from an offline original sender via another member',flush=True)
     # Two members (B and D) both independently relay/sync the same item to C; it must not duplicate.
