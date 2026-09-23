@@ -1,5 +1,7 @@
 # LAN Messenger handoff — Android 0.8.4 / Windows 0.8.3 test release
 
+Current local layout: `C:\Users\user\Documents\Codex\LAN-Messenger\source` is the single Git source repository; `C:\Users\user\Documents\Codex\LAN-Messenger\outputs` contains releases and historical build/test material. Android signing key is private at `source\.private\development.keystore` and is excluded from Git and source archives. Historical paths below describe where older work was originally done.
+
 ## 0.8.4 — Android conversation latency, 2026-09-23
 
 Android now initially renders the latest 10 messages and reveals 20 older messages per upward scroll. A 16 MiB in-memory bitmap cache avoids repeated decrypt/decode for visible images, and non-image attachments are no longer probed as thumbnails. Text sends update the UI after encrypted local persistence, before attempting network flush. Android manifest versionCode 18/versionName 0.8.4, About version 0.8.4, APK filename LanMessenger-0.8.4.apk; original signing key retained. Windows stays 0.8.3. Java/Android compilation, daily policy test, APK build/signature verification passed. Full cross-platform suite could not start its loopback peer on 127.0.0.2 in this Windows environment, and no physical Android device appeared in adb, so actual latency remains to be measured.

@@ -6,6 +6,8 @@ tests/**/obj/
 *.apk
 *.idsig
 *.zip
+*.7z
 *.keystore
 .packages-cache/
+.private/
 hs_err_pid*.log

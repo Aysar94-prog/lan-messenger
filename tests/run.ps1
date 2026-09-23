@@ -1,6 +1,6 @@
 param(
   [string]$JdkRoot = 'C:\Program Files (x86)\Android\openjdk\jdk-17.0.14',
-  [string]$TestRoot = (Join-Path $PSScriptRoot '..\..\..\work\release-tests')
+  [string]$TestRoot = (Join-Path $PSScriptRoot '..\..\outputs\.build\release-tests')
 )
 $ErrorActionPreference = 'Stop'
 $TestRoot = [IO.Path]::GetFullPath($TestRoot)

@@ -1,12 +1,12 @@
 param(
   [string]$SdkRoot = 'C:\Program Files (x86)\Android\android-sdk',
   [string]$JdkRoot = 'C:\Program Files (x86)\Android\openjdk\jdk-17.0.14',
-  [string]$BuildRoot = (Join-Path $PSScriptRoot '..\..\..\work\android-build'),
+  [string]$BuildRoot = (Join-Path $PSScriptRoot '..\..\outputs\.build\android'),
   [switch]$GenerateDevelopmentKey
 )
 $ErrorActionPreference = 'Stop'
 $BuildRoot = [IO.Path]::GetFullPath($BuildRoot)
-$keyFile = Join-Path $BuildRoot 'development.keystore'
+$keyFile = Join-Path $PSScriptRoot '..\.private\development.keystore'
 if (!(Test-Path -LiteralPath $keyFile) -and !$GenerateDevelopmentKey) {
   throw 'Existing signing key not found. Restore it to BuildRoot to preserve upgrade compatibility. Use -GenerateDevelopmentKey only for a separate new development installation.'
 }
@@ -30,12 +30,13 @@ Push-Location $dexDir
 try { & "$toolsDir\aapt.exe" add "$BuildRoot\unsigned.apk" classes.dex; Check-Result } finally { Pop-Location }
 & "$toolsDir\zipalign.exe" -f 4 "$BuildRoot\unsigned.apk" "$BuildRoot\aligned.apk"
 Check-Result
-$keyFile = Join-Path $BuildRoot 'development.keystore'
+$keyFile = Join-Path $PSScriptRoot '..\.private\development.keystore'
 if (!(Test-Path -LiteralPath $keyFile)) {
+  New-Item -ItemType Directory -Force (Split-Path -Parent $keyFile) | Out-Null
   & "$JdkRoot\bin\keytool.exe" -genkeypair -keystore $keyFile -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=LAN Messenger Development,O=LAN Messenger,C=US'
   Check-Result
 }
-$apkFile = Join-Path $PSScriptRoot '..\LanMessenger-0.8.4.apk'
+$apkFile = Join-Path $PSScriptRoot '..\..\outputs\LanMessenger-0.8.4.apk'
 & "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" sign --ks $keyFile --ks-pass pass:android --key-pass pass:android --out $apkFile "$BuildRoot\aligned.apk"
 Check-Result
 & "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" verify --verbose $apkFile
