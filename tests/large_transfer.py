@@ -10,13 +10,13 @@ try:
     wait_for(lambda:len(b.command('CONV\t'+a.id))==1,'1025 MiB offer delivered without payload')
     row=b.command('CONV\t'+a.id)[0];assert int(row[8])==size
     assert b.command('HASFILE\t'+a.id+'\t'+row[1])[0][1]=='false'
-    start=time.monotonic();b.command('DOWNLOAD\t'+a.id+'\t'+row[1]);duration=time.monotonic()-start
+    destination=work/'received-large.bin';start=time.monotonic();b.command('DOWNLOADTO\t'+a.id+'\t'+row[1]+'\t'+str(destination));duration=time.monotonic()-start
     b.command('VERIFYFILE\t'+a.id+'\t'+row[1])
     assert b.command('HASFILE\t'+a.id+'\t'+row[1])[0][1]=='true'
     print('PASS: 1025 MiB fast transfer, full integrity verified, Java -Xmx64m',flush=True)
-    print('MEASURE: preparation %.3fs; download + encrypted storage + full verification %.3fs (%.1f MiB/s)'%(prepare,duration,1025/duration),flush=True)
+    print('MEASURE: preparation %.3fs; direct plaintext download + full verification %.3fs (%.1f MiB/s)'%(prepare,duration,1025/duration),flush=True)
     # Only this test's generated files, never app/user originals.
-    a.command('CLEAR\t'+b.id);b.command('CLEAR\t'+a.id);source.unlink()
+    a.command('CLEAR\t'+b.id);b.command('CLEAR\t'+a.id);source.unlink();destination.unlink()
 finally:
     for p in processes:
         if p.poll() is None:p.kill()

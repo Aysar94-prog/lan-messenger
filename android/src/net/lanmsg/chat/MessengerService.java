@@ -29,6 +29,21 @@ public class MessengerService extends Service {
       if(wifi!=null){multicast=wifi.createMulticastLock("lan-messenger-discovery");multicast.setReferenceCounted(false);multicast.acquire();}
       PeerEngine peer=new PeerEngine(new java.io.File(getFilesDir(),"peer-data"),Build.MODEL,new AndroidProtector());
       peer.sourceOpener=reference->{java.io.InputStream input=getContentResolver().openInputStream(android.net.Uri.parse(reference));if(input==null)throw new java.io.IOException("Source is unavailable");return input;};
+      peer.destinationOpener=reference->{
+        final ParcelFileDescriptor descriptor=getContentResolver().openFileDescriptor(android.net.Uri.parse(reference),"rw");
+        if(descriptor==null)throw new java.io.IOException("Cannot open download destination");
+        final java.io.FileDescriptor fd=descriptor.getFileDescriptor();
+        try{android.system.Os.lseek(fd,0,android.system.OsConstants.SEEK_SET);}catch(Exception failure){descriptor.close();throw new java.io.IOException("Choose a local folder that supports resumable downloads",failure);}
+        return new DownloadDestination.FileHandle(){
+          public long size()throws java.io.IOException{try{return android.system.Os.fstat(fd).st_size;}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public void position(long offset)throws java.io.IOException{try{android.system.Os.lseek(fd,offset,android.system.OsConstants.SEEK_SET);}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public void truncate(long size)throws java.io.IOException{try{android.system.Os.ftruncate(fd,size);}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public int read(byte[] buffer,int count)throws java.io.IOException{try{int n=android.system.Os.read(fd,buffer,0,count);return n==0?-1:n;}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public void write(byte[] buffer,int count)throws java.io.IOException{try{int at=0;while(at<count){int n=android.system.Os.write(fd,buffer,at,count-at);if(n<=0)throw new java.io.IOException("Destination stopped accepting data");at+=n;}}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public void sync()throws java.io.IOException{try{android.system.Os.fsync(fd);}catch(Exception failure){throw new java.io.IOException(failure);}}
+          public void close()throws java.io.IOException{descriptor.close();}
+        };
+      };
       peer.received=m->{
         String conversation=m.groupId.isEmpty()?m.from:m.groupId;String sender=peer.displayName(conversation);
         PendingIntent open=PendingIntent.getActivity(this,conversation.hashCode(),new Intent(this,MainActivity.class).setAction(conversation).putExtra("conversation",conversation).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);

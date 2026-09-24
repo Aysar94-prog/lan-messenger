@@ -81,10 +81,17 @@ class Check
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="manual-download.bin"),"Incoming file offer arrives");
     var offer=engine.Messages(second.Id).First(m=>m.FileName=="manual-download.bin");Call("Render");
     if(engine.HasAttachment(offer)||!TextIn(liveFeed).Contains("Download"))throw new Exception("Incoming attachment downloaded before click or no Download button");
-    var downloadButton=liveFeed.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().First(b=>b.Text=="Download");downloadButton.PerformClick();
+    var downloadButton=liveFeed.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().First(b=>b.Text=="Download");SetField("downloadDestinationPicker",(Func<PeerEngine.Message,string?>)(_=>null));
+      await CallAsync("FileAction",offer);
+      if(engine.HasAttachment(offer)||engine.Downloading(offer))throw new Exception("Picker cancellation started download");
+      var chosen=Path.Combine(root,"chosen-download.bin");
+      SetField("downloadDestinationPicker",(Func<PeerEngine.Message,string?>)(_=>chosen));downloadButton.PerformClick();
     await Wait(()=>engine.HasAttachment(offer),"Download button explicitly receives the attachment");Call("Render");
     using(var manualShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(manualShot,new Rectangle(0,0,form.Width,form.Height));manualShot.Save(Path.Combine(root,"windows-download.png"));}
-    Console.WriteLine("PASS: progress and append retain existing cards; manual download works");
+    if(engine.SavedDestination(offer)!=chosen||!File.ReadAllBytes(chosen).SequenceEqual(picture))throw new Exception("Chosen destination was not used");
+      string? opened=null;SetField("openDownloadedFile",(Action<string>)(path=>opened=path));await CallAsync("FileAction",offer);
+      if(opened!=chosen)throw new Exception("Completed file did not open its chosen destination");
+      Console.WriteLine("PASS: picker cancellation, chosen destination, opening downloaded file, stable cards");
     second.QueueFile(engine.Id,"automatic-photo.png",picture);
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.FileName=="automatic-photo.png"&&engine.HasAttachment(m)),"Image downloads without clicking Download");
     Call("Render");

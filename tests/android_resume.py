@@ -68,7 +68,7 @@ try:
     wait_for(lambda:any(len(row)>7 and row[7]==b64(changing.name) for row in records(b,a.id)),'Changing-source offer arrives')
     changed=next(row[1] for row in records(b,a.id) if len(row)>7 and row[7]==b64(changing.name))
     changing.write_bytes(b'B'*65537)
-    try:b.command('DOWNLOAD\t'+a.id+'\t'+changed)
+    try:b.command('DOWNLOADTO\t'+a.id+'\t'+changed+'\t'+str(work/'changed-destination.bin'))
     except AssertionError as failure:assert 'changed or is damaged' in str(failure)
     else:raise AssertionError('Changed file accepted')
     assert not available(b,a.id,changed)

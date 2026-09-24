@@ -75,6 +75,7 @@ final class ResumableTransfer {
               long offset=store.done;
               PeerEngine.write(session.socket,"LM4\tFETCHSTREAM\t"+m.from+"\t"+m.id+"\t"+offset);
               String response=PeerEngine.read(session.socket);
+              if(response.equals("LM4\tFASTONLY"))throw new DirectFileTransfer.DestinationRequired();
               if(response.equals("LM4\tBUSY")||response.equals("LM4\tUNAVAILABLE"))continue;
               if(!response.equals("LM4\tSTREAM\t"+m.id+"\t"+offset+"\t"+(m.fileSize-offset)))throw new IOException("Invalid stream response");
               connected=true;e.downloadNote(m,"");
@@ -91,7 +92,8 @@ final class ResumableTransfer {
               lastPeer=peer.id;lastFingerprint=session.fingerprint;
             }
             break;
-          }catch(ResumeStore.StorageFailure failure){throw failure;}
+          }catch(DirectFileTransfer.DestinationRequired required){throw required;}
+          catch(ResumeStore.StorageFailure failure){throw failure;}
           catch(IOException failure){
             active(e,m,key);
             if(store.finished)throw failure;
@@ -135,6 +137,7 @@ final class ResumableTransfer {
     PeerEngine.Message message=null;
     synchronized(e){for(PeerEngine.Message m:e.messages)if(m.from.equals(request[2])&&m.id.equals(request[3])&&(m.groupId.isEmpty()?m.from.equals(e.id)&&m.to.equals(peerId):e.allowedGroup(m.groupId,peerId))){message=m;break;}}
     if(message==null||!e.retained(message)||!e.hasAttachment(message)||offset<0||offset>message.fileSize||offset%ResumeStore.BLOCK!=0){PeerEngine.write(socket,"LM4\tUNAVAILABLE");return;}
+    if(e.isFastAttachment(message)){PeerEngine.write(socket,"LM4\tFASTONLY");return;}
     if(!e.fileSlots.tryAcquire()){PeerEngine.write(socket,"LM4\tBUSY");return;}
     try(InputStream source=openAt(e,message,offset)){
       PeerEngine.write(socket,"LM4\tSTREAM\t"+message.id+"\t"+offset+"\t"+(message.fileSize-offset));
@@ -148,8 +151,9 @@ final class ResumableTransfer {
   }
   static InputStream openAt(PeerEngine e,PeerEngine.Message m,long offset)throws IOException {
     if(offset==m.fileSize)return new ByteArrayInputStream(new byte[0]);
-    if(!e.sourcePath(m).exists()&&e.attachmentPath(m).exists())return e.openAttachmentPlaintext(e.attachmentPath(m),offset);
-    boolean parts=!e.sourcePath(m).exists();
+    boolean external=DownloadDestination.get(e,m).complete;
+    if(!external&&!e.sourcePath(m).exists()&&e.attachmentPath(m).exists())return e.openAttachmentPlaintext(e.attachmentPath(m),offset);
+    boolean parts=!external&&!e.sourcePath(m).exists();
     InputStream source=parts?e.openParts(m,(int)(offset/PeerEngine.SEGMENT_SIZE)):e.openContent(m);
     try{
       long left=parts?offset%PeerEngine.SEGMENT_SIZE:offset;

@@ -19,6 +19,8 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="PEERAVATAR"){var data=engine.PeerAvatar(a[1]);Console.WriteLine(data==null?"PEERAVATAR\tNONE":$"PEERAVATAR\t{SecureIdentity.Hash(data)}\t{data.Length}");}
  if(a[0]=="FILE")engine.QueueFile(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])),Convert.FromBase64String(a[3]));
  if(a[0]=="FASTFILE")await engine.QueueFastFileAsync(a[1],"",a[2]);
+ if(a[0]=="DOWNLOADTOASYNC"){var m=engine.Messages(a[1]).First(m=>m.Id==a[2]);_=Task.Run(async()=>{try{await engine.DownloadToAsync(m,a[3]);}catch{}});}
+ if(a[0]=="DOWNLOADTO")await engine.DownloadToAsync(engine.Messages(a[1]).First(m=>m.Id==a[2]),a[3]);
  if(a[0]=="DOWNLOAD")await engine.DownloadAttachmentAsync(engine.Messages(a[1]).First(m=>m.Id==a[2]));
  if(a[0]=="HASFILE")Console.WriteLine("HASFILE\t"+engine.HasAttachment(engine.Messages(a[1]).First(m=>m.Id==a[2])).ToString().ToLowerInvariant());
  if(a[0]=="DOWNLOADASYNC"){var m=engine.Messages(a[1]).First(m=>m.Id==a[2]);_=Task.Run(async()=>{try{await engine.DownloadAttachmentAsync(m);}catch{}});}

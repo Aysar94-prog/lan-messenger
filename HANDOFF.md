@@ -1,6 +1,18 @@
-# LAN Messenger handoff — Android 0.8.6 / Windows 0.8.3 test release
+# LAN Messenger handoff — Android / Windows 0.8.7
 
 Current local layout: `D:\LAN-Messenger\source` is the canonical Git source repository; `D:\LAN-Messenger\outputs` contains releases and historical build/test material. Android signing key is private at `source\.private\development.keystore` and is excluded from Git and source archives. Historical paths below describe where older work was originally done.
+
+## 0.8.7 - destination downloads and plaintext Fast payload
+
+Confirmed scope: Android and Windows. Download asks for a destination before network transfer. Files stream directly to the selected location, with no duplicate private attachment. Clicking a completed file opens the OS viewer. Clearing chat never deletes the user-selected file. Normal photos still download automatically inline.
+
+FETCHDIRECT uses continuous TLS for normal files and a separate plaintext TCP data socket for Fast files, authorized via a one-use random token on the pinned TLS control connection. File bytes and final destination are unencrypted for Fast; authentication, message history and destination metadata remain protected. Both peers need 0.8.7 for manual downloads. Old Fast requests receive FASTONLY; normal automatic photos retain legacy FETCH / FETCHSTREAM support. Fast draft identifies unencrypted transfer.
+
+Android uses ACTION_CREATE_DOCUMENT, persisted SAF grants and a seekable local descriptor. Windows uses SaveFileDialog and shell file associations. Partial downloads resume at 256 KiB boundaries from the chosen file; final SHA-256 verifies content. Hash mismatch removes the destination reference for retry, preserving the damaged user file. Previously cached files are copied out and private copies removed after success.
+
+Tests: direct_downloads.py validates bidirectional Java/C# normal and Fast transfers, single-copy storage, plaintext socket reads, wrong token and token reuse rejection, Android-to-Android disconnect with monotonic progress, restart and clear preservation. transfers.py covers direct pause/restart, source mutation, chat responsiveness and 128 MiB transfers under 64 MiB heap. Existing secure integration, image, quota, encrypted resume and UI tests remain. Full suite result and hashes: outputs/Release-Notes-0.8.7.md. Physical Android picker/viewer and real Wi-Fi speed require device testing.
+
+Android versionCode 21 / 0.8.7 signed with original key; Windows 0.8.7 requires .NET 9 Desktop Runtime as before. Keep changes local; no push requested.
 
 ## 0.8.6 — Android transfer performance and persistent resume, 2026-09-24
 

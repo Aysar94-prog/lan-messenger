@@ -1,4 +1,6 @@
-# LAN Messenger — Android 0.8.6 / Windows 0.8.3 test release
+# LAN Messenger — Android / Windows 0.8.7
+
+0.8.7: ordinary and Fast downloads ask where to save, write directly there, and open on click after completion. Fast file bytes use plaintext TCP; authenticated TLS still authorizes the transfer. Normal file bytes use TLS. Both save one plaintext copy at your chosen destination. Update both endpoints. Ordinary inline photos still appear automatically. Partial downloads resume at 256 KiB boundaries; clearing chat preserves your saved file.
 
 Local project layout: this `source` folder is the Git repository; release files and build/test history are in the sibling `outputs` folder. The Android signing key is kept privately in `source/.private/development.keystore` and is excluded from Git and source archives.
 
@@ -25,7 +27,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.6.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.7.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -34,13 +36,13 @@ Both attachment actions show a draft preview. Choosing a file does not send it: 
 - **Attach / Photo / File / Camera:** up to 1 GiB; prepares an encrypted local snapshot.
 - **Fast file:** a dedicated action for large files, capped at 1 TiB in metadata. It stores a protected reference to the original instead of another encrypted sender copy. Preparation reads the original once to calculate SHA-256. Keep the source unchanged and available until recipients finish.
 
-The receiver first gets name, size, caption and integrity metadata. **Incoming images download automatically** (JPG/JPEG, PNG, GIF, BMP, WebP, TIFF, HEIC/HEIF and AVIF filename extensions). Other files require Download, in both normal and Fast file modes. Supported downloaded images appear inline; the existing 20 MiB/32-megapixel preview guards and platform decoder support still apply. The original image remains available to Save when preview is unsupported. Profile avatars remain separate. Two background image downloads run at a time; pending incoming images can resume automatically after restart. Pause stops that image for the current session; manual Download can retry. Source must be reachable and verified, or a verified group member must hold the complete image. Sender preview and explicit Send remain unchanged.
+The receiver first gets name, size, caption and integrity metadata. **Ordinary incoming images download automatically** (JPG/JPEG, PNG, GIF, BMP, WebP, TIFF, HEIC/HEIF and AVIF filename extensions). Other files and Fast offers require Download and a destination choice. Supported downloaded images appear inline; the existing 20 MiB/32-megapixel preview guards and platform decoder support still apply. The original image remains available to Save when preview is unsupported. Profile avatars remain separate. Two background image downloads run at a time; pending incoming images can resume automatically after restart. Pause stops that image for the current session; manual Download can retry. Source must be reachable and verified, or a verified group member must hold the complete image. Sender preview and explicit Send remain unchanged.
 
 Downloads use separate connections and small streaming buffers. Two simultaneous file-serving streams are allowed; queued text precedes group sync and dispatches promptly. TLS and device verification remain enabled.
 
 Between Android 0.8.6 peers, files stream over one pinned TLS connection with encrypted **256 KiB checkpoints**. The progress percentage counts stored blocks and does not reset on a connection drop. Only the unfinished block is retransmitted. After an app restart, press Download again for other files; pending images are scheduled automatically. The final SHA-256 is calculated during reception; a saved prefix is read once when reopening a paused download. Existing verified 100 MiB checkpoints are imported when upgrading. Transfers involving an older sender still use verified **100 MiB segments**, and an incomplete legacy segment can restart. These are streaming checkpoint sizes, not whole-file RAM buffers or parallel striping.
 
-Save exports a completed download to your chosen location. Encrypted downloaded storage and the exported file need separate disk space. Speed depends on network, storage, CPU and the Android file provider; no real-Wi-Fi throughput guarantee is made.
+In 0.8.7, manual Download writes directly to the chosen location; Open launches that same file. There is no additional private receiver copy. Existing cached files migrate on destination selection. Auto-downloaded ordinary photos keep their private image cache. Speed depends on network, storage, CPU and the Android file provider; no real-Wi-Fi throughput guarantee is made.
 
 ## Interface fixes
 
@@ -64,7 +66,7 @@ Queued means saved on the sender. Delivered means the message or **file offer** 
 
 Create a group with 2–15 verified contacts. Every pair must independently verify each other. Membership is fixed; create a new group to change it. Signed metadata relays through verified members. Download can use a verified member holding the complete attachment; a member with only an offer cannot serve it. Direct downloads need the original sender online.
 
-New group messages and data expire 168 hours after original sending; relaying never renews expiry. Old history predating the expiry feature is retained. Clear conversation deletes only local history, pending sends, downloaded data and source references. Contacts/groups remain. External original Fast file sources are never deleted.
+New group messages and data expire 168 hours after original sending; relaying never renews expiry. Old history predating the expiry feature is retained. Clear conversation deletes only local history, pending sends, private cached data and source references; files at user-selected destinations remain. Contacts/groups remain. External original Fast file sources are never deleted.
 
 ## Background, network and storage
 

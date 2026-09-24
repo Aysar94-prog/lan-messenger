@@ -31,9 +31,9 @@ sealed class ChatWindow : Form
     readonly Button clear=new(){Text="Clear chat",AutoSize=true};
     readonly Button members=new(){Text="Members",AutoSize=true};
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
-    readonly Button saveFile=new(){Text="Save file",AutoSize=true};
+    readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.8.3";
+    public const string AppVersion="0.8.7";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -107,7 +107,7 @@ sealed class ChatWindow : Form
         StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
         avatarBox.Paint+=(_,e)=>{if(avatarImage==null){using var b=new SolidBrush(Accent);e.Graphics.FillEllipse(b,0,0,avatarBox.Width,avatarBox.Height);TextRenderer.DrawText(e.Graphics,engine.Name.Length>0?engine.Name[..1].ToUpperInvariant():"?",new Font("Segoe UI",14,FontStyle.Bold),avatarBox.ClientRectangle,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
         try{var raw=engine.Avatar;if(raw!=null){avatarImage=TryImageThumbnail(raw,80,80);avatarBox.Image=avatarImage;}}catch{}
-        attach.Click+=async(_,_)=>await AttachFile();fastTransfer.Click+=async(_,_)=>await PickAttachment(true);clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=(_,_)=>SaveAttachment();preview.Click+=(_,_)=>PreviewImage();
+        attach.Click+=async(_,_)=>await AttachFile();fastTransfer.Click+=async(_,_)=>await PickAttachment(true);clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=async(_,_)=>{if(files.SelectedItem is FileItem item)await FileAction(item.Message);};preview.Click+=(_,_)=>PreviewImage();
         verify.Click+=(_,_)=>VerifyDevice();
         var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
         engine.Received+=m=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();var peer=engine.Peers.FirstOrDefault(p=>p.Id==m.From);ShowNotification(m.GroupId.Length>0?m.GroupId:m.From,m.GroupId.Length>0?engine.DisplayName(m.GroupId):peer?.Name??"LAN Messenger","New encrypted message");}));}catch{}};
@@ -220,8 +220,10 @@ sealed class ChatWindow : Form
         else{
             var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);
             if(thumbnail!=null){var picture=new PictureBox{Image=thumbnail,SizeMode=PictureBoxSizeMode.Zoom,Width=width-24,Height=Math.Max(150,Math.Min(320,(int)Math.Round((double)(width-24)*thumbnail.Height/thumbnail.Width))),Cursor=Cursors.Hand,BackColor=Color.FromArgb(232,236,243),Margin=new Padding(0,4,0,4)};picture.Click+=(_,_)=>PreviewImage(message);picture.Disposed+=(_,_)=>thumbnail.Dispose();card.Controls.Add(picture);}
-            card.Controls.Add(MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24));
-            var actions=new FlowLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,WrapContents=false,Margin=new Padding(0)};var available=engine.HasAttachment(message);var save=new Button{Text=available?"Save":engine.Downloading(message)?"Pause":"Download",AutoSize=true};save.Click+=async(_,_)=>{if(available)SaveAttachment(message);else if(engine.Downloading(message)){engine.CancelDownload(message);}else{var download=Task.Run(()=>engine.DownloadAttachmentAsync(message));await Task.Delay(50);Render();try{await download;}catch(OperationCanceledException){}catch(Exception ex){if(!IsDisposed)MessageBox.Show(this,ex.Message,"Download");}if(!IsDisposed)Render();}};actions.Controls.Add(save);if(thumbnail!=null){var open=new Button{Text="Open",AutoSize=true};open.Click+=(_,_)=>PreviewImage(message);actions.Controls.Add(open);}StyleButtons(actions);card.Controls.Add(actions);
+            var fileLabel=MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24);fileLabel.Cursor=Cursors.Hand;fileLabel.Click+=async(_,_)=>await FileAction(message);card.Controls.Add(fileLabel);
+            var actions=new FlowLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,WrapContents=false,Margin=new Padding(0)};
+            var available=engine.HasAttachment(message);var save=new Button{Text=available?"Open":engine.Downloading(message)?"Pause":engine.PendingDestination(message).Length>0?"Resume":"Download",AutoSize=true};
+            save.Click+=async(_,_)=>await FileAction(message);actions.Controls.Add(save);StyleButtons(actions);card.Controls.Add(actions);
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }
         var statusLabel=MessageLabel("",9,Color.SlateGray,width-24);statusLabels[message.From+"/"+message.Id]=statusLabel;card.Controls.Add(statusLabel);
@@ -270,10 +272,30 @@ sealed class ChatWindow : Form
         if(size>0&&size<=ThumbnailPreviewCap){Image? thumb=null;try{thumb=TryImageThumbnail(File.ReadAllBytes(path),150,125);}catch{}
             if(thumb!=null){var image=new PictureBox{Image=thumb,Width=150,Height=125,SizeMode=PictureBoxSizeMode.Zoom,Cursor=Cursors.Hand,BackColor=Color.FromArgb(220,226,237)};image.Click+=(_,_)=>PreviewImagePath(path,pendingAttachmentName);image.Disposed+=(_,_)=>thumb.Dispose();attachmentDraft.Controls.Add(image);}}
         var details=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};
-        details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+FormatSize(size)+(pendingFast?"\nFast transfer · keep original until downloaded":"\nReady to send"),10,Ink,330,true));
+        details.Controls.Add(MessageLabel(pendingAttachmentName+"  ·  "+FormatSize(size)+(pendingFast?"\nFast transfer · unencrypted · keep original until downloaded":"\nReady to send"),10,Ink,330,true));
         var remove=new Button{Text="Remove",AutoSize=true};remove.Click+=(_,_)=>ClearPendingAttachment();details.Controls.Add(remove);StyleButtons(details);attachmentDraft.Controls.Add(details);
     }
     void ClearPendingAttachment(){pendingAttachmentPath=null;pendingAttachmentName="";pendingAttachmentTarget=null;RenderPendingAttachment();}
+    Func<PeerEngine.Message,string?>? downloadDestinationPicker=null;
+    Action<string>? openDownloadedFile=null;
+    string? ChooseDownloadDestination(PeerEngine.Message message){
+        if(downloadDestinationPicker!=null)return downloadDestinationPicker(message);
+        using var dialog=new SaveFileDialog{FileName=message.FileName,Title="Download to",Filter="All files|*.*"};
+        return dialog.ShowDialog(this)==DialogResult.OK?dialog.FileName:null;
+    }
+    async Task FileAction(PeerEngine.Message message)
+    {
+        try{
+            if(engine.Downloading(message)){engine.CancelDownload(message);return;}
+            var saved=engine.SavedDestination(message);
+            if(saved.Length>0){if(openDownloadedFile!=null)openDownloadedFile(saved);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(saved){UseShellExecute=true});return;}
+            if(engine.HasAttachment(message)&&PeerEngine.IsImageAttachment(message)){PreviewImage(message);return;}
+            var destination=engine.PendingDestination(message);
+            if(destination.Length==0){destination=ChooseDownloadDestination(message);if(string.IsNullOrEmpty(destination))return;}
+            var download=Task.Run(()=>engine.DownloadToAsync(message,destination));await Task.Delay(50);Render();await download;
+        }catch(OperationCanceledException){}catch(Exception ex){if(!IsDisposed)MessageBox.Show(this,ex.Message,"Download");}
+        finally{if(!IsDisposed)Render();}
+    }
     void SaveAttachment(){if(files.SelectedItem is FileItem item)SaveAttachment(item.Message);}
     void SaveAttachment(PeerEngine.Message message){using var dialog=new SaveFileDialog{FileName=message.FileName,Title="Save attachment",Filter="All files|*.*"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;_=ExportAttachment(message,dialog.FileName);}
     // Streams straight to the destination file, decrypting on the fly — an export never needs

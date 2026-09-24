@@ -20,7 +20,7 @@ try:
     wait_for(lambda:len(rows(b,a.id))==2 and len(rows(c,a.id))==1,'Fast offers reach both recipients')
     assert usage(a)==initial,'Fast hashing or offers consumed budget'
     mb=next(r[1] for r in rows(b,a.id) if r[7]==b64('fast.bin'));mc=rows(c,a.id)[0][1]
-    start=time.monotonic();b.command('DOWNLOADASYNC\t'+a.id+'\t'+mb);c.command('DOWNLOADASYNC\t'+a.id+'\t'+mc)
+    start=time.monotonic();b.command('DOWNLOADTOASYNC\t'+a.id+'\t'+mb+'\t'+str(work/'b-fast.bin'));c.command('DOWNLOADTOASYNC\t'+a.id+'\t'+mc+'\t'+str(work/'c-fast.bin'))
     time.sleep(.3);a.send(b.id,'Text during capped uploads')
     wait_for(lambda:has(b,'Text during capped uploads','Received'),'Text still arrives during capped uploads')
     def finished():

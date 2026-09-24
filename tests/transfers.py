@@ -18,7 +18,7 @@ try:
     time.sleep(1);assert not available(b,a.id,mid)
     assert not (work/'Fast-Java'/'attachments'/(a.id+'-'+mid+'.sec')).exists()
     a.command('SLOWMS\t20')
-    b.command('DOWNLOADASYNC\t'+a.id+'\t'+mid)
+    output=work/'downloaded.bin';b.command('DOWNLOADTOASYNC\t'+a.id+'\t'+mid+'\t'+str(output))
     time.sleep(.3)
     latencies=[]
     for i in range(5):
@@ -28,28 +28,27 @@ try:
             assert time.monotonic()<deadline,'File transfer blocked chat'
             time.sleep(.02)
         latencies.append(time.monotonic()-started)
-    parts=work/'Fast-Windows'/'attachments'/(a.id+'-'+mid+'.sec.parts')
     deadline=time.monotonic()+45
-    while not (parts/'0.sec').exists():
-        assert time.monotonic()<deadline,'First resume segment missing';time.sleep(.02)
-    checkpoint=(parts/'0.sec').stat().st_mtime_ns
+    while not output.exists() or output.stat().st_size<8*1024*1024:
+        assert time.monotonic()<deadline,'Direct destination checkpoint missing';time.sleep(.02)
     b.command('CANCEL\t'+a.id+'\t'+mid);time.sleep(.2)
     assert not available(b,a.id,mid),'Cancelled transfer committed early'
+    checkpoint=output.stat().st_size
     b.stop();b=Peer('cs','Fast-Windows','127.0.0.3')
     a.command('SLOWMS\t0')
-    started=time.monotonic();b.command('DOWNLOAD\t'+a.id+'\t'+mid);resume=time.monotonic()-started
-    assert (parts/'0.sec').stat().st_mtime_ns==checkpoint,'Verified segment was downloaded again'
-    output=work/'downloaded.bin';b.command('EXPORT\t'+a.id+'\t'+mid+'\t'+str(output));assert digest(output)==wanted
-    print('PASS: manual consent, no sender snapshot, cancel/restart resumes verified 100 MiB segment',flush=True)
-    print('MEASURE: Java prepare %.3fs; live-transfer text median %.3fs max %.3fs; resume remaining 28 MiB + full verification %.3fs'%(prep,statistics.median(latencies),max(latencies),resume),flush=True)
+    started=time.monotonic();b.command('DOWNLOADTO\t'+a.id+'\t'+mid+'\t'+str(output));resume=time.monotonic()-started
+    assert digest(output)==wanted
+    assert not (work/'Fast-Windows'/'attachments'/(a.id+'-'+mid+'.sec.parts')).exists()
+    print('PASS: manual consent, single destination copy, cancel/restart resumes direct destination',flush=True)
+    print('MEASURE: Java prepare %.3fs; live-transfer text median %.3fs max %.3fs; resume from saved destination + verification %.3fs'%(prep,statistics.median(latencies),max(latencies),resume),flush=True)
     started=time.monotonic();b.command('FASTFILE\t'+a.id+'\t'+str(source));cs_prep=time.monotonic()-started
     wait_for(lambda:any(len(r)>7 and r[2]==b.id and r[7]==b64(source.name) for r in records(a,b.id)),'Windows fast offer arrives on Java')
     mid2=next(r[1] for r in records(a,b.id) if len(r)>7 and r[2]==b.id and r[7]==b64(source.name))
     assert not available(a,b.id,mid2)
-    started=time.monotonic();a.command('DOWNLOAD\t'+b.id+'\t'+mid2);elapsed=time.monotonic()-started
-    output2=work/'java-download.bin';a.command('EXPORT\t'+b.id+'\t'+mid2+'\t'+str(output2));assert digest(output2)==wanted
-    print('PASS: Windows to Java 128 MiB transfer and export under Java -Xmx64m',flush=True)
-    print('MEASURE: C# prepare %.3fs; 128 MiB download + encrypted storage + final verification %.3fs (%.1f MiB/s)'%(cs_prep,elapsed,128/elapsed),flush=True)
+    started=time.monotonic();output2=work/'java-download.bin';a.command('DOWNLOADTO\t'+b.id+'\t'+mid2+'\t'+str(output2));elapsed=time.monotonic()-started
+    assert digest(output2)==wanted
+    print('PASS: Windows to Java 128 MiB direct transfer under Java -Xmx64m',flush=True)
+    print('MEASURE: C# prepare %.3fs; 128 MiB plaintext download + final verification %.3fs (%.1f MiB/s)'%(cs_prep,elapsed,128/elapsed),flush=True)
     # An independently verified third party still cannot fetch someone else's direct file.
     c=Peer('java','Other-Recipient','127.0.0.4');pair(c,b)
     response=c.command('RAWFETCH\t'+b.ip+'\t44972\t'+b.id+'\t'+mid2+'\t0\t104857600')
@@ -63,8 +62,8 @@ try:
     wait_for(lambda:any(len(r)>7 and r[7]==b64(changing.name) for r in records(a,b.id)),'Mutation-test offer arrives')
     changed_mid=next(r[1] for r in records(a,b.id) if len(r)>7 and r[7]==b64(changing.name))
     changing.write_bytes(b'B'*65536)
-    try:a.command('DOWNLOAD\t'+b.id+'\t'+changed_mid)
-    except AssertionError as error:assert 'corrupt' in str(error)
+    try:a.command('DOWNLOADTO\t'+b.id+'\t'+changed_mid+'\t'+str(work/'changed-output.bin'))
+    except AssertionError as error:assert 'changed or is damaged' in str(error)
     else:raise AssertionError('Changed source was accepted')
     assert not available(a,b.id,changed_mid)
     print('PASS: changed original cannot commit a complete download',flush=True)

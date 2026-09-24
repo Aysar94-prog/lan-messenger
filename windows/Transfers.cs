@@ -29,12 +29,13 @@ public sealed partial class PeerEngine
     string SourcePath(Message m)=>AttachmentPath(m)+".source";
     string PartsPath(Message m)=>AttachmentPath(m)+".parts";
     string SegmentPath(Message m,int index)=>Path.Combine(PartsPath(m),index+".sec");
-    public bool HasAttachment(Message m)=>m.FileName.Length>0&&(File.Exists(AttachmentPath(m))||File.Exists(SourcePath(m))||File.Exists(Path.Combine(PartsPath(m),"complete")));
+    public bool HasAttachment(Message m)=>m.FileName.Length>0&&(Destination(m).Complete&&File.Exists(Destination(m).Path)||File.Exists(AttachmentPath(m))||File.Exists(SourcePath(m))||File.Exists(Path.Combine(PartsPath(m),"complete")));
     bool Retained(Message m){lock(gate)return !hidden.Contains(m.From+"/"+m.Id)&&messages.Any(x=>x.From==m.From&&x.Id==m.Id)&&(!m.TtlEligible||Now<=m.Time+GroupTtlMs);}
     public void CancelDownload(Message m){if(downloads.TryGetValue(m.From+"/"+m.Id,out var cancellation))cancellation.Cancel();}
     void DeleteTransfer(Message m)
     {
         CancelDownload(m);
+        ForgetDestination(m);
         // Only generated, UUID-validated app-storage paths; never delete an external source.
         try{File.Delete(AttachmentPath(m));File.Delete(SourcePath(m));}catch{}
         try{if(Directory.Exists(PartsPath(m)))Directory.Delete(PartsPath(m),true);}catch{}
@@ -59,6 +60,7 @@ public sealed partial class PeerEngine
     }
     Stream OpenContent(Message m)
     {
+        var destination=SavedDestination(m);if(destination.Length>0)return File.OpenRead(destination);
         if(File.Exists(SourcePath(m)))return File.OpenRead(Encoding.UTF8.GetString(protector.Unprotect(File.ReadAllBytes(SourcePath(m)))));
         if(File.Exists(AttachmentPath(m)))return OpenAttachmentPlaintext(AttachmentPath(m));
         if(!File.Exists(Path.Combine(PartsPath(m),"complete")))throw new IOException("Download this attachment first.");
@@ -79,9 +81,10 @@ public sealed partial class PeerEngine
         if(!Uuid(request[2])||!Uuid(request[3])||!long.TryParse(request[4],out var offset)||!long.TryParse(request[5],out var count))return;
         Message? m;lock(gate)m=messages.FirstOrDefault(x=>x.From==request[2]&&x.Id==request[3]&&(x.GroupId.Length>0?AllowedGroup(x.GroupId,peerId):x.From==Id&&x.To==peerId));
         if(m==null||!Retained(m)||!HasAttachment(m)||offset<0||count<0||count>SegmentSize||offset>m.FileSize||count>m.FileSize-offset||offset%SegmentSize!=0||count!=Math.Min(SegmentSize,m.FileSize-offset)){await Write(tls,"LM4\tUNAVAILABLE");return;}
+        if(IsFastAttachment(m)){await Write(tls,"LM4\tFASTONLY");return;}
         if(!await fileSlots.WaitAsync(0)){await Write(tls,"LM4\tBUSY");return;}
         try{
-            bool segmented=!File.Exists(SourcePath(m))&&!File.Exists(AttachmentPath(m));
+            bool segmented=SavedDestination(m).Length==0&&!File.Exists(SourcePath(m))&&!File.Exists(AttachmentPath(m));
             using var source=segmented?OpenParts(m,(int)(offset/SegmentSize)):OpenContent(m);
             if(source.CanSeek){if(source.Length!=m.FileSize)throw new IOException("Source changed");source.Position=offset;}
             else{var discard=new byte[256*1024];long skipped=segmented?offset:0;while(skipped<offset){int n=await source.ReadAsync(discard.AsMemory(0,(int)Math.Min(discard.Length,offset-skipped)));if(n==0)throw new EndOfStreamException();skipped+=n;}}
@@ -110,12 +113,13 @@ public sealed partial class PeerEngine
                         if(!Trusted(peer.Id,tls.PeerFingerprint))continue;
                         await Write(tls,Hello());var hello=(await Read(tls)).Split('\t');if(!ValidHello(hello)||hello[2]!=peer.Id||await Read(tls)!="LM4\tREADY")continue;
                         await Write(tls,$"LM4\tFETCH\t{m.From}\t{m.Id}\t{offset}\t{count}");
-                        if(await Read(tls)!=$"LM4\tDATA\t{m.Id}\t{offset}\t{count}")continue;
+                        var response=await Read(tls);if(response=="LM4\tFASTONLY")throw new DestinationRequiredException();
+                        if(response!=$"LM4\tDATA\t{m.Id}\t{offset}\t{count}")continue;
                         string hash=await StoreAttachmentStream(m,new NetworkTimeoutStream(tls,ChunkTimeout),count,p=>ReportProgress(m.Id,offset+p,m.FileSize),pending);
                         if(await Read(tls)!="LM4\tPART\t"+hash){File.Delete(pending);throw new IOException("Segment integrity check failed");}
                         if(!Retained(m)||!Trusted(peer.Id,tls.PeerFingerprint)){File.Delete(pending);throw new IOException("Attachment no longer authorized");}
                         File.Move(pending,part,true);fetched=true;break;
-                    }catch{try{File.Delete(pending);}catch{} cancel.Token.ThrowIfCancellationRequested();}
+                    }catch(DestinationRequiredException){throw;}catch{try{File.Delete(pending);}catch{} cancel.Token.ThrowIfCancellationRequested();}
                     if(fetched)break;
                     await Task.Delay(2000,cancel.Token); // Consent persists until Pause/Cancel, even while peers are offline.
                 }

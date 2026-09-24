@@ -31,6 +31,18 @@ public class PeerHarness {
    if(a[0].equals("CLEARAT"))clearAt.set(Long.parseLong(a[1]));
    if(a[0].equals("HALTAT"))haltAt.set(Long.parseLong(a[1]));
    if(a[0].equals("TRANSFERSTATE"))System.out.println("TRANSFERSTATE\t"+progress.get()+"\t"+firstProgress.get()+"\t"+regressions.get()+"\t"+drops.get()+"\t"+e.downloads.size()+"\t"+PeerEngine.enc(downloadError.get()));
+   if(a[0].equals("RAWDIRECTTEST")){
+     try(java.net.Socket control=e.connect(a[1],Integer.parseInt(a[2]))){
+       PeerEngine.write(control,e.hello());PeerEngine.read(control);if(!PeerEngine.read(control).equals("LM4\tREADY"))throw new IOException("Not trusted");
+       PeerEngine.write(control,"LM4\tFETCHDIRECT\t"+a[3]+"\t"+a[4]+"\t0");String[] header=PeerEngine.read(control).split("\t");
+       if(header.length!=8||!header[5].equals("RAW"))throw new IOException("Expected plaintext RAW mode");int port=Integer.parseInt(header[6]);
+       try(java.net.Socket bad=new java.net.Socket()){bad.bind(new java.net.InetSocketAddress(e.bind,0));bad.connect(new java.net.InetSocketAddress(a[1],port));bad.setSoTimeout(3000);PeerEngine.write(bad,"LM4\tTOKEN\tbad");if(bad.getInputStream().read()!=-1)throw new IOException("Bad token received bytes");}
+       java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+       try(java.net.Socket raw=new java.net.Socket()){raw.bind(new java.net.InetSocketAddress(e.bind,0));raw.connect(new java.net.InetSocketAddress(a[1],port));raw.setSoTimeout(5000);PeerEngine.write(raw,"LM4\tTOKEN\t"+header[7]);if(!PeerEngine.read(raw).equals("LM4\tRAWREADY"))throw new IOException("Raw authorization failed");byte[] block=new byte[262144];long remaining=Long.parseLong(header[4]);while(remaining>0){int n=raw.getInputStream().read(block,0,(int)Math.min(block.length,remaining));if(n<0)throw new EOFException();digest.update(block,0,n);remaining-=n;}}
+       boolean reused=false;try(java.net.Socket retry=new java.net.Socket()){retry.bind(new java.net.InetSocketAddress(e.bind,0));retry.connect(new java.net.InetSocketAddress(a[1],port),1000);reused=true;}catch(IOException expected){}if(reused)throw new IOException("Consumed token listener remained open");
+       System.out.println("RAWHASH\t"+PeerEngine.hex(digest.digest()));
+     }
+   }
    if(a[0].equals("RAWSTREAM")){try(java.net.Socket socket=e.connect(a[1],Integer.parseInt(a[2]))){PeerEngine.write(socket,e.hello());PeerEngine.read(socket);if(!PeerEngine.read(socket).equals("LM4\tREADY"))throw new IOException("Not trusted");PeerEngine.write(socket,"LM4\tFETCHSTREAM\t"+a[3]+"\t"+a[4]+"\t"+a[5]);System.out.println("FETCHREPLY\t"+PeerEngine.enc(PeerEngine.read(socket)));}}
    if(a[0].equals("USAGE"))System.out.println("USAGE\t"+e.uploadPolicy.sentToday()+"\t"+e.uploadPolicy.limitBytesPerSecond());
    if(a[0].equals("SEEDUSAGE"))synchronized(e.uploadPolicy){e.uploadPolicy.bytes=Long.parseLong(a[1]);e.uploadPolicy.dirty=true;e.uploadPolicy.flush();}
@@ -66,7 +78,9 @@ public class PeerHarness {
    if(a[0].equals("FILE"))e.queueFile(a[1],PeerEngine.dec(a[2]),Base64.getDecoder().decode(a[3]));
    if(a[0].equals("FILEPATH"))try(InputStream source=new FileInputStream(a[2])){File file=new File(a[2]);e.queueFileStream(a[1],"",source,file.length(),file.getName(),null);}
    if(a[0].equals("FASTFILE"))e.queueFastFile(a[1],"",a[2],new File(a[2]).length(),new File(a[2]).getName());
-   if(a[0].equals("DOWNLOAD")||a[0].equals("HASFILE")||a[0].equals("DOWNLOADASYNC")||a[0].equals("CANCEL")||a[0].equals("EXPORT")||a[0].equals("VERIFYFILE"))for(PeerEngine.Message m:e.messages(a[1]))if(m.id.equals(a[2])){
+   if(a[0].equals("DOWNLOADTOASYNC")||a[0].equals("DOWNLOADTO")||a[0].equals("DOWNLOAD")||a[0].equals("HASFILE")||a[0].equals("DOWNLOADASYNC")||a[0].equals("CANCEL")||a[0].equals("EXPORT")||a[0].equals("VERIFYFILE"))for(PeerEngine.Message m:e.messages(a[1]))if(m.id.equals(a[2])){
+     if(a[0].equals("DOWNLOADTO"))e.downloadTo(m,a[3]);
+     if(a[0].equals("DOWNLOADTOASYNC"))new Thread(()->{try{e.downloadTo(m,a[3]);}catch(Exception failure){downloadError.set(failure.toString());}}).start();
      if(a[0].equals("DOWNLOAD"))e.downloadAttachment(m);
      if(a[0].equals("HASFILE"))System.out.println("HASFILE\t"+e.hasAttachment(m));
      if(a[0].equals("CANCEL"))e.cancelDownload(m);

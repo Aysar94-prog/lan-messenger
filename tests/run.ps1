@@ -10,7 +10,7 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
   dotnet build tests/CsharpHarness/CsharpHarness.csproj -c Release --configfile NuGet.Config -o "$TestRoot\csharp"
   Check-Result
-  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/ResumeStore.java android/src/net/lanmsg/chat/ResumableTransfer.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java tests/TransferWatchdogTest.java tests/ResumeStoreTest.java
+  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/DirectFileTransfer.java android/src/net/lanmsg/chat/DownloadDestination.java android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/ResumeStore.java android/src/net/lanmsg/chat/ResumableTransfer.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java tests/TransferWatchdogTest.java tests/ResumeStoreTest.java
   Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.AttachmentRangeTest
   Check-Result
@@ -27,6 +27,8 @@ try {
   python tests/images.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/upload_policy.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
+  python tests/direct_downloads.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/transfers.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
