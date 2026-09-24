@@ -1,8 +1,10 @@
-# LAN Messenger — Android 0.8.4 / Windows 0.8.3 test release
+# LAN Messenger — Android 0.8.5 / Windows 0.8.3 test release
 
 Local project layout: this `source` folder is the Git repository; release files and build/test history are in the sibling `outputs` folder. The Android signing key is kept privately in `source/.private/development.keystore` and is excluded from Git and source archives.
 
 Android 0.8.4 speeds up conversation opening by showing the newest 10 messages first and loading older messages on upward scroll. It caches decoded image thumbnails in memory, avoids decoding non-image attachments, and shows text messages after local save while network delivery continues in the background. This release has not been timed on a physical Android device yet.
+
+Android 0.8.5 improves ordinary Android-to-Android downloads: later 100 MiB segments of an encrypted attachment can be read directly instead of decrypting all preceding bytes again. Data-transfer reads allow 45 seconds of inactivity (previously 6 seconds), reducing needless restarts on brief stalls. Failed segment attempts now log their cause for diagnosis. A failed attempt still restarts its current segment, so the displayed percentage can move backward if a real interruption occurs. Loopback tests do not establish real Wi-Fi speed; test on both phones.
 
 0.8.3 automatically downloads incoming photos and renders supported images inline. Other files still require Download. Windows layout fixes and the Android daily upload policy remain. Update each receiving device to 0.8.3 for automatic photos.
 
@@ -23,7 +25,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.4.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.5.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -48,7 +50,7 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.4.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-0.8.5.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
 Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.3.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 

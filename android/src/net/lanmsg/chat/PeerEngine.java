@@ -338,6 +338,7 @@ public final class PeerEngine implements Closeable {
 
   public static final long MAX_FAST_FILE_SIZE=1024L*1024*1024*1024;
   static final long SEGMENT_SIZE=100L*1024*1024;
+  static final int TRANSFER_READ_TIMEOUT_MS=45_000;
   final Semaphore fileSlots=new Semaphore(2);
   final ConcurrentHashMap<String,Boolean> downloads=new ConcurrentHashMap<>();
   public interface SourceOpener{InputStream open(String reference)throws IOException;}
@@ -407,9 +408,13 @@ public final class PeerEngine implements Closeable {
     Message m=null;synchronized(this){for(Message row:messages)if(row.from.equals(request[2])&&row.id.equals(request[3])&&(!row.groupId.isEmpty()?allowedGroup(row.groupId,peerId):row.from.equals(id)&&row.to.equals(peerId))){m=row;break;}}
     if(m==null||!retained(m)||!hasAttachment(m)||offset<0||count<0||count>SEGMENT_SIZE||offset>m.fileSize||count>m.fileSize-offset||offset%SEGMENT_SIZE!=0||count!=Math.min(SEGMENT_SIZE,m.fileSize-offset)){write(s,"LM4\tUNAVAILABLE");return;}
     if(!fileSlots.tryAcquire()){write(s,"LM4\tBUSY");return;}
-    boolean segmented=!sourcePath(m).exists()&&!attachmentPath(m).exists();
-    try(InputStream source=segmented?openParts(m,(int)(offset/SEGMENT_SIZE)):openContent(m)){
-      long skip=segmented?0:offset;while(skip>0){long n=source.skip(skip);if(n==0){if(source.read()<0)throw new EOFException();n=1;}skip-=n;}
+    boolean sourceReference=sourcePath(m).exists();
+    File stored=attachmentPath(m);
+    boolean storedSnapshot=!sourceReference&&stored.exists();
+    boolean segmented=!sourceReference&&!storedSnapshot;
+    try(InputStream source=segmented?openParts(m,(int)(offset/SEGMENT_SIZE)):storedSnapshot?openAttachmentPlaintext(stored,offset):openContent(m)){
+      long skip=segmented||storedSnapshot?0:offset;while(skip>0){long n=source.skip(skip);if(n==0){if(source.read()<0)throw new EOFException();n=1;}skip-=n;}
+      s.setSoTimeout(TRANSFER_READ_TIMEOUT_MS);
       write(s,"LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count);
       MessageDigest digest;try{digest=MessageDigest.getInstance("SHA-256");}catch(Exception e){throw new IOException(e);}
       OutputStream out=new NetworkTimeoutOutputStream(s);byte[] buffer=new byte[256*1024];long done=0;
@@ -435,6 +440,7 @@ public final class PeerEngine implements Closeable {
               String fp=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fp))continue;
               write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))continue;
               write(s,"LM4\tFETCH\t"+m.from+"\t"+m.id+"\t"+offset+"\t"+count);
+              s.setSoTimeout(TRANSFER_READ_TIMEOUT_MS);
               if(!read(s).equals("LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count))continue;
               final long base=offset;
               String hash=storeAttachmentStreamAt(m,s.getInputStream(),count,(done,total)->{
@@ -445,7 +451,7 @@ public final class PeerEngine implements Closeable {
               if(!retained(m)||!trusted(p.id,fp))throw new IOException("Attachment no longer authorized");
               if(!pending.renameTo(part))throw new IOException("Cannot commit segment");
               fetched=true;break;
-            }catch(Exception e){pending.delete();}
+            }catch(Exception e){pending.delete();System.err.println("LAN Messenger download retry: segment "+i+" from "+p.id+": "+e);}
           }
           if(fetched)break;
           try{Thread.sleep(2000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException("Download paused",e);}
@@ -598,23 +604,34 @@ public final class PeerEngine implements Closeable {
   // Opens the attachment's decrypted plaintext as a stream, transparently handling both the
   // current streaming format and attachments stored by versions before it (a single whole-file
   // Unprotect — the only way to read those, since they predate the per-attachment key/IV header).
-  InputStream openAttachmentPlaintext(File path)throws IOException {
+  InputStream openAttachmentPlaintext(File path)throws IOException {return openAttachmentPlaintext(path,0);}
+  // CBC can begin at a 16-byte boundary using the preceding ciphertext block as its IV.
+  // The protocol's 100 MiB offsets are aligned, so later segments need no prefix decrypt.
+  InputStream openAttachmentPlaintext(File path,long offset)throws IOException {
+    if(offset<0||offset%16!=0)throw new IOException("Invalid attachment offset");
     if(path.length()>=ATTACHMENT_MAGIC.length){
       FileInputStream probe=new FileInputStream(path);
-      byte[] head=new byte[ATTACHMENT_MAGIC.length];readFully(probe,head);
-      if(Arrays.equals(head,ATTACHMENT_MAGIC)){
-        byte[] lenBuf=new byte[4];readFully(probe,lenBuf);int headerLen=ByteBuffer.wrap(lenBuf).getInt();
-        if(headerLen<1||headerLen>65536)throw new IOException("Invalid attachment header");byte[] header=new byte[headerLen];readFully(probe,header);
-        byte[] raw;try{raw=protector.unprotect(header);}catch(Exception e){probe.close();throw new IOException(e);}
-        byte[] key=Arrays.copyOfRange(raw,0,32),iv=Arrays.copyOfRange(raw,32,48);
-        try{
+      try{
+        byte[] head=new byte[ATTACHMENT_MAGIC.length];readFully(probe,head);
+        if(Arrays.equals(head,ATTACHMENT_MAGIC)){
+          byte[] lenBuf=new byte[4];readFully(probe,lenBuf);int headerLen=ByteBuffer.wrap(lenBuf).getInt();
+          if(headerLen<1||headerLen>65536)throw new IOException("Invalid attachment header");byte[] header=new byte[headerLen];readFully(probe,header);
+          byte[] raw;try{raw=protector.unprotect(header);}catch(Exception e){throw new IOException(e);}
+          if(raw.length!=48)throw new IOException("Invalid attachment key");
+          byte[] key=Arrays.copyOfRange(raw,0,32),iv=Arrays.copyOfRange(raw,32,48);
+          long encryptedAt=probe.getChannel().position();
+          if(offset>0){
+            if(offset>path.length()-encryptedAt-16)throw new EOFException();
+            probe.getChannel().position(encryptedAt+offset-16);readFully(probe,iv);
+            probe.getChannel().position(encryptedAt+offset);
+          }
           Cipher cipher=Cipher.getInstance("AES/CBC/PKCS5Padding");cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new IvParameterSpec(iv));
           return new CipherInputStream(new BufferedInputStream(probe,256*1024),cipher);
-        }catch(GeneralSecurityException e){probe.close();throw new IOException(e);}
-      }
+        }
+      }catch(Exception e){probe.close();if(e instanceof IOException)throw (IOException)e;throw new IOException(e);}
       probe.close();
     }
-    try{return new ByteArrayInputStream(protector.unprotect(SecureIdentity.readFile(path)));}catch(IOException e){throw e;}catch(Exception e){throw new IOException(e);}
+    try{ByteArrayInputStream plain=new ByteArrayInputStream(protector.unprotect(SecureIdentity.readFile(path)));if(plain.skip(offset)!=offset)throw new EOFException();return plain;}catch(IOException e){throw e;}catch(Exception e){throw new IOException(e);}
   }
   static void readFully(InputStream in,byte[] buffer)throws IOException{int at=0;while(at<buffer.length){int n=in.read(buffer,at,buffer.length-at);if(n<0)throw new EOFException();at+=n;}}
   // Small attachments and callers that need a byte[] (thumbnails, exports below a threshold,
