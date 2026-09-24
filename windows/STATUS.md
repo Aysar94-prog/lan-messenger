@@ -33,7 +33,7 @@ Reviewed 2026-09-25. Release: **0.8.9**. See the [platform comparison](../PROJEC
 - New manual transfer: `DirectDownloads.cs`. Legacy/auto-photo transfer: `Transfers.cs`.
 - Tests from repository root: `tests/WindowsUi` (includes paging T01 and cache T02), `tests/MeasureWindows` (chat-performance harness), `tests/direct_downloads.py`, `tests/transfers.py`, `tests/large_transfer.py`.
 - Results: `D:/LAN-Messenger/outputs/.build/windows-ui-tests` and `windows-chatperf-measure`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.9.zip` (requires .NET 9 Desktop Runtime).
-- Last Windows code commit: local on `master` (0.8.9).
+- Last Windows code commit: `2241347` (0.8.9), local on `master`, not pushed.
 
 ## Next planned work
 

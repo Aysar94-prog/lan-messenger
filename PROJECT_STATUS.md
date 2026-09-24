@@ -1,6 +1,6 @@
 # LAN Messenger project status and platform comparison
 
-Reviewed 2026-09-25 against source at commit 07f2e54. Do not infer feature parity from version numbers.
+Reviewed 2026-09-25 against source at commit 2241347 (Windows 0.8.9 plan implementation). Do not infer feature parity from version numbers.
 
 ## Working arrangement
 
