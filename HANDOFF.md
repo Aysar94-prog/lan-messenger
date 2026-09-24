@@ -1,5 +1,7 @@
 # LAN Messenger handoff — Android 0.8.7 / Windows 0.8.8
 
+Start continuation with [PROJECT_STATUS.md](PROJECT_STATUS.md), then [windows/STATUS.md](windows/STATUS.md) or [android/STATUS.md]. The user chose one shared Git branch with separate platform tracking on 2026-09-25. These records distinguish implemented features, remaining work and physical-device acceptance. Historical entries below retain their original scope and may describe superseded behavior.
+
 Current local layout: `D:\LAN-Messenger\source` is the canonical Git source repository; `D:\LAN-Messenger\outputs` contains releases and historical build/test material. Android signing key is private at `source\.private\development.keystore` and is excluded from Git and source archives. Historical paths below describe where older work was originally done.
 
 ## Windows 0.8.8 - scrolled photo repaint fix
