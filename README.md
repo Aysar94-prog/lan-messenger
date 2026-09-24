@@ -1,4 +1,6 @@
-# LAN Messenger — Android / Windows 0.8.7
+# LAN Messenger — Android 0.8.7 / Windows 0.8.8
+
+Windows 0.8.8 fixes fragmented image/card repainting during scrolling and conversation switching. It remains compatible with Android 0.8.7.
 
 0.8.7: ordinary and Fast downloads ask where to save, write directly there, and open on click after completion. Fast file bytes use plaintext TCP; authenticated TLS still authorizes the transfer. Normal file bytes use TLS. Both save one plaintext copy at your chosen destination. Update both endpoints. Ordinary inline photos still appear automatically. Partial downloads resume at 256 KiB boundaries; clearing chat preserves your saved file.
 

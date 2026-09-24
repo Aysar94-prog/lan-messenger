@@ -45,7 +45,10 @@ class Check
     await engine.AddAddress("127.0.0.7:45972");await second.AddAddress("127.0.0.5:45972");var secondCode=engine.PairingCode(second.Id);engine.Verify(second.Id,secondCode);second.Verify(engine.Id,secondCode);
     var groupId=engine.CreateGroup("Project room",new[]{remote.Id,second.Id});Call("Render");Call("RestoreWindow",groupId);
     ((TextBox)Field("composer")).Text="Here is the design for our next update.";await CallAsync("Send");
-    var picture=Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jk1sAAAAASUVORK5CYII=");var picturePath=Path.Combine(root,"design.png");File.WriteAllBytes(picturePath,picture);SetField("pendingAttachmentPath",picturePath);SetField("pendingAttachmentName","Design.png");SetField("pendingAttachmentTarget",groupId);Call("RenderPendingAttachment");
+    byte[] picture;using(var fixture=new Bitmap(640,480)){using(var g=Graphics.FromImage(fixture)){
+      g.Clear(Color.CornflowerBlue);g.FillRectangle(Brushes.Orange,0,0,320,240);g.FillRectangle(Brushes.Green,320,240,320,240);
+      g.DrawString("Photo scroll regression",SystemFonts.DefaultFont,Brushes.White,40,100);
+    }using var png=new MemoryStream();fixture.Save(png,System.Drawing.Imaging.ImageFormat.Png);picture=png.ToArray();}var picturePath=Path.Combine(root,"design.png");File.WriteAllBytes(picturePath,picture);SetField("pendingAttachmentPath",picturePath);SetField("pendingAttachmentName","Design.png");SetField("pendingAttachmentTarget",groupId);Call("RenderPendingAttachment");
     if(engine.Messages(groupId).Length!=1||!((Control)Field("attachmentDraft")).Controls.Cast<Control>().SelectMany(AllControls).Any(c=>c is PictureBox))throw new Exception("Choosing an image sent it before Send or omitted the draft preview");
     using(var draftBitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(draftBitmap,new Rectangle(0,0,form.Width,form.Height));draftBitmap.Save(Path.Combine(root,"windows-draft.png"));}
     ((TextBox)Field("composer")).Text="Draft image caption";await CallAsync("Send");
@@ -103,10 +106,16 @@ class Check
     for(int cycle=0;cycle<6;cycle++){
       Call("RestoreWindow",cycle%2==0?groupId:second.Id);await Task.Delay(80);Call("Render");
       var panel=(FlowLayoutPanel)Field("feed");
+      for(int step=0;step<8;step++){
+        panel.AutoScrollPosition=new Point(0,step%2==0?panel.VerticalScroll.Maximum:step*37);
+        typeof(Control).GetMethod("OnMouseWheel",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(panel,new object[]{new MouseEventArgs(MouseButtons.None,0,30,30,step%2==0?-120:120)});
+        await Task.Delay(30);
+      }
       panel.AutoScrollPosition=new Point(0,panel.VerticalScroll.Maximum);await Task.Delay(30);
       var visibleCards=panel.Controls.Cast<Control>().ToArray();
       for(int i=0;i<visibleCards.Length;i++){
         var card=visibleCards[i];
+        if(card.Region!=null)throw new Exception("Scrolling card must not use a native window region");
         if(card.Controls[0].Height>50)throw new Exception("Sender row retained default blank height");
         if(i>0&&card.Top<visibleCards[i-1].Bottom)throw new Exception("Cards overlap after chat switch");
         foreach(var actions in card.Controls.OfType<FlowLayoutPanel>().Where(p=>p.Controls.OfType<Button>().Any()))

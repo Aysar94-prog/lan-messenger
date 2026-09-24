@@ -16,7 +16,26 @@ static class Program
 sealed class BufferedFeed : FlowLayoutPanel
 {
     public BufferedFeed(){DoubleBuffered=true;}
+    // Buffer the entire child-window subtree: buffering the panel alone leaves
+    // native labels/buttons/pictures painted independently during ScrollWindowEx.
+    protected override CreateParams CreateParams {get{var cp=base.CreateParams;cp.ExStyle|=0x02000000;return cp;}}
     protected override void OnScroll(ScrollEventArgs e){base.OnScroll(e);Invalidate(true);}
+    protected override void OnMouseWheel(MouseEventArgs e){base.OnMouseWheel(e);Invalidate(true);}
+    protected override void OnLayout(LayoutEventArgs e){base.OnLayout(e);Invalidate(true);}
+}
+sealed class MessageBubble : FlowLayoutPanel
+{
+    public MessageBubble(){DoubleBuffered=true;}
+    protected override void OnPaintBackground(PaintEventArgs e){
+        // Paint rounded corners, without applying an HWND region. Window regions
+        // on scrolling containers can leave stale clipped child-window pixels.
+        e.Graphics.Clear(Parent?.BackColor??BackColor);
+        const int d=20;if(Width<d||Height<d){base.OnPaintBackground(e);return;}
+        using var path=new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(0,0,d,d,180,90);path.AddArc(Width-d,0,d,d,270,90);
+        path.AddArc(Width-d,Height-d,d,d,0,90);path.AddArc(0,Height-d,d,d,90,90);path.CloseFigure();
+        using var brush=new SolidBrush(BackColor);e.Graphics.FillPath(brush,path);
+    }
 }
 sealed class ChatWindow : Form
 {
@@ -33,7 +52,7 @@ sealed class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.8.7";
+    public const string AppVersion="0.8.8";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -182,7 +201,7 @@ sealed class ChatWindow : Form
                 old.card?.Dispose();var card=MessageCard(m);cards[key]=(card,content);feed.Controls.Add(card);feed.Controls.SetChildIndex(card,index);}
             if(items.Length==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30)));
             feed.ResumeLayout(true);UpdateTransferLabels();
-            feed.AutoScrollPosition=new Point(0,bottom?feed.VerticalScroll.Maximum:scroll);if(reset)feed.Invalidate(true);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
+            feed.AutoScrollPosition=new Point(0,bottom?feed.VerticalScroll.Maximum:scroll);feed.Invalidate(true);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
         files.Enabled=saveFile.Enabled=preview.Enabled=files.Items.Count>0;
     }
     void ClearFeed(){cards.Clear();statusLabels.Clear();foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();feed.Controls.Clear();}
@@ -213,8 +232,7 @@ sealed class ChatWindow : Form
     Control MessageCard(PeerEngine.Message message)
     {
         bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.Width-65));
-        var card=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.Width-width-60):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
-        RoundCorners(card,10);
+        var card=new MessageBubble{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.Width-width-60):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
         card.Controls.Add(SenderRow(mine,message.From,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         else{

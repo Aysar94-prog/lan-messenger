@@ -1,6 +1,12 @@
-# LAN Messenger handoff — Android / Windows 0.8.7
+# LAN Messenger handoff — Android 0.8.7 / Windows 0.8.8
 
 Current local layout: `D:\LAN-Messenger\source` is the canonical Git source repository; `D:\LAN-Messenger\outputs` contains releases and historical build/test material. Android signing key is private at `source\.private\development.keystore` and is excluded from Git and source archives. Historical paths below describe where older work was originally done.
+
+## Windows 0.8.8 - scrolled photo repaint fix
+
+User supplied a Windows screenshot with white overlays and fragmented photo/card painting after chat navigation. BufferedFeed previously buffered only its own background, leaving native child controls to paint separately during scroll; message cards also applied native rounded window regions. The fix enables subtree composition on the feed only, invalidates descendants after mouse-wheel/layout/programmatic scrolling, and paints rounded bubble backgrounds without native window regions. Existing card reuse remains intact.
+
+The native UI regression now uses a 640x480 colored photo instead of a 1px image, repeatedly scrolls by wheel and programmatic offsets while switching chats, and checks non-overlap and absence of window regions on message cards. Build/test result is recorded in outputs/Release-Notes-Windows-0.8.8.md. Android and transfer protocols remain 0.8.7-compatible. Local commit only.
 
 ## 0.8.7 - destination downloads and plaintext Fast payload
 
