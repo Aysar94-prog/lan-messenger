@@ -1,10 +1,10 @@
-# LAN Messenger — Android 0.8.5 / Windows 0.8.3 test release
+# LAN Messenger — Android 0.8.6 / Windows 0.8.3 test release
 
 Local project layout: this `source` folder is the Git repository; release files and build/test history are in the sibling `outputs` folder. The Android signing key is kept privately in `source/.private/development.keystore` and is excluded from Git and source archives.
 
 Android 0.8.4 speeds up conversation opening by showing the newest 10 messages first and loading older messages on upward scroll. It caches decoded image thumbnails in memory, avoids decoding non-image attachments, and shows text messages after local save while network delivery continues in the background. This release has not been timed on a physical Android device yet.
 
-Android 0.8.5 improves ordinary Android-to-Android downloads: later 100 MiB segments of an encrypted attachment can be read directly instead of decrypting all preceding bytes again. Data-transfer reads allow 45 seconds of inactivity (previously 6 seconds), reducing needless restarts on brief stalls. Failed segment attempts now log their cause for diagnosis. A failed attempt still restarts its current segment, so the displayed percentage can move backward if a real interruption occurs. Loopback tests do not establish real Wi-Fi speed; test on both phones.
+Android 0.8.6 fixes small encrypted reads causing excessive TLS writes, certificate hashing and cancelled watchdog accumulation. Updated Android peers negotiate one continuous file stream, saving encrypted progress in 256 KiB blocks. A connection drop resumes from the last saved block; Pause and app restart keep that progress. Update both phones. TLS, certificate verification, encrypted local files and the daily upload policy remain enabled. Older senders use the existing 100 MiB segment protocol. A changed/corrupt source or local storage failure stops with an error instead of retrying the same file indefinitely. Physical-phone Wi-Fi timing is still required; loopback timing is not a Wi-Fi throughput guarantee.
 
 0.8.3 automatically downloads incoming photos and renders supported images inline. Other files still require Download. Windows layout fixes and the Android daily upload policy remain. Update each receiving device to 0.8.3 for automatic photos.
 
@@ -25,7 +25,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.5.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows 0.8.1 remains compatible and uncapped. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.6.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -38,7 +38,7 @@ The receiver first gets name, size, caption and integrity metadata. **Incoming i
 
 Downloads use separate connections and small streaming buffers. Two simultaneous file-serving streams are allowed; queued text precedes group sync and dispatches promptly. TLS and device verification remain enabled.
 
-Verified **100 MiB segments** allow resume: Pause keeps finished segments. Connection loss retries during the running download. After an app restart, press Download again for other files; pending images are scheduled automatically. Only the incomplete segment restarts. This is sequential streaming; 100 MiB is a checkpoint size, not a RAM buffer or parallel striping.
+Between Android 0.8.6 peers, files stream over one pinned TLS connection with encrypted **256 KiB checkpoints**. The progress percentage counts stored blocks and does not reset on a connection drop. Only the unfinished block is retransmitted. After an app restart, press Download again for other files; pending images are scheduled automatically. The final SHA-256 is calculated during reception; a saved prefix is read once when reopening a paused download. Existing verified 100 MiB checkpoints are imported when upgrading. Transfers involving an older sender still use verified **100 MiB segments**, and an incomplete legacy segment can restart. These are streaming checkpoint sizes, not whole-file RAM buffers or parallel striping.
 
 Save exports a completed download to your chosen location. Encrypted downloaded storage and the exported file need separate disk space. Speed depends on network, storage, CPU and the Android file provider; no real-Wi-Fi throughput guarantee is made.
 
@@ -50,7 +50,7 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.5.apk over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-0.8.6.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
 Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.3.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 

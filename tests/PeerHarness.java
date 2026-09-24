@@ -8,10 +8,30 @@ public class PeerHarness {
   java.util.concurrent.atomic.AtomicInteger slowMs=new java.util.concurrent.atomic.AtomicInteger();
   e.sourceOpener=reference->new FilterInputStream(new FileInputStream(reference)){public int read(byte[] bytes,int offset,int length)throws IOException{int delay=slowMs.get();if(delay>0)try{Thread.sleep(delay);}catch(InterruptedException ex){throw new IOException(ex);}return in.read(bytes,offset,length);}};
   java.util.concurrent.atomic.AtomicInteger notifications=new java.util.concurrent.atomic.AtomicInteger();e.received=m->notifications.incrementAndGet();
+  java.util.concurrent.atomic.AtomicLong dropAt=new java.util.concurrent.atomic.AtomicLong(),pauseAt=new java.util.concurrent.atomic.AtomicLong(),clearAt=new java.util.concurrent.atomic.AtomicLong(),haltAt=new java.util.concurrent.atomic.AtomicLong();
+  java.util.concurrent.atomic.AtomicLong progress=new java.util.concurrent.atomic.AtomicLong(),firstProgress=new java.util.concurrent.atomic.AtomicLong(-1);
+  java.util.concurrent.atomic.AtomicInteger regressions=new java.util.concurrent.atomic.AtomicInteger(),drops=new java.util.concurrent.atomic.AtomicInteger();
+  java.util.concurrent.atomic.AtomicReference<String> downloadError=new java.util.concurrent.atomic.AtomicReference<>("");
+  e.transferProgress=(mid,done,total)->{
+    firstProgress.compareAndSet(-1,done);long before=progress.getAndSet(done);if(done<before)regressions.incrementAndGet();
+    long crash=haltAt.get();if(crash>0&&done>=crash)Runtime.getRuntime().halt(0);
+    long target=dropAt.get();if(target>0&&done>=target&&dropAt.compareAndSet(target,0)){drops.incrementAndGet();for(java.net.Socket socket:e.downloadSockets.values())try{socket.close();}catch(IOException ignored){}}
+    for(PeerEngine.Peer peer:e.peers())for(PeerEngine.Message m:e.messages(peer.id))if(m.id.equals(mid)){
+      target=pauseAt.get();if(target>0&&done>=target&&pauseAt.compareAndSet(target,0))e.cancelDownload(m);
+      target=clearAt.get();if(target>0&&done>=target&&clearAt.compareAndSet(target,0))try{e.clearConversation(peer.id);}catch(IOException failure){downloadError.set(failure.toString());}
+    }
+  };
   System.out.println("READY\t"+e.id);
   BufferedReader input=new BufferedReader(new InputStreamReader(System.in,StandardCharsets.UTF_8));String line;
   while((line=input.readLine())!=null){String[] a=line.split("\t",-1);try{
    if(a[0].equals("STOP"))break;
+   if(a[0].equals("TRACK")){progress.set(0);firstProgress.set(-1);regressions.set(0);drops.set(0);downloadError.set("");dropAt.set(0);pauseAt.set(0);clearAt.set(0);haltAt.set(0);}
+   if(a[0].equals("DROPAT"))dropAt.set(Long.parseLong(a[1]));
+   if(a[0].equals("PAUSEAT"))pauseAt.set(Long.parseLong(a[1]));
+   if(a[0].equals("CLEARAT"))clearAt.set(Long.parseLong(a[1]));
+   if(a[0].equals("HALTAT"))haltAt.set(Long.parseLong(a[1]));
+   if(a[0].equals("TRANSFERSTATE"))System.out.println("TRANSFERSTATE\t"+progress.get()+"\t"+firstProgress.get()+"\t"+regressions.get()+"\t"+drops.get()+"\t"+e.downloads.size()+"\t"+PeerEngine.enc(downloadError.get()));
+   if(a[0].equals("RAWSTREAM")){try(java.net.Socket socket=e.connect(a[1],Integer.parseInt(a[2]))){PeerEngine.write(socket,e.hello());PeerEngine.read(socket);if(!PeerEngine.read(socket).equals("LM4\tREADY"))throw new IOException("Not trusted");PeerEngine.write(socket,"LM4\tFETCHSTREAM\t"+a[3]+"\t"+a[4]+"\t"+a[5]);System.out.println("FETCHREPLY\t"+PeerEngine.enc(PeerEngine.read(socket)));}}
    if(a[0].equals("USAGE"))System.out.println("USAGE\t"+e.uploadPolicy.sentToday()+"\t"+e.uploadPolicy.limitBytesPerSecond());
    if(a[0].equals("SEEDUSAGE"))synchronized(e.uploadPolicy){e.uploadPolicy.bytes=Long.parseLong(a[1]);e.uploadPolicy.dirty=true;e.uploadPolicy.flush();}
    if(a[0].equals("SLOWMS"))slowMs.set(Integer.parseInt(a[1]));
@@ -50,7 +70,7 @@ public class PeerHarness {
      if(a[0].equals("DOWNLOAD"))e.downloadAttachment(m);
      if(a[0].equals("HASFILE"))System.out.println("HASFILE\t"+e.hasAttachment(m));
      if(a[0].equals("CANCEL"))e.cancelDownload(m);
-     if(a[0].equals("DOWNLOADASYNC"))new Thread(()->{try{e.downloadAttachment(m);}catch(Exception ignored){}}).start();
+     if(a[0].equals("DOWNLOADASYNC"))new Thread(()->{try{e.downloadAttachment(m);}catch(Exception failure){downloadError.set(failure.toString());}}).start();
      if(a[0].equals("VERIFYFILE"))e.readAttachmentStream(m,OutputStream.nullOutputStream(),null);
      if(a[0].equals("EXPORT"))try(OutputStream out=new FileOutputStream(a[3])){e.readAttachmentStream(m,out,null);}
    }

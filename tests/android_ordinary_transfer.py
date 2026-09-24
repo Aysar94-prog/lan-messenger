@@ -13,7 +13,7 @@ try:
     source=work/'ordinary-205m.bin'
     block=bytes(range(256))*4096
     with source.open('wb') as output:
-        for _ in range(205):output.write(block)
+        for index in range(205):output.write(index.to_bytes(4,'big')+block[4:])
     sender.command('FILEPATH\t'+receiver.id+'\t'+str(source))
     def offer():
         rows=receiver.command('CONV\t'+sender.id)
@@ -27,7 +27,9 @@ try:
     receiver.command('EXPORT\t'+sender.id+'\t'+message_id+'\t'+str(exported))
     with source.open('rb') as original, exported.open('rb') as copy:
         assert hashlib.file_digest(original,'sha256').digest()==hashlib.file_digest(copy,'sha256').digest()
-    print('PASS: 205 MiB ordinary Android-to-Android transfer crosses two encrypted range boundaries',flush=True)
+    assert (work/'Ordinary-Receiver'/'attachments'/(sender.id+'-'+message_id+'.sec')).exists()
+    assert not (work/'Ordinary-Receiver'/'attachments'/(sender.id+'-'+message_id+'.sec.parts')).exists()
+    print('PASS: 205 MiB ordinary Android-to-Android transfer uses the continuous encrypted stream',flush=True)
     print('MEASURE: 205 MiB download and verification %.2fs (%.1f MiB/s loopback)'%(elapsed,205/elapsed),flush=True)
 finally:
     for process in processes:

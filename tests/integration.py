@@ -1,5 +1,5 @@
 """Run against the actual Java and C# peer engines, without a host/server."""
-import base64, pathlib, socket, subprocess, sys, time, uuid, threading
+import base64, pathlib, socket, subprocess, sys, time, uuid, threading, queue
 
 java, java_classes, dotnet_dll, work = sys.argv[1:]
 work = pathlib.Path(work) / ('peers-' + uuid.uuid4().hex)
@@ -9,17 +9,29 @@ def b64(s):return base64.b64encode(s.encode()).decode()
 class Peer:
     def __init__(self,kind,key,ip):
         self.kind,self.key,self.ip=kind,key,ip
+        (work/key).mkdir(parents=True,exist_ok=True)
+        self.error_path=work/key/('stderr-'+uuid.uuid4().hex+'.log')
+        self.error_log=self.error_path.open('w',encoding='utf-8')
         command=([java,'-Xms16m','-Xmx64m','-cp',java_classes,'net.lanmsg.chat.PeerHarness'] if kind=='java' else ['dotnet',dotnet_dll])
-        self.p=subprocess.Popen(command+[str(work/key),key,ip,'44972','44971'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+        self.p=subprocess.Popen(command+[str(work/key),key,ip,'44972','44971'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.error_log,text=True,encoding='utf-8')
         processes.append(self.p)
-        line=self.p.stdout.readline().strip()
-        assert line.startswith('READY\t'),(line,self.p.stderr.read() if self.p.poll() is not None else 'not ready')
+        self.output=queue.Queue()
+        def read_output():
+            for line in self.p.stdout:self.output.put(line.rstrip('\r\n'))
+            self.output.put(None)
+        threading.Thread(target=read_output,daemon=True).start()
+        line=self.readline('startup',30)
+        assert line.startswith('READY\t'),(line,self.error_path)
         self.id=line.split('\t')[1]
+    def readline(self,operation,timeout=90):
+        try:line=self.output.get(timeout=timeout)
+        except queue.Empty:raise AssertionError(f'{self.key} timed out during {operation}; stderr: {self.error_path}')
+        assert line is not None,(self.key,self.p.poll(),self.error_path.read_text(encoding='utf-8')[-4000:])
+        return line
     def command(self,line):
         self.p.stdin.write(line+'\n');self.p.stdin.flush();result=[]
         while True:
-            row=self.p.stdout.readline().rstrip("\r\n")
-            assert row,(self.p.poll(),'process stopped')
+            row=self.readline(line.split('\t',1)[0])
             if row=='END':break
             result.append(row.split('\t'))
         assert not any(r[0]=="ERROR" for r in result),result
@@ -28,6 +40,7 @@ class Peer:
     def send(self,to,text):return self.command('SEND\t'+to+'\t'+b64(text))
     def stop(self):
         self.p.stdin.write('STOP\n');self.p.stdin.flush();self.p.wait(timeout=10)
+        self.error_log.close()
 def wait_for(predicate,label):
     end=time.monotonic()+30
     while time.monotonic()<end:

@@ -132,6 +132,18 @@ In 0.8.3, Download starts FETCH for ordinary files; a background scheduler start
 - Checkpoints do not allocate 100 MiB in RAM or imply parallel striping. Completed stored segments can be served without replaying earlier segments. Final integrity verification reads complete content once.
 - Clear/expiry cancels downloads and deletes generated storage, never external originals. Serving rechecks retention/trust. Legacy pushed MSG/SYNCREQ cannot trigger automatic downloading.
 
+## Continuous Android file stream (0.8.6)
+
+After the same pinned mutual-TLS HELLO/READY exchange, `LM4<TAB>FILECAPS` receives `LM4<TAB>FILECAPS<TAB>STREAM1`. An older peer closes an unrecognized request; receivers then use legacy FETCH. Offers, manual consent for non-images, automatic photos, group signatures and authorization are unchanged.
+
+- Request: `LM4<TAB>FETCHSTREAM<TAB>original-sender-uuid<TAB>message-id<TAB>offset`. Offset must be nonnegative, within the offered size and a multiple of 262144 (256 KiB).
+- The same verified-recipient/group membership, retention, complete-source and two-serving-slot checks apply. BUSY/UNAVAILABLE carry no file bytes.
+- Response: `LM4<TAB>STREAM<TAB>message-id<TAB>offset<TAB>remaining-size`, followed by exactly the remaining file bytes on the authenticated TLS connection. There is no per-segment connection or trailing range hash; the offered whole-file SHA-256 is verified before the attachment becomes available.
+- The receiver appends complete 256 KiB encrypted CBC blocks to `.sec.resume`. The key is OS-wrapped once per file. Each block continues CBC from the preceding ciphertext block; only the final block gets PKCS padding. The completed file uses the existing LMATCS1 format, so encryption and legacy readers are preserved.
+- Progress advances only after a complete block is written. On connection loss, the next request starts at that block boundary. Pause closes the active socket. Reopening a saved download truncates any torn block and decrypts/hashes the saved prefix once. A completed partial is checked before publication; incomplete files are never exported or relayed.
+- Local storage errors and whole-file hash mismatch stop visibly. Network retries preserve saved ciphertext and the live hash state. Clear/expiry cancels the socket and removes the partial after its handle closes. Completion rechecks retention, cancellation and trust under the engine lock before renaming.
+- Completion flushes the file to storage. The block checkpoints cover network interruptions and process restarts, not a guarantee against sudden device power loss. An older sender retains the legacy 100 MiB retry granularity.
+
 ## Clear conversation
 
 Clear removes only matching local messages, cancels their unsent outbox rows and deletes their local blobs. It retains contacts, pins, group definitions and `(sender,id)` tombstones as H snapshot rows. Both primary and backup snapshots are rewritten. A duplicate already-cleared message is ACKed but neither displayed nor notified again. It does not clear anyone else's device or recall bytes already sent. In-flight sends recheck queue existence before transmitting and skip updating removed rows on later ACK.

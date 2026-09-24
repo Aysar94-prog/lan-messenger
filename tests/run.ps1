@@ -10,9 +10,13 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
   dotnet build tests/CsharpHarness/CsharpHarness.csproj -c Release --configfile NuGet.Config -o "$TestRoot\csharp"
   Check-Result
-  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java
+  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/ResumeStore.java android/src/net/lanmsg/chat/ResumableTransfer.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java tests/PeerHarness.java tests/TestProtector.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java tests/TransferWatchdogTest.java tests/ResumeStoreTest.java
   Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.AttachmentRangeTest
+  Check-Result
+  & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.TransferWatchdogTest
+  Check-Result
+  & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.ResumeStoreTest
   Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.DailyUploadPolicyTest "$TestRoot\policy-$([Guid]::NewGuid().ToString('N'))"
   Check-Result
@@ -27,6 +31,10 @@ try {
   python tests/transfers.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/android_ordinary_transfer.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
+  python tests/android_resume.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
+  python tests/mixed_transfer_sources.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   dotnet build tests/WindowsUi/WindowsUi.csproj -c Release --configfile NuGet.Config -o "$TestRoot\ui"
   Check-Result

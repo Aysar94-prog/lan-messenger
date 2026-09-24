@@ -183,6 +183,8 @@ public final class PeerEngine implements Closeable {
   void receive(Socket socket){try(SSLSocket s=(SSLSocket)socket){s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
     if(!trusted(h[2],fingerprint)){write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
     String[] m=read(s).split("\t",-1);
+    if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
+    if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHSTREAM")){ResumableTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==6&&m[0].equals("LM4")&&m[1].equals("GROUP")){acceptGroup(m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ2")&&uuid(m[2])){handleSync(s,m[2],m[3],h[2]);notifyChanged();return;}
@@ -341,6 +343,10 @@ public final class PeerEngine implements Closeable {
   static final int TRANSFER_READ_TIMEOUT_MS=45_000;
   final Semaphore fileSlots=new Semaphore(2);
   final ConcurrentHashMap<String,Boolean> downloads=new ConcurrentHashMap<>();
+  final ConcurrentHashMap<String,Socket> downloadSockets=new ConcurrentHashMap<>();
+  final ConcurrentHashMap<String,String> downloadNotes=new ConcurrentHashMap<>();
+  public String downloadNote(Message m){String value=downloadNotes.get(m.from+"/"+m.id);return value==null?"":value;}
+  void downloadNote(Message m,String value){String old=downloadNotes.put(m.from+"/"+m.id,value);if(!value.equals(old))notifyChanged();}
   public interface SourceOpener{InputStream open(String reference)throws IOException;}
   public volatile SourceOpener sourceOpener=reference->new FileInputStream(reference);
   File sourcePath(Message m)throws IOException{return new File(attachmentPath(m)+".source");}
@@ -364,8 +370,8 @@ public final class PeerEngine implements Closeable {
     }
   }
   public boolean downloading(Message m){return downloads.containsKey(m.from+"/"+m.id);}
-  public void cancelDownload(Message m){downloads.computeIfPresent(m.from+"/"+m.id,(key,value)->false);}
-  void deleteTransfer(Message m){cancelDownload(m);try{attachmentPath(m).delete();sourcePath(m).delete();deleteParts(m);}catch(Exception ignored){}}
+  public void cancelDownload(Message m){String key=m.from+"/"+m.id;downloads.computeIfPresent(key,(k,value)->false);Socket socket=downloadSockets.get(key);if(socket!=null)try{socket.close();}catch(IOException ignored){}}
+  void deleteTransfer(Message m){cancelDownload(m);downloadNotes.remove(m.from+"/"+m.id);try{attachmentPath(m).delete();new File(attachmentPath(m)+".resume").delete();sourcePath(m).delete();deleteParts(m);}catch(Exception ignored){}}
   void deleteParts(Message m)throws IOException{File dir=partsPath(m);File[] children=dir.listFiles();if(children!=null)for(File child:children)child.delete();dir.delete();}
   String hashStream(InputStream in)throws IOException{try{MessageDigest hash=MessageDigest.getInstance("SHA-256");byte[] b=new byte[256*1024];int n;while((n=in.read(b))!=-1)hash.update(b,0,n);return hex(hash.digest());}catch(GeneralSecurityException e){throw new IOException(e);}}
   static String hex(byte[] bytes){StringBuilder text=new StringBuilder();for(byte b:bytes)text.append(String.format(Locale.ROOT,"%02x",b&255));return text.toString();}
@@ -418,7 +424,17 @@ public final class PeerEngine implements Closeable {
       write(s,"LM4\tDATA\t"+m.id+"\t"+offset+"\t"+count);
       MessageDigest digest;try{digest=MessageDigest.getInstance("SHA-256");}catch(Exception e){throw new IOException(e);}
       OutputStream out=new NetworkTimeoutOutputStream(s);byte[] buffer=new byte[256*1024];long done=0;
-      while(done<count){if(!retained(m)||!trusted(peerId,SecureIdentity.remote((SSLSocket)s)))throw new IOException("Transfer no longer authorized");int n=source.read(buffer,0,(int)Math.min(buffer.length,count-done));if(n<0)throw new EOFException();digest.update(buffer,0,n);uploadPolicy.write(out,buffer,0,n);done+=n;}
+      // The certificate is fixed for this TLS session. Recheck its pin, but do not hash and
+      // format the certificate again for every small CipherInputStream read.
+      String transferFingerprint=SecureIdentity.remote((SSLSocket)s);
+      while(done<count){
+        if(!retained(m)||!trusted(peerId,transferFingerprint))throw new IOException("Transfer no longer authorized");
+        int wanted=(int)Math.min(buffer.length,count-done),n=0;
+        // CipherInputStream may return just one small internal buffer. Fill a network block
+        // before scheduling a watchdog, checking the quota and writing a TLS record batch.
+        while(n<wanted){int got=source.read(buffer,n,wanted-n);if(got<0)throw new EOFException();if(got>0)n+=got;}
+        digest.update(buffer,0,n);uploadPolicy.write(out,buffer,0,n);done+=n;
+      }
       write(s,"LM4\tPART\t"+hex(digest.digest()));
     }finally{try{uploadPolicy.flush();}finally{fileSlots.release();}}
   }
@@ -426,6 +442,9 @@ public final class PeerEngine implements Closeable {
     if(m.from.equals(id)||hasAttachment(m))return;
     String key=m.from+"/"+m.id;if(downloads.putIfAbsent(key,true)!=null)return;
     try{
+      downloadNote(m,"");
+      if(ResumableTransfer.download(this,m,key))return;
+      downloadNote(m,"Older sender: update both phones for continuous resume");
       partsPath(m).mkdirs();int parts=(int)Math.max(1,(m.fileSize+SEGMENT_SIZE-1)/SEGMENT_SIZE);
       for(int i=0;i<parts;i++){
         long offset=i*SEGMENT_SIZE,count=Math.min(SEGMENT_SIZE,m.fileSize-offset);File part=segmentPath(m,i),pending=new File(part+".pending");
@@ -463,7 +482,8 @@ public final class PeerEngine implements Closeable {
       if(!Boolean.TRUE.equals(downloads.get(key)))throw new IOException("Download paused");
       try(FileOutputStream out=new FileOutputStream(new File(partsPath(m),"complete"))){out.write(hash.getBytes(StandardCharsets.US_ASCII));}
       notifyChanged();
-    }finally{downloads.remove(key);notifyChanged();}
+    }catch(IOException failure){downloadNote(m,String.valueOf(failure.getMessage()));throw failure;}
+    finally{downloads.remove(key);downloadSockets.remove(key);lastReportedPercent.remove(m.id);notifyChanged();}
   }
 
   public static final int MAX_FILE_SIZE=1024*1024*1024;
@@ -472,7 +492,8 @@ public final class PeerEngine implements Closeable {
   static final int CHUNK_SIZE=3*1024*1024;
   static final byte[] ATTACHMENT_MAGIC="LMATCS1".getBytes(StandardCharsets.US_ASCII);
   static final long CHUNK_WRITE_TIMEOUT_MS=45_000;
-  static final ScheduledExecutorService WRITE_WATCHDOGS=Executors.newScheduledThreadPool(1,r->{Thread t=new Thread(r,"lan-write-watchdog");t.setDaemon(true);return t;});
+  static final ScheduledThreadPoolExecutor WRITE_WATCHDOGS=new ScheduledThreadPoolExecutor(1,r->{Thread t=new Thread(r,"lan-write-watchdog");t.setDaemon(true);return t;});
+  static { WRITE_WATCHDOGS.setRemoveOnCancelPolicy(true); }
   // Socket has no native write timeout (unlike the read timeout set once at connect() time via
   // setSoTimeout) — a peer that stops reading could otherwise block a sender's thread forever,
   // and with it, one of this process's few shared connection-handling threads. A watchdog closes
@@ -634,6 +655,7 @@ public final class PeerEngine implements Closeable {
     try{ByteArrayInputStream plain=new ByteArrayInputStream(protector.unprotect(SecureIdentity.readFile(path)));if(plain.skip(offset)!=offset)throw new EOFException();return plain;}catch(IOException e){throw e;}catch(Exception e){throw new IOException(e);}
   }
   static void readFully(InputStream in,byte[] buffer)throws IOException{int at=0;while(at<buffer.length){int n=in.read(buffer,at,buffer.length-at);if(n<0)throw new EOFException();at+=n;}}
+  static void readTransferBlock(InputStream in,byte[] buffer,int count)throws IOException{int at=0;while(at<count){int n=in.read(buffer,at,count-at);if(n<0)throw new EOFException("Transfer interrupted");if(n>0)at+=n;}}
   // Small attachments and callers that need a byte[] (thumbnails, exports below a threshold,
   // tests). Not used for the actual network send/receive path — that streams, see below.
   public byte[] readAttachment(Message m)throws IOException {
@@ -675,5 +697,5 @@ public final class PeerEngine implements Closeable {
   }
 
   void notifyChanged(){try{changed.run();}catch(Exception ignored){}}
-  public synchronized void close(){running=false;try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
+  public synchronized void close(){running=false;for(Socket socket:downloadSockets.values())try{socket.close();}catch(IOException ignored){}try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
 }

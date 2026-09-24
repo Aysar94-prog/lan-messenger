@@ -36,7 +36,7 @@ if (!(Test-Path -LiteralPath $keyFile)) {
   & "$JdkRoot\bin\keytool.exe" -genkeypair -keystore $keyFile -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=LAN Messenger Development,O=LAN Messenger,C=US'
   Check-Result
 }
-$apkFile = Join-Path $PSScriptRoot '..\..\outputs\LanMessenger-0.8.5.apk'
+$apkFile = Join-Path $PSScriptRoot '..\..\outputs\LanMessenger-0.8.6.apk'
 & "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" sign --ks $keyFile --ks-pass pass:android --key-pass pass:android --out $apkFile "$BuildRoot\aligned.apk"
 Check-Result
 & "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" verify --verbose $apkFile
