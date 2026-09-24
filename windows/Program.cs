@@ -16,11 +16,15 @@ static class Program
 sealed class BufferedFeed : FlowLayoutPanel
 {
     public BufferedFeed(){DoubleBuffered=true;}
+    // Fired when the user scrolls upward while already at (or above) the top edge — the signal
+    // to page in older messages. Guarded by the owning form so it cannot auto-repeat without
+    // a fresh gesture.
+    public event Action? TopReached;
     // Buffer the entire child-window subtree: buffering the panel alone leaves
     // native labels/buttons/pictures painted independently during ScrollWindowEx.
     protected override CreateParams CreateParams {get{var cp=base.CreateParams;cp.ExStyle|=0x02000000;return cp;}}
-    protected override void OnScroll(ScrollEventArgs e){base.OnScroll(e);Invalidate(true);}
-    protected override void OnMouseWheel(MouseEventArgs e){base.OnMouseWheel(e);Invalidate(true);}
+    protected override void OnScroll(ScrollEventArgs e){base.OnScroll(e);Invalidate(true);if(e.NewValue<e.OldValue&&-AutoScrollPosition.Y<=24)TopReached?.Invoke();}
+    protected override void OnMouseWheel(MouseEventArgs e){base.OnMouseWheel(e);Invalidate(true);if(e.Delta>0&&-AutoScrollPosition.Y<=24)TopReached?.Invoke();}
     protected override void OnLayout(LayoutEventArgs e){base.OnLayout(e);Invalidate(true);}
 }
 sealed class MessageBubble : FlowLayoutPanel
@@ -37,6 +41,76 @@ sealed class MessageBubble : FlowLayoutPanel
         using var brush=new SolidBrush(BackColor);e.Graphics.FillPath(brush,path);
     }
 }
+// Per-conversation pagination and cache state. VisibleCount is the number of newest messages
+// rendered (10 on first open, +20 per upward top-arrival); ScrollY/AtBottom preserve the view
+// while the user is away. Cards/StatusLabels are the detachable live controls for one chat.
+sealed record ChatViewState(string Conversation,int VisibleCount,int ScrollY,int FeedWidth,long LastUse,bool AtBottom=true,Dictionary<string,(Control card,string content,PeerEngine.Message message)>? Cards=null,Dictionary<string,Label>? StatusLabels=null);
+// Bounded LRU of decoded attachment thumbnails. Bitmaps are reference counted: eviction only
+// disposes images no card is still displaying; images still shown stay alive until the card
+// releases them. Keys are owner message/hash/preview dimensions per conversation.
+sealed class ThumbnailCache
+{
+    public const long DefaultLimit=16L*1024*1024;
+    sealed class Entry{public required Image Image;public required string Conversation;public long Size;public int Refs;public bool Retired;public LinkedListNode<string> Node=null!;}
+    readonly Dictionary<string,Entry> byKey=[];
+    readonly Dictionary<string,Entry> retired=[];
+    readonly Dictionary<string,HashSet<string>> members=[];
+    readonly LinkedList<string> order=[];
+    long bytes;
+    public long Limit{get;}
+    public long Bytes=>bytes;
+    public long Entries=>byKey.Count;
+    public long Hits,Misses,Evictions,Retirements;
+    public ThumbnailCache(long limit=DefaultLimit){Limit=limit;}
+    static long Estimate(Image image){try{return (long)image.Width*image.Height*4;}catch{return 262144;}}
+    // Returns a cached image when available, otherwise decodes once. The caller owns one
+    // reference until Release(key); eviction honors that reference.
+    public Image? Acquire(string key,string conversation,Func<Image?> decode)
+    {
+        if(byKey.TryGetValue(key,out var existing)){Hits++;existing.Refs++;Touch(key);return existing.Image;}
+        Misses++;var image=decode();if(image==null)return null;
+        var size=Estimate(image);var entry=new Entry{Image=image,Conversation=conversation,Size=size,Refs=1};
+        byKey[key]=entry;AddMember(conversation,key);entry.Node=order.AddLast(key);bytes+=size;
+        EvictOverBudget();
+        return image;
+    }
+    public void Release(string key)
+    {
+        if(retired.TryGetValue(key,out var re)){re.Refs=Math.Max(0,re.Refs-1);if(re.Refs==0){retired.Remove(key);bytes-=re.Size;DisposeImage(re);}return;}
+        if(byKey.TryGetValue(key,out var entry))entry.Refs=Math.Max(0,entry.Refs-1);
+    }
+    void Touch(string key){if(order.Count<=1||!byKey.TryGetValue(key,out var e)||e.Retired)return;order.Remove(e.Node);e.Node=order.AddLast(key);}
+    void EvictOverBudget()
+    {
+        while(bytes>Limit&&order.Count>0)
+        {
+            var victimKey=order.First!.Value;var victim=byKey[victimKey];
+            if(victim.Refs>0){victim.Retired=true;Retirements++;retired[victimKey]=victim;byKey.Remove(victimKey);order.RemoveFirst();RemoveMember(victim.Conversation,victimKey);continue;}
+            RemoveKey(victimKey,victim);
+        }
+    }
+    void RemoveKey(string key,Entry entry)
+    {
+        byKey.Remove(key);order.Remove(entry.Node);bytes-=entry.Size;RemoveMember(entry.Conversation,key);Evictions++;
+        DisposeImage(entry);
+    }
+    static void DisposeImage(Entry entry){try{entry.Image.Dispose();}catch{}}
+    void AddMember(string conversation,string key){if(!members.TryGetValue(conversation,out var set))members[conversation]=set=[];set.Add(key);}
+    void RemoveMember(string conversation,string key){if(members.TryGetValue(conversation,out var set)){set.Remove(key);if(set.Count==0)members.Remove(conversation);}}
+    // Clearing a conversation must drop its cached thumbnails; ones still shown by a live card
+    // are retired and disposed when that card is released.
+    public void RemoveConversation(string conversation)
+    {
+        if(!members.TryGetValue(conversation,out var set))return;
+        foreach(var key in set.ToArray())
+            if(byKey.TryGetValue(key,out var entry))
+            {
+                byKey.Remove(key);order.Remove(entry.Node);RemoveMember(entry.Conversation,key);Evictions++;
+                if(entry.Refs==0){bytes-=entry.Size;DisposeImage(entry);}else{entry.Retired=true;retired[key]=entry;}
+            }
+        members.Remove(conversation);
+    }
+}
 sealed class ChatWindow : Form
 {
     readonly PeerEngine engine;
@@ -44,15 +118,21 @@ sealed class ChatWindow : Form
     readonly Button attach=new(){Text="Attach",AutoSize=true};
     readonly Button fastTransfer=new(){Text="Fast file",AutoSize=true};
     bool pendingFast,sendBusy;
-    readonly Dictionary<string,(Control card,string content)> cards=[];
+    readonly Dictionary<string,(Control card,string content,PeerEngine.Message message)> cards=[];
     string feedConversation=""; int feedWidth;
     readonly Dictionary<string,Label> statusLabels=[];
+    // Per-conversation pagination/view state and bounded caches (windows/PLAN-CHAT-PERFORMANCE.md).
+    const int InitialVisibleMessages=10, OlderPageSize=20, MaxCachedChats=3, MaxCachedCards=600;
+    readonly Dictionary<string,ChatViewState> chatViews=[];
+    readonly ThumbnailCache thumbnails=new();
+    bool loadingOlder;
+    Control? olderHint;
     readonly Button clear=new(){Text="Clear chat",AutoSize=true};
     readonly Button members=new(){Text="Members",AutoSize=true};
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.8.8";
+    public const string AppVersion="0.8.9";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -74,7 +154,7 @@ sealed class ChatWindow : Form
     readonly TextBox profile = new() { Width=180, MaxLength=30, PlaceholderText="Your display name" };
     readonly Label status = new() { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DimGray };
     readonly Label heading = new() { Text="Choose a contact", Dock=DockStyle.Fill, Font=new Font("Segoe UI",17,FontStyle.Bold), AutoSize=false, AutoEllipsis=true };
-    readonly FlowLayoutPanel feed = new BufferedFeed() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
+    readonly BufferedFeed feed = new() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
     readonly FlowLayoutPanel attachmentDraft = new() { Dock=DockStyle.Fill, FlowDirection=FlowDirection.LeftToRight, WrapContents=false, AutoScroll=true, Visible=false, BackColor=Color.FromArgb(235,240,250), Padding=new Padding(8) };
     readonly TextBox composer = new() { Dock=DockStyle.Fill, Multiline=true, MaxLength=2000, PlaceholderText="Write a message…", Enabled=false };
     readonly Button send = new() { Text="Send", Dock=DockStyle.Fill, Enabled=false };
@@ -123,7 +203,7 @@ sealed class ChatWindow : Form
             if(!item.Group){var dot=new Rectangle(avatarRect.Right-10,avatarRect.Bottom-10,12,12);using var ring=new SolidBrush(Color.White);e.Graphics.FillEllipse(ring,Rectangle.Inflate(dot,2,2));using var online=new SolidBrush(item.Online?Color.FromArgb(33,150,243):Color.Gray);e.Graphics.FillEllipse(online,dot);}
             using var bold=new Font(Font,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,item.Name,bold,new Rectangle(e.Bounds.X+55,e.Bounds.Y+10,e.Bounds.Width-60,24),Ink,TextFormatFlags.EndEllipsis);using var small=new Font("Segoe UI",9);TextRenderer.DrawText(e.Graphics,item.Detail,small,new Rectangle(e.Bounds.X+55,e.Bounds.Y+35,e.Bounds.Width-60,22),Color.SlateGray,TextFormatFlags.EndEllipsis);
             if(item.Unread>0){var count=item.Unread>99?"99+":item.Unread.ToString();int d=22;var badgeRect=new Rectangle(e.Bounds.Right-d-12,e.Bounds.Y+(e.Bounds.Height-d)/2,d,d);using var unread=new SolidBrush(Accent);e.Graphics.FillEllipse(unread,badgeRect);using var tiny=new Font("Segoe UI",8,FontStyle.Bold);TextRenderer.DrawText(e.Graphics,count,tiny,badgeRect,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
-        StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};
+        StyleButtons(root);send.BackColor=Accent;send.ForeColor=Color.White;RoundCorners(send,8);feed.Resize+=(_,_)=>{if(selected!=null){lastFeed="";Render();}};feed.TopReached+=LoadOlderPage;
         avatarBox.Paint+=(_,e)=>{if(avatarImage==null){using var b=new SolidBrush(Accent);e.Graphics.FillEllipse(b,0,0,avatarBox.Width,avatarBox.Height);TextRenderer.DrawText(e.Graphics,engine.Name.Length>0?engine.Name[..1].ToUpperInvariant():"?",new Font("Segoe UI",14,FontStyle.Bold),avatarBox.ClientRectangle,Color.White,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter);}};
         try{var raw=engine.Avatar;if(raw!=null){avatarImage=TryImageThumbnail(raw,80,80);avatarBox.Image=avatarImage;}}catch{}
         attach.Click+=async(_,_)=>await AttachFile();fastTransfer.Click+=async(_,_)=>await PickAttachment(true);clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();saveFile.Click+=async(_,_)=>{if(files.SelectedItem is FileItem item)await FileAction(item.Message);};preview.Click+=(_,_)=>PreviewImage();
@@ -185,26 +265,115 @@ sealed class ChatWindow : Form
         verify.Enabled=peer!=null;members.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
         heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members":$"{peer!.Name} · {(peer.Online?"Online":"Offline")}";
-        var items=engine.Messages(selected!);var signatureFeed=selected+":"+feed.Width+string.Join("|",items.Select(m=>m.From+":"+m.Id+":"+m.Status+":"+engine.HasAttachment(m)+":"+engine.Downloading(m)));
+        var items=engine.Messages(selected!);
+        // Per-conversation view state: newest N rendered, scroll position, cached cards.
+        if(!chatViews.TryGetValue(selected!,out var current)){current=new ChatViewState(selected!,Math.Min(InitialVisibleMessages,items.Length),0,feed.Width,TimestampMs(),true);chatViews[selected!]=current;}
+        var visibleCount=Math.Min(items.Length,Math.Max(0,current.VisibleCount));
+        if(visibleCount==0&&items.Length>0)visibleCount=Math.Min(InitialVisibleMessages,items.Length);
+        int start=items.Length-visibleCount;
+        bool moreOlder=start>0;
+        var slice=items.Skip(start);
+        var signatureFeed=selected+":"+feed.Width+":"+start+":"+string.Join("|",slice.Select(m=>m.From+":"+m.Id+":"+m.Status+":"+(m.FileName.Length>0?engine.HasAttachment(m)+":"+engine.Downloading(m):"")));
         if(lastFeed!=signatureFeed){lastFeed=signatureFeed;
             bool reset=feedConversation!=selected||feedWidth!=feed.Width;
+            bool switching=feedConversation.Length>0&&feedConversation!=selected;
             bool bottom=reset||!feed.VerticalScroll.Visible||-feed.AutoScrollPosition.Y+feed.ClientSize.Height>=feed.DisplayRectangle.Height-60;
-            var scroll=-feed.AutoScrollPosition.Y;
+            var scroll=Math.Max(0,-feed.AutoScrollPosition.Y);
+            var anchor=FindTopAnchor();
             feed.SuspendLayout();
-            if(reset){feed.AutoScrollPosition=Point.Empty;ClearFeed();feedConversation=selected!;feedWidth=feed.Width;}
-            var keys=items.Select(m=>m.From+"/"+m.Id).ToHashSet();
+            if(reset){
+                if(switching)StashFeed(feedConversation);
+                else if(feedConversation.Length>0)DiscardFeed();
+                feed.AutoScrollPosition=Point.Empty;feed.Controls.Clear();cards.Clear();statusLabels.Clear();
+                feedConversation=selected!;feedWidth=feed.Width;
+                var cached=current.Cards;
+                var cachedLabels=current.StatusLabels;
+                bool cachedAlive=cached is {Count:>0}&&current.FeedWidth==feed.Width&&cachedLabels!=null&&cached.Values.All(v=>!v.card.IsDisposed);
+                if(cachedAlive&&cached!=null&&cachedLabels!=null){
+                    foreach(var pair in cached)cards[pair.Key]=pair.Value;
+                    foreach(var pair in cachedLabels)statusLabels[pair.Key]=pair.Value;
+                    foreach(var m in slice)if(cards.TryGetValue(m.From+"/"+m.Id,out var attached))feed.Controls.Add(attached.card);
+                }else foreach(var pair in cached??[])if(!pair.Value.card.IsDisposed)pair.Value.card.Dispose();
+                chatViews[selected!]=current with{VisibleCount=Math.Max(current.VisibleCount,visibleCount),FeedWidth=feed.Width,Cards=cachedAlive?current.Cards:null,StatusLabels=cachedAlive?current.StatusLabels:null};
+            }
+            var keys=slice.Select(m=>m.From+"/"+m.Id).ToHashSet();
             foreach(var key in cards.Keys.Where(k=>!keys.Contains(k)).ToArray()){cards[key].card.Dispose();cards.Remove(key);statusLabels.Remove(key);}
-            if(cards.Count==0)foreach(Control c in feed.Controls.Cast<Control>().ToArray())c.Dispose();
-            foreach(var m in items){var key=m.From+"/"+m.Id;var content=engine.HasAttachment(m)+":"+engine.Downloading(m);
-                if(cards.TryGetValue(key,out var old)&&old.content==content)continue;
-                int index=old.card==null?feed.Controls.Count:feed.Controls.GetChildIndex(old.card);
-                old.card?.Dispose();var card=MessageCard(m);cards[key]=(card,content);feed.Controls.Add(card);feed.Controls.SetChildIndex(card,index);}
-            if(items.Length==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30)));
+            foreach(var m in slice){var key=m.From+"/"+m.Id;var content=m.FileName.Length>0?engine.HasAttachment(m)+":"+engine.Downloading(m):"";
+                if(cards.TryGetValue(key,out var old)&&old.content==content){cards[key]=(old.card,content,m);continue;}
+                old.card?.Dispose();var card=MessageCard(m);cards[key]=(card,content,m);feed.Controls.Add(card);}
+            if(moreOlder){olderHint??=MessageLabel("Older messages — scroll up to load",9,Color.SlateGray,Math.Max(300,feed.Width-30));if(!feed.Controls.Contains(olderHint))feed.Controls.Add(olderHint);}
+            else if(olderHint!=null&&feed.Controls.Contains(olderHint))feed.Controls.Remove(olderHint);
+            if(items.Length==0&&cards.Count==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30)));
+            // Enforce chronological order: optional older-history hint first, then the rendered slice.
+            var ordered=new List<Control>();if(moreOlder&&feed.Controls.Contains(olderHint!))ordered.Add(olderHint!);
+            foreach(var m in slice)if(cards.TryGetValue(m.From+"/"+m.Id,out var placed))ordered.Add(placed.card);
+            for(int i=ordered.Count-1;i>=0;i--)feed.Controls.SetChildIndex(ordered[i],i);
             feed.ResumeLayout(true);UpdateTransferLabels();
-            feed.AutoScrollPosition=new Point(0,bottom?feed.VerticalScroll.Maximum:scroll);feed.Invalidate(true);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
+            if(reset){if(current.AtBottom)feed.AutoScrollPosition=new Point(0,feed.VerticalScroll.Maximum);else feed.AutoScrollPosition=new Point(0,Math.Min(current.ScrollY,feed.VerticalScroll.Maximum));}
+            else if(bottom)feed.AutoScrollPosition=new Point(0,feed.VerticalScroll.Maximum);
+            else RestoreAnchor(anchor);
+            feed.Invalidate(true);var previous=(files.SelectedItem as FileItem)?.Message.Id;files.Items.Clear();foreach(var m in items.Where(m=>m.FileName.Length>0))files.Items.Add(new FileItem(m));if(files.Items.Count>0){files.SelectedIndex=0;for(int i=0;i<files.Items.Count;i++)if(((FileItem)files.Items[i]!).Message.Id==previous)files.SelectedIndex=i;}}
         files.Enabled=saveFile.Enabled=preview.Enabled=files.Items.Count>0;
     }
-    void ClearFeed(){cards.Clear();statusLabels.Clear();foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();feed.Controls.Clear();}
+    // Detach the currently attached conversation's live cards into its view state, then bound
+    // the retained chat set so switching stays cheap without unbounded control memory.
+    void StashFeed(string conversation)
+    {
+        if(!chatViews.TryGetValue(conversation,out var view))return;
+        var state=view with{
+            Cards=new(cards),StatusLabels=new(statusLabels),
+            ScrollY=Math.Max(0,-feed.AutoScrollPosition.Y),FeedWidth=feedWidth,LastUse=TimestampMs(),
+            AtBottom=!feed.VerticalScroll.Visible||-feed.AutoScrollPosition.Y+feed.ClientSize.Height>=feed.DisplayRectangle.Height-60};
+        chatViews[conversation]=state;
+        EvictChatCache();
+    }
+    void DiscardFeed(){foreach(Control control in feed.Controls.Cast<Control>().ToArray())control.Dispose();}
+    void EvictChatCache()
+    {
+        var cached=chatViews.Where(kv=>kv.Value.Cards is {Count:>0}).ToList();
+        while((cached.Count>MaxCachedChats||cached.Sum(kv=>kv.Value.Cards!.Count)>MaxCachedCards)&&cached.Count>0){
+            var lru=cached.OrderBy(kv=>kv.Value.LastUse).First();
+            foreach(var pair in lru.Value.Cards!)pair.Value.card.Dispose();
+            chatViews[lru.Key]=lru.Value with{Cards=null,StatusLabels=null};
+            cached=chatViews.Where(kv=>kv.Value.Cards is {Count:>0}).ToList();
+        }
+    }
+    // The wheel reaches the top: page in the next 20 older messages while keeping the current
+    // first visible message pinned so the view cannot jump. One arrival loads exactly one page.
+    void LoadOlderPage()
+    {
+        if(selected==null||loadingOlder)return;
+        if(!chatViews.TryGetValue(selected,out var view)||view.VisibleCount>=engine.Messages(selected).Length)return;
+        if(-feed.AutoScrollPosition.Y>24)return;
+        loadingOlder=true;
+        try{
+            chatViews[selected]=view with{VisibleCount=Math.Min(engine.Messages(selected).Length,view.VisibleCount+OlderPageSize)};
+            lastFeed="";Render();
+        }finally{loadingOlder=false;}
+    }
+    (string? Key,int Offset) FindTopAnchor()
+    {
+        int s=Math.Max(0,-feed.AutoScrollPosition.Y);
+        foreach(Control c in feed.Controls){
+            if(c.Top+c.Height<=s)continue;
+            string? key=c is FlowLayoutPanel?cards.FirstOrDefault(kv=>kv.Value.card==c).Key:null;
+            if(key!=null)return(key,c.Top-s);
+        }
+        return(null,0);
+    }
+    void RestoreAnchor((string? Key,int Offset) anchor)
+    {
+        if(anchor.Key==null)return;
+        if(!cards.TryGetValue(anchor.Key,out var entry)||entry.card.Parent==null)return;
+        feed.AutoScrollPosition=new Point(0,Math.Max(0,entry.card.Top-anchor.Offset));
+    }
+    static long TimestampMs()=>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    public long ThumbnailCacheBytes=>thumbnails.Bytes;
+    public long ThumbnailCacheMisses=>thumbnails.Misses;
+    public long ThumbnailCacheHits=>thumbnails.Hits;
+    public long ThumbnailCacheEvictions=>thumbnails.Evictions;
+    public int CachedChatCount=>chatViews.Count(kv=>kv.Value.Cards is {Count:>0});
+    public int CachedCardCount=>chatViews.Sum(kv=>kv.Value.Cards?.Count??0);
     static Label MessageLabel(string text,float size,Color color,int width,bool bold=false)=>new(){Text=text,AutoSize=true,MaximumSize=new Size(width,0),Font=new Font("Segoe UI",size,bold?FontStyle.Bold:FontStyle.Regular),ForeColor=color,Margin=new Padding(0,2,0,2)};
     static Bitmap DrawInitialCircle(string initial,Color color,int size)
     {
@@ -236,8 +405,9 @@ sealed class ChatWindow : Form
         card.Controls.Add(SenderRow(mine,message.From,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         else{
-            var thumbnail=TryImageThumbnail(message,Math.Min(420,width-24),320);
-            if(thumbnail!=null){var picture=new PictureBox{Image=thumbnail,SizeMode=PictureBoxSizeMode.Zoom,Width=width-24,Height=Math.Max(150,Math.Min(320,(int)Math.Round((double)(width-24)*thumbnail.Height/thumbnail.Width))),Cursor=Cursors.Hand,BackColor=Color.FromArgb(232,236,243),Margin=new Padding(0,4,0,4)};picture.Click+=(_,_)=>PreviewImage(message);picture.Disposed+=(_,_)=>thumbnail.Dispose();card.Controls.Add(picture);}
+            int thumbWidth=Math.Min(420,width-24);var thumbKey=ThumbKey(message,thumbWidth,320);
+            var thumbnail=CachedThumbnail(message,thumbKey,thumbWidth,320);
+            if(thumbnail!=null){var picture=new PictureBox{Image=thumbnail,SizeMode=PictureBoxSizeMode.Zoom,Width=width-24,Height=Math.Max(150,Math.Min(320,(int)Math.Round((double)(width-24)*thumbnail.Height/thumbnail.Width))),Cursor=Cursors.Hand,BackColor=Color.FromArgb(232,236,243),Margin=new Padding(0,4,0,4)};picture.Click+=(_,_)=>PreviewImage(message);picture.Disposed+=(_,_)=>thumbnails.Release(thumbKey);card.Controls.Add(picture);}
             var fileLabel=MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24);fileLabel.Cursor=Cursors.Hand;fileLabel.Click+=async(_,_)=>await FileAction(message);card.Controls.Add(fileLabel);
             var actions=new FlowLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,WrapContents=false,Margin=new Padding(0)};
             var available=engine.HasAttachment(message);var save=new Button{Text=available?"Open":engine.Downloading(message)?"Pause":engine.PendingDestination(message).Length>0?"Resume":"Download",AutoSize=true};
@@ -258,11 +428,19 @@ sealed class ChatWindow : Form
             label.Text=$"{when}  ·  {ticks} {statusText}";label.ForeColor=seen?SeenBlue:Color.SlateGray;}
         else label.Text=when+(engine.Downloading(message)?transferProgress.TryGetValue(message.Id,out var p)&&p.total>0?$"  ·  Downloading {p.done*100/p.total}%":"  ·  Waiting for sender…":"");
     }
-    void UpdateTransferLabels(){if(selected==null)return;foreach(var m in engine.Messages(selected))if(statusLabels.TryGetValue(m.From+"/"+m.Id,out var label))SetStatus(m,label);}
+    void UpdateTransferLabels(){if(selected==null)return;foreach(var pair in cards.Values)if(statusLabels.TryGetValue(pair.message.From+"/"+pair.message.Id,out var label))SetStatus(pair.message,label);}
     // Guarded by size: decoding an inline thumbnail means fully decrypting the attachment into
     // memory (ReadAttachment), which must stay off the table for anything near the 1 GB cap —
     // rendering a whole conversation's history would otherwise decrypt every large file in it.
     Image? TryImageThumbnail(PeerEngine.Message message,int maxWidth,int maxHeight){if(message.FileSize>ThumbnailPreviewCap)return null;try{return TryImageThumbnail(engine.ReadAttachment(message),maxWidth,maxHeight);}catch{return null;}}
+    // Bounded LRU access for decoded attachment thumbnails (plan W05). Non-image files are
+    // skipped without any read attempt. Keys cover owner message, hash, and preview size.
+    string ThumbKey(PeerEngine.Message m,int w,int h)=>selected+"/"+m.From+"/"+m.Id+"/"+m.FileHash+"/"+w+"x"+h;
+    Image? CachedThumbnail(PeerEngine.Message m,string key,int w,int h)
+    {
+        if(m.FileName.Length==0||!PeerEngine.IsImageAttachment(m))return null;
+        return thumbnails.Acquire(key,selected!,()=>TryImageThumbnail(m,w,h));
+    }
     static Image? TryImageThumbnail(byte[] data,int maxWidth,int maxHeight){try{using var stream=new MemoryStream(data);using var source=Image.FromStream(stream);if((long)source.Width*source.Height>32000000)throw new IOException();double scale=Math.Min(1,Math.Min((double)maxWidth/source.Width,(double)maxHeight/source.Height));var result=new Bitmap(Math.Max(1,(int)(source.Width*scale)),Math.Max(1,(int)(source.Height*scale)));using var graphics=Graphics.FromImage(result);graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(source,new Rectangle(0,0,result.Width,result.Height));return result;}catch{return null;}}
     static string FormatSize(long bytes)=>bytes>=1024*1024?$"{bytes/1024.0/1024.0:0.#} MB":$"{bytes/1024.0:0.#} KB";
     static void StyleButtons(Control root){foreach(Control c in root.Controls){if(c is Button b){b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderColor=Color.FromArgb(217,226,239);b.BackColor=Color.White;b.ForeColor=Ink;b.Padding=new Padding(2);b.Cursor=Cursors.Hand;}StyleButtons(c);}}
@@ -323,7 +501,7 @@ sealed class ChatWindow : Form
     void PreviewImage(PeerEngine.Message message){try{PreviewImageCore(engine.ReadAttachment(message),message.FileName);}catch{MessageBox.Show(this,"This attachment cannot be opened as an image. Use Save to export it.","Image preview");}}
     void PreviewImagePath(string path,string name){try{PreviewImageCore(File.ReadAllBytes(path),name);}catch{MessageBox.Show(this,"This file is not a supported image.","Image preview");}}
     void PreviewImageCore(byte[] data,string name){using var bytes=new MemoryStream(data);using var decoded=Image.FromStream(bytes);if((long)decoded.Width*decoded.Height>32000000)throw new IOException();using var picture=new Bitmap(decoded);using var window=new Form{Text=name,Size=new Size(900,700),StartPosition=FormStartPosition.CenterParent,BackColor=Color.FromArgb(20,24,31),KeyPreview=true};window.Controls.Add(new PictureBox{Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,Image=picture,BackColor=window.BackColor});window.KeyDown+=(_,e)=>{if(e.KeyCode==Keys.Escape)window.Close();};window.ShowDialog(this);}
-    void ClearChat(){if(selected==null)return;if(MessageBox.Show(this,"Clear this conversation on this device? Local messages and attachments will be removed and pending sends cancelled. Other devices keep their copies.","Clear conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;try{engine.ClearConversation(selected);drafts.Remove(selected);composer.Clear();ClearPendingAttachment();lastFeed="";Render();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not clear conversation");}}
+    void ClearChat(){if(selected==null)return;if(MessageBox.Show(this,"Clear this conversation on this device? Local messages and attachments will be removed and pending sends cancelled. Other devices keep their copies.","Clear conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;try{engine.ClearConversation(selected);chatViews.Remove(selected);thumbnails.RemoveConversation(selected);drafts.Remove(selected);composer.Clear();ClearPendingAttachment();lastFeed="";Render();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not clear conversation");}}
     void ShowMembers(){var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;MessageBox.Show(this,string.Join("\n",g.Members.Select(id=>engine.DisplayName(id)+(id==engine.Id?" (you)":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People")))+"\n\nEvery pair must verify each other to exchange group messages. Membership is fixed for this group.",g.Name+" · Members");}
     void CreateGroup()
     {

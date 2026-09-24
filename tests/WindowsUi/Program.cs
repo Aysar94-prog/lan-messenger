@@ -125,6 +125,99 @@ class Check
     using(var switchShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(switchShot,new Rectangle(0,0,form.Width,form.Height));switchShot.Save(Path.Combine(root,"windows-switch.png"));}
     Console.WriteLine("PASS: repeated scrolled chat switching keeps rows compact and cards separate");
     Call("RestoreWindow",groupId);engine.ClearConversation(groupId);Call("Render");if(((ComboBox)Field("files")).Items.Count!=0||engine.Messages(groupId).Length!=0)throw new Exception("Cleared UI retained attachments");
+    // ============ T01: pagination, progressive history, arrivals, per-chat cache ============
+    var gateObj=typeof(PeerEngine).GetField("gate",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(engine)!;
+    var store=(List<PeerEngine.Message>)typeof(PeerEngine).GetField("messages",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(engine)!;
+    long nowMs=PeerEngine.Now;
+    void Inject(params PeerEngine.Message[] batch){lock(gateObj)store.AddRange(batch);}
+    IEnumerable<FlowLayoutPanel> AllCards()=>((Control)Field("feed")).Controls.Cast<Control>().OfType<FlowLayoutPanel>();
+    FlowLayoutPanel? CardFor(string text)=>AllCards().FirstOrDefault(c=>TextIn(c).Contains(text));
+    void WheelUp(){var panel=(FlowLayoutPanel)Field("feed");typeof(Control).GetMethod("OnMouseWheel",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(panel,new object[]{new MouseEventArgs(MouseButtons.None,0,30,30,120)});}
+    var paging=new List<PeerEngine.Message>();long pt=nowMs;
+    for(int i=0;i<30;i++){pt-=60_000;paging.Add(new PeerEngine.Message(Guid.NewGuid().ToString(),second.Id,engine.Id,"perf paging text "+i+" with some realistic message content.",pt,"Received"));}
+    Inject(paging.ToArray());
+    ((System.Collections.IDictionary)Field("chatViews")).Remove(second.Id);
+    Call("RestoreWindow",second.Id);Call("Render");((FlowLayoutPanel)Field("feed")).PerformLayout();
+    if(AllCards().Count()!=10)throw new Exception("T01: opening a long chat must render newest 10, saw "+AllCards().Count());
+    if(!TextIn((Control)Field("feed")).Contains("Older messages"))throw new Exception("T01: older-history hint missing on open");
+    if(TextIn((Control)Field("feed")).Contains("perf paging text 0"))throw new Exception("T01: oldest message rendered before any page load");
+    if(!TextIn((Control)AllCards().First()).Contains("perf paging text 20"))throw new Exception("T01: newest-10 window not at the correct offset");
+    Console.WriteLine("PASS: T01 newest-10 open with older-history hint");
+    var feedPanel=(FlowLayoutPanel)Field("feed");
+    feedPanel.AutoScrollPosition=new Point(0,0);WheelUp();await Task.Delay(400);Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=30)throw new Exception("T01: first older page loaded "+AllCards().Count()+" cards");
+    if(!ReferenceEquals(CardFor("perf paging text 20"),AllCards().FirstOrDefault(c=>TextIn(c).Contains("perf paging text 20")))&&AllCards().FirstOrDefault(c=>TextIn(c).Contains("perf paging text 20"))==null)throw new Exception("T01: first visible card lost after page load");
+    Console.WriteLine("PASS: T01 +20 older messages, anchor preserved");
+    feedPanel.AutoScrollPosition=new Point(0,0);WheelUp();await Task.Delay(400);Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=35)throw new Exception("T01: full history shows "+AllCards().Count()+" cards");
+    if(TextIn((Control)Field("feed")).Contains("Older messages"))throw new Exception("T01: hint remained after full history");
+    if(CardFor("perf paging text 0")==null)throw new Exception("T01: oldest message missing after full history");
+    if(TextIn((Control)Field("feed")).Split("perf paging text ").Length-1!=30)throw new Exception("T01: paging rows duplicated or lost");
+    Console.WriteLine("PASS: T01 full history loads without duplicates or loss");
+    var midCard=CardFor("perf paging text 15");
+    Inject(new PeerEngine.Message(Guid.NewGuid().ToString(),second.Id,engine.Id,"perf arrival after history load",nowMs+1000,"Received"));
+    Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=35)throw new Exception("T01: arrival changed window size to "+AllCards().Count());
+    if(CardFor("perf arrival after history load")==null)throw new Exception("T01: new arrival not rendered");
+    if(!ReferenceEquals(midCard,CardFor("perf paging text 15")))throw new Exception("T01: arrival rebuilt visible mid cards");
+    Console.WriteLine("PASS: T01 arrival keeps mid-history cards stable");
+    var scrollBefore=feedPanel.AutoScrollPosition.Y;var maxBefore=feedPanel.VerticalScroll.Maximum;var beforeSet=AllCards().ToArray();
+    Call("RestoreWindow",groupId);Call("Render");feedPanel.PerformLayout();
+    Call("RestoreWindow",second.Id);Call("Render");feedPanel.PerformLayout();
+    var afterSet=AllCards().ToArray();
+    if(beforeSet.Length!=afterSet.Length)throw new Exception("T01: revisit changed card count "+beforeSet.Length+" -> "+afterSet.Length);
+    for(int i=0;i<beforeSet.Length;i++)if(!ReferenceEquals(beforeSet[i],afterSet[i]))throw new Exception("T01: revisit rebuilt card "+i);
+    if(Math.Abs(feedPanel.AutoScrollPosition.Y-scrollBefore)>2)throw new Exception("T01: revisit lost scroll position scroll "+scrollBefore+"->"+feedPanel.AutoScrollPosition.Y+" max "+maxBefore+"->"+feedPanel.VerticalScroll.Maximum+" h "+feedPanel.DisplayRectangle.Height);
+    Console.WriteLine("PASS: T01 chat switch preserves cards, count and scroll");
+    // ============ T02: image cards, cache bounds, eviction safety ============
+    byte[] Photo2(int w,int h,int seed){using var bmp=new Bitmap(w,h);using(var g=Graphics.FromImage(bmp)){g.Clear(Color.FromArgb(30+seed*13%200,40,90,170));g.FillRectangle(Brushes.Orange,20,20,w/2,h/2);g.DrawString("cache "+seed,SystemFonts.DefaultFont,Brushes.White,300,350);}using var ms=new MemoryStream();bmp.Save(ms,System.Drawing.Imaging.ImageFormat.Png);return ms.ToArray();}
+    var imgMessages=new List<PeerEngine.Message>();var imgFiles=new List<(PeerEngine.Message,byte[])>();
+    for(int i=0;i<12;i++){var data=Photo2(1280,800,i);var id=Guid.NewGuid().ToString();var m=new PeerEngine.Message(id,second.Id,engine.Id,"",nowMs+2000+i,"Received","","cache-photo-"+i+".png",data.Length,SecureIdentity.Hash(data));imgMessages.Add(m);imgFiles.Add((m,data));}
+    Inject(imgMessages.ToArray());
+    var storeAtt=typeof(PeerEngine).GetMethod("StoreAttachment",BindingFlags.NonPublic|BindingFlags.Instance)!;
+    await Task.Run(()=>{foreach(var (m,data) in imgFiles)storeAtt.Invoke(engine,new object[]{m,data});});
+    var cacheObj=Field("thumbnails");var cacheType=cacheObj.GetType();var bytesProp=cacheType.GetProperty("Bytes")!;
+    Call("RestoreWindow",second.Id);Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=35)throw new Exception("T02: image window shows "+AllCards().Count()+" cards");
+    if(AllCards().Count(c=>TextIn(c).Contains("cache-photo-"))!=12)throw new Exception("T02: image cards not all rendered");
+    if((long)bytesProp.GetValue(cacheObj)!>17L*1024*1024)throw new Exception("T02: thumbnail bytes over budget with 12 live images");
+    for(int cycle2=0;cycle2<3;cycle2++){
+      Call("RestoreWindow",cycle2%2==0?groupId:second.Id);await Task.Delay(80);Call("Render");feedPanel.PerformLayout();
+      var visible2=AllCards().ToArray();
+      for(int i=0;i<visible2.Length;i++){var card=visible2[i];if(card.Region!=null)throw new Exception("T02: cached card uses a native window region");if(i>0&&card.Top<visible2[i-1].Bottom)throw new Exception("T02: cards overlap after switch");}
+    }
+    if((int)type.GetProperty("CachedChatCount")!.GetValue(form)!>3)throw new Exception("T02: chat cache exceeded 3 chats");
+    if((int)type.GetProperty("CachedCardCount")!.GetValue(form)!>600)throw new Exception("T02: card cache exceeded 600");
+    using(var imgShot=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(imgShot,new Rectangle(0,0,form.Width,form.Height));imgShot.Save(Path.Combine(root,"windows-cache.png"));}
+    Console.WriteLine("PASS: T02 image switches stay within cache bounds and paint cleanly");
+    Call("RestoreWindow",second.Id);engine.ClearConversation(second.Id);Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=0)throw new Exception("T02: cleared image chat retained cards");
+    Call("RestoreWindow",groupId);Call("Render");feedPanel.PerformLayout();
+    Call("RestoreWindow",second.Id);Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=0||!TextIn((Control)Field("feed")).Contains("A fresh start"))throw new Exception("T02: cleared history was not dropped on revisit");
+    ((System.Collections.IDictionary)Field("chatViews")).Remove(second.Id);
+    var reSeed=new List<PeerEngine.Message>();long rt=nowMs+5000;
+    for(int i=0;i<11;i++){rt+=60_000;reSeed.Add(new PeerEngine.Message(Guid.NewGuid().ToString(),second.Id,engine.Id,"perf fresh "+i+" after clear.",rt,"Received"));}
+    Inject(reSeed.ToArray());Call("Render");feedPanel.PerformLayout();
+    if(AllCards().Count()!=10)throw new Exception("T02: fresh view after clear shows "+AllCards().Count()+" cards, expected 10");
+    if(!TextIn((Control)Field("feed")).Contains("Older messages"))throw new Exception("T02: fresh view missing older-history hint");
+    Console.WriteLine("PASS: T02 clear is safe on revisit; fresh view re-paginates at 10");
+    // White-box thumbnail cache checks: repeat key hits, budget pressure retires, release frees bytes.
+    var acquire=cacheType.GetMethod("Acquire")!;var release=cacheType.GetMethod("Release")!;
+    var hitsProp=cacheType.GetField("Hits")!;var retProp=cacheType.GetField("Retirements")!;
+    var h0=(long)hitsProp.GetValue(cacheObj)!;
+    var imgA=(Image)acquire.Invoke(cacheObj,new object[]{"t2-key","t2conv",(Func<Image?>)(()=>new Bitmap(420,320))})!;
+    var imgB=(Image)acquire.Invoke(cacheObj,new object[]{"t2-key","t2conv",(Func<Image?>)(()=>new Bitmap(420,320))})!;
+    if((long)hitsProp.GetValue(cacheObj)!<=h0)throw new Exception("T02: repeated key must hit the thumbnail cache");
+    release.Invoke(cacheObj,new object[]{"t2-key"});release.Invoke(cacheObj,new object[]{"t2-key"});imgA.Dispose();imgB.Dispose();
+    Console.WriteLine("PASS: T02 white-box thumbnail cache hits on repeat key");
+    long r0=(long)retProp.GetValue(cacheObj)!;var keys=new List<string>();long beforeP=0;
+    for(int i=0;i<40;i++){var key="t2-pressure-"+i;keys.Add(key);var img=(Image)acquire.Invoke(cacheObj,new object[]{"t2-pressure-"+i,"t2conv",(Func<Image?>)(()=>new Bitmap(420,320))})!;img.Dispose();}
+    if((long)retProp.GetValue(cacheObj)!<=r0)throw new Exception("T02: 40 thumbnails must exceed the 16 MiB budget and retire entries");
+    beforeP=(long)bytesProp.GetValue(cacheObj)!;
+    foreach(var key in keys)release.Invoke(cacheObj,new object[]{key});
+    if((long)bytesProp.GetValue(cacheObj)!>beforeP)throw new Exception("T02: releasing retired thumbnails must free bytes");
+    Console.WriteLine("PASS: T02 white-box budget retirement releases bytes");
    }catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
    finally{type.GetField("exiting",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,true);form.Close();if(engine.Running||trayVisible())Environment.ExitCode=1;Application.ExitThread();}
   bool trayVisible()=>((NotifyIcon)Field("tray")).Visible;
