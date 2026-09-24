@@ -1,47 +1,47 @@
-# خطة Windows: آخر 10 رسائل وكاش التنقل بين المحادثات
+# Windows plan: newest 10 messages, progressive history, and chat-switch cache
 
-**النوع:** خطة فقط. **تاريخ الخطة:** 2026-09-25. **نطاق الكود عند التنفيذ:** Windows فقط. **الحالة العامة:** لم يبدأ التنفيذ. **نقطة البداية:** Windows 0.8.8، الكوميت `98198bc`.
+**Type:** plan only. **Prepared:** 2026-09-25. **Implementation scope:** Windows. **Overall status:** Not started. **Code baseline:** Windows 0.8.8 at commit `98198bc`. No product code was changed for this plan.
 
-## النتيجة المطلوبة
+## Desired result
 
-عند فتح محادثة على ويندوز تظهر أحدث 10 رسائل بسرعة، ويضاف 20 أقدم كلما وصل المستخدم إلى أعلى القائمة. عند الانتقال بين المحادثات والعودة تُحفظ حالة العرض والتمرير، ويُعاد استعمال صور المحادثة المصغرة والبطاقات الحديثة من كاش محدود الذاكرة لتقليل القراءة وفك الصور وإعادة بناء عناصر الواجهة.
+Opening a Windows conversation shows the newest 10 messages promptly. Scrolling to the top adds 20 older messages per step. Switching away and back preserves the visible count and scroll position. A bounded cache reuses decoded attachment thumbnails and recently displayed cards so switching does less disk reading, image decoding, and control construction.
 
-## ما وُجد في الكود قبل البدء
+## Current code observations
 
-- `ChatWindow.RenderCore` في `windows/Program.cs` يطلب `engine.Messages(selected)` ثم يبني توقيعًا لكل الرسائل، وينشئ بطاقات المحادثة كلها. عند تغيير المحادثة يستدعي `ClearFeed` ويتخلص من البطاقات.
-- `cards` يحفظ بطاقات المحادثة الحالية فقط. `avatarCache` مخصص لصور الحساب، وليس صور المرفقات.
-- `TryImageThumbnail(Message, ...)` يقرأ محتوى المرفق ويفك الصورة كلما أُعيد بناء بطاقتها، ويحاول ذلك حتى مع ملف غير صورة ضمن حد حجم المعاينة.
-- `PeerEngine.Messages` في `windows/PeerEngine.cs` يستخرج القائمة من الرسائل الموجودة في ذاكرة المحرك. تقسيم بطاقات الواجهة وحده لا يجعل استعلام البيانات يعالج 10 رسائل فقط.
-- `BufferedFeed` و`MessageBubble` أصلحا الرسم في 0.8.8؛ يجب المحافظة على هذا السلوك عند تغيير التمرير أو نقل البطاقات بين كاش العرض والواجهة.
+- `ChatWindow.RenderCore` in `windows/Program.cs` calls `engine.Messages(selected)`, builds a signature across every message, and constructs cards for the full selected conversation. On chat switch, `ClearFeed` disposes the cards.
+- `cards` only retains the current chat. `avatarCache` is for profile avatars, not attachment thumbnails.
+- `TryImageThumbnail(Message, ...)` reads and decodes available attachments again when their cards are rebuilt; it also tries small non-image files.
+- `PeerEngine.Messages` in `windows/PeerEngine.cs` scans engine-held messages. Rendering 10 cards alone does not make the engine query inspect only 10 records.
+- `BufferedFeed` and `MessageBubble` contain the 0.8.8 repaint fix. Scrolling and cache changes must preserve that behavior.
 
-## المهام
+## Work items
 
-| الرمز | المهمة الصغيرة | الحالة | الاعتماد | ملاحظات ومعيار الانتهاء |
+| ID | Small task | Status | Depends on | Notes and completion criterion |
 |---|---|---|---|---|
-| W01 | قياس خط الأساس | لم تبدأ | — | أنشئ بيانات اختبار فيها محادثات قصيرة وطويلة وصور حقيقية؛ قِس زمن أول فتح، الرجوع لمحادثة، وعدد البطاقات/مرات فك الصور. سجّل النتائج قبل التعديل. اختبار موجه للأداء، دون تغيير المنتج. |
-| W02 | حالة عرض مستقلة لكل محادثة | لم تبدأ | W01 | في `ChatWindow` خزّن `VisibleCount` (يبدأ 10)، موضع التمرير، وآخر استخدام لكل محادثة. التبديل لا يعيد العدد إلى 10 إذا كان المستخدم حمّل الأقدم. المسح/انتهاء الرسائل يلغي الحالة ذات الصلة. |
-| W03 | عرض أحدث 10 فقط | لم تبدأ | W02 | غيّر `RenderCore` ليُنشئ بطاقات أحدث 10 رسائل أول مرة، مع إبقاء ترتيب الرسائل والمجموعات وحالات التسليم/القراءة. وصول رسالة جديدة يجعلها ظاهرة من دون نسخ بطاقات كل التاريخ. لا تبنِ بطاقات خارج النافذة المرئية. |
-| W04 | تحميل 20 أقدم تدريجيًا | لم تبدأ | W03 | عند الوصول لأعلى القائمة زد `VisibleCount` بمقدار 20 مرة واحدة لكل وصول؛ حافظ على أول رسالة مرئية أو إزاحة التمرير حتى لا تقفز الواجهة. لا تُحمّل المزيد عند تمرير/تحديث متكرر للموضع نفسه. بيّن للمستخدم إمكان الوصول للأقدم إذا كان هناك تاريخ مخفي. |
-| W05 | كاش صور المرفقات | لم تبدأ | W03 | كاش LRU محدود، مبدئيًا 16 MiB، مفتاحه هوية الرسالة وبصمة محتواها وحجم المعاينة. لا تفك ملفات غير صور. تخلّص من كائنات Bitmap عند الإخلاء أو مسح المحادثة؛ لا تُتلف صورة ما زالت معروضة في بطاقة. حافظ على حد المعاينة الموجود. |
-| W06 | كاش التنقل للبطاقات وحالة التمرير | لم تبدأ | W04, W05 | احتفظ ببطاقات آخر محادثتين أو ثلاث محادثات ضمن حد واضح للذاكرة/عدد البطاقات. عند الرجوع بسرعة استعمل البطاقات الصالحة بدل إنشائها مجددًا؛ حدّث حالة/تقدم الرسائل التي تغيّرت. عند تغيير عرض النافذة أو DPI أعد تخطيط البطاقات، وعند الإخلاء حررها. إذا كانت محادثة قديمة ضخمة فلا يبقى تاريخها الكامل في كاش العناصر؛ تبقى `VisibleCount` وحالة التمرير لإعادة بنائها عند الحاجة. |
-| W07 | مراجعة كلفة استعلام الرسائل | لم تبدأ | W03, W06 | أعد قياس الأداء. إن بقي `PeerEngine.Messages` أو حساب `LastActivity` يفحص كل السجل ويهيمن على زمن الفتح، أضف واجهة عرض حديثة/فهرسًا مناسبًا داخل محرك ويندوز مع بقاء قراءة التاريخ الكامل متاحة. سجّل سبب هذا التغيير ونتيجته؛ لا تغيّر بروتوكول الرسائل. |
-| T01 | اختبارات وظيفية | لم تبدأ | W03–W06 | في `tests/WindowsUi`: 0/1/10/11/عدد كبير من الرسائل، تحميل الأقدم، عدم تكرار/سقوط رسالة عند وصول جديد، حفظ موضع/عدد الرسائل عند التنقل، المسح وانتهاء الرسائل، والنقر على الصور والملفات. اختبر صورتين على الأقل بحجم واقعي. |
-| T02 | اختبارات الرسم والذاكرة | لم تبدأ | W05, W06 | شغّل التمرير وتبديل المحادثات وتغيير حجم النافذة مرارًا؛ افحص عدم تداخل البطاقات أو ظهور مساحات بيضاء، وعدم الاحتفاظ بكائنات الصور/البطاقات بعد الإخلاء. قِس الذاكرة مقابل حد الكاش. |
-| T03 | قياس بعد التعديل وانحدار وظيفي | لم تبدأ | W07, T01, T02 | قارن فتح المحادثة والرجوع إليها بخط الأساس W01. شغّل بناء ويندوز واختبارات واجهته والاختبارات المشتركة ذات الصلة بالرسائل والصور؛ تحقق من بقاء تنزيل الملفات والتقدم والإشعارات والقراءة. لا تنسب تحسنًا رقميًا دون قياس. |
-| R01 | إصدار وتوثيق ويندوز | لم تبدأ | T03 | حدّث `windows/STATUS.md` و`PROJECT_STATUS.md` بنتيجة كل مهمة؛ ارفع رقم إصدار ويندوز فقط، ووفّر ZIP وملاحظات الإصدار عند اكتمال التحقق. احفظ التغييرات محليًا ما لم يُطلب النشر. |
+| W01 | Establish baseline | Not started | - | Build representative short/long/photo chats. Measure first-open and revisit latency, number of cards built, and attachment decode counts before changing code. |
+| W02 | Per-chat view state | Not started | W01 | Store VisibleCount (initially 10), scroll position, and last use per conversation in ChatWindow. Switching back preserves loaded history. Clear/expiry removes affected state. |
+| W03 | Render newest 10 | Not started | W02 | Build only the newest 10 cards on first open; preserve chronological/group/status behavior. New messages appear without rebuilding hidden history. |
+| W04 | Load older messages | Not started | W03 | Add 20 older cards on reaching the top; preserve the first visible message/scroll anchor so the view does not jump. One top arrival must not repeatedly load pages. Show that older history is available. |
+| W05 | Attachment thumbnail cache | Not started | W03 | Add a bounded LRU, initially 16 MiB, keyed by sender/message/hash/preview dimensions. Skip non-image files. Dispose Bitmaps safely on eviction/clear without disposing an image still displayed by a card. Preserve preview caps. |
+| W06 | Recent-chat card/scroll cache | Not started | W04, W05 | Retain a bounded set of cards for the latest 2-3 chats, with an explicit card/memory cap. Revisit reuses valid cards and updates changed status/progress. Width/DPI changes reflow or invalidate cards; eviction disposes them. Long history may rebuild after eviction while VisibleCount/scroll state persists. |
+| W07 | Review message-query cost | Not started | W03, W06 | Re-measure. If PeerEngine.Messages or LastActivity scanning dominates open time, add an appropriate recent-message API/index on Windows, retaining full-history access. Record evidence and outcome. No wire-protocol change. |
+| T01 | Functional UI tests | Not started | W03-W06 | In tests/WindowsUi cover 0/1/10/11/many messages, older-page loading, arrivals without duplicates/loss, chat-switch state, clear/expiry, and image/file actions with realistic images. |
+| T02 | Paint and memory tests | Not started | W05, W06 | Repeat wheel/programmatic scroll, chat switches, and resize. Check card geometry/white overlays and release of Bitmap/card resources after eviction. Measure against cache bounds. |
+| T03 | After-change measurement and regression | Not started | W07, T01, T02 | Compare first-open and revisit measurements with W01. Run Windows build, UI tests, and relevant shared message/image regressions. Verify file progress, notifications, and read receipts. Report numbers only when measured. |
+| R01 | Windows release and status | Not started | T03 | Update windows/STATUS.md and PROJECT_STATUS.md with actual results. Bump Windows version only and package ZIP/release notes after checks pass. Commit locally unless asked to push. |
 
-## قرارات تنفيذية مبدئية
+## Initial implementation decisions
 
-- الحد الأولي 10 رسائل، والدفعة التالية 20 رسالة، كما طلب المستخدم وكما يعمل عرض أندرويد.
-- حالة كل محادثة تبقى طوال تشغيل التطبيق. كاش الصور والبطاقات محدود الذاكرة وقابل للإخلاء؛ لا يحتاج تغيير صيغة التخزين على القرص.
-- لا يُنقل كود أندرويد حرفيًا إلى WinForms؛ تُحافظ واجهة ويندوز على إصلاح الرسم في 0.8.8 وعلى تحديث البطاقات غير المتغيرة من دون وميض.
-- يبدأ T01 وT02 مع تصميم W03/W05 لكي يكتشفا أخطاء التمرير والتخلص من الصور. لا تُعتبر المهمة مكتملة باجتياز بناء المشروع فقط.
-- توجد مخاطرة بأن إبقاء عناصر WinForms مربوطة بوالد قديم يسبب رسمًا خاطئًا أو تسرب موارد؛ يجب إثبات النقل/الإخلاء في اختبار الواجهة. ومخاطرة ثانية أن تقسيم الواجهة لا يعالج كلفة `Messages`؛ يقيسها W07 ويقرر على أساس النتيجة.
+- Start with 10 visible messages and add 20 at a time, matching the requested behavior.
+- Per-chat view state lasts for the app session. Thumbnail/card caches are bounded and evictable; no disk-storage migration is expected.
+- Adapt the approach to WinForms rather than copying Android UI code. Keep the 0.8.8 repaint fix and unchanged-card updates.
+- Design T01/T02 alongside W03/W05. A successful compile alone does not complete a task.
+- Caching live WinForms controls risks stale parents, paint artifacts, or resource leaks. W06/T02 must demonstrate safe attach, detach, and eviction. UI pagination alone may leave engine scanning cost; W07 decides from measurements.
 
-## سجل تحديث الحالة
+## Status log
 
-| التاريخ | التغيير | الحالة |
+| Date | Change | Status |
 |---|---|---|
-| 2026-09-25 | أُعدّت الخطة وقُسمت المهام بعد مراجعة مسار العرض الحالي. | كل المهام: لم تبدأ. لم يتغير كود التطبيق ولم تُشغّل اختبارات تنفيذ. |
+| 2026-09-25 | Planned after reading current Windows rendering and test paths. | All implementation and test tasks Not started. No product code changed and no implementation tests run. |
 
-عند إسناد جزء إلى أي إيجنت: اذكر رموزه من الجدول، حدّث حالته إلى «قيد العمل»، ثم إلى «انتهت» فقط بعد تحقق معيار الانتهاء واكتب القياسات أو سبب التعذر في هذا السجل.
+When assigning work to another agent, specify item IDs from this table. Change status to In progress when starting and Complete only after the item's criterion is verified. Record measurements, test results, or blockers here.

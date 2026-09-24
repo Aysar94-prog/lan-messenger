@@ -1,41 +1,40 @@
-# سجل Windows
+# Windows status
 
-آخر مراجعة: 2026-09-25. الإصدار: **0.8.8**. [المقارنة المشتركة](../PROJECT_STATUS.md).
+Reviewed 2026-09-25. Release: **0.8.8**. See the [platform comparison](../PROJECT_STATUS.md).
 
-## أين وصلنا؟
+## Implemented
 
-- مميزات الرسائل والمجموعات والتحقق والحضور الأزرق/الرمادي والمعاينة قبل Send موجودة.
-- الصور العادية تُنزّل تلقائيًا وتظهر داخل المحادثة ضمن حدود المعاينة.
-- الإصدار 0.8.7 أضاف اختيار مكان الحفظ قبل التنزيل، كتابة الملف مباشرة هناك، فتحه من نفس المكان، واستئناف 256 KiB. لا توجد نسخة كاملة إضافية للتحميل اليدوي الجديد.
-- Fast يستخدم محتوى غير مشفر عبر TCP منفصل؛ اتصال التحكم والتحقق من هوية الطرفين يبقى TLS. الملفات العادية تُنقل عبر TLS.
-- الإصدار 0.8.8 عالج قصّ ورسم بطاقات الصور أثناء التمرير والتبديل؛ يحتفظ بالبطاقات غير المتغيرة عند وصول تحديثات.
-- الإغلاق يخفي التطبيق قرب الساعة؛ Exit يوقفه. بيانات المستخدم في `%LOCALAPPDATA%\LanMessenger`.
+- Messaging, groups, device verification, blue/gray presence, attachment draft before Send, and local chat clear.
+- Automatic inline ordinary photos within preview/codec limits.
+- Since 0.8.7: choose destination before manual Download, stream directly to one receiver copy, open the saved file, and resume at 256 KiB boundaries.
+- Fast file payload is plaintext on a separate TCP data connection. Authorization and device verification remain on TLS control; ordinary file payloads use TLS.
+- Since 0.8.8: reduced photo/card repaint artifacts during scrolling and chat switching. Unchanged cards stay mounted during status updates.
+- Background receipt while hidden in the Windows tray; Exit stops the process. Data is at `%LOCALAPPDATA%/LanMessenger`.
 
-## ما لم يُنقل من أندرويد؟
+## Not mirrored from Android
 
-- عرض آخر 10 رسائل ثم الأقدم تدريجيًا: غير منفذ، `RenderCore` يبني كل المحادثة.
-- كاش LRU لصور المرفقات بين المحادثات: غير منفذ. `avatarCache` للصور الشخصية فقط؛ `cards` للمحادثة الحالية ويُمسح عند التبديل.
-- تجنب محاولة تفسير الملفات غير الصورية كصور: غير مطبق في `TryImageThumbnail(Message, ...)`؛ يحاول القراءة ضمن حد الحجم ثم يتجاهل فشل فك الصورة.
-- حصة الرفع اليومية وحدود 30/20/10 MiB/s وعرض استهلاك اليوم: غير منفذة، لأن اعتمادها السابق كان لأندرويد فقط.
-- كاميرا مباشرة: غير موجودة، وليست ضمن طلب الكاميرا السابق المخصص لأندرويد.
-- مسار الكاش المشفر القديم للصور: ما زال FETCH بأجزاء 100 MiB، وليس FETCHSTREAM الخاص بأندرويد. التنزيل اليدوي الجديد منفصل ومطبق هنا.
+- Newest-10-message initial UI and progressive older-message loading are not implemented. `RenderCore` constructs cards for the full selected conversation.
+- No attachment-thumbnail LRU cache across chats. `avatarCache` stores avatars only; `cards` represents the current chat and is cleared on switch.
+- `TryImageThumbnail(Message, ...)` still attempts content read/decode for a small non-image file and ignores decode failure.
+- Android's daily upload accounting, 30/20/10 MiB/s tiers, and profile usage display are absent by the earlier Android-only scope.
+- No built-in camera capture; users can attach an already saved image.
+- Legacy encrypted auto-image cache still uses FETCH and 100 MiB parts rather than Android FETCHSTREAM. The new manual direct path is separate.
+- Complete UI trees for multiple conversations are not cached. Engine message records in memory do not mean the UI is cached.
 
-## ما يحتاج تحققًا؟
+## Verification and open checks
 
-- قبول المستخدم لإصلاح الرسم 0.8.8 على جهازه ومقياس عرض الشاشة لديه.
-- قياس فتح محادثة كبيرة وسرعة نقل حقيقية على LAN؛ نتائج loopback ليست ضمانًا لسرعة الشبكة.
-- حفظ واجهات محادثات متعددة كاملة غير منفذ؛ لا نسجله كميزة مكتملة لمجرد وجود الرسائل في الذاكرة.
+- Windows 0.8.8 built and passed native UI tests with a 640x480 colored image, repeated wheel/programmatic scrolling, chat switching, geometry checks, automatic images, destination cancel/open, notifications, and seen receipts. The result screenshot was inspected.
+- The user still needs to confirm the repaint fix on the affected PC and monitor/DPI setup.
+- Large-chat opening latency and real LAN throughput need measurement; loopback results are not Wi-Fi guarantees.
 
-## أدلة التنفيذ والتحقق
+## Handoff pointers
 
-- الواجهة: `Program.cs`، خصوصًا `BufferedFeed` و`MessageBubble` و`RenderCore` و`FileAction`.
-- النقل اليدوي: `DirectDownloads.cs`. المسار القديم والصور التلقائية: `Transfers.cs`.
-- اختبارات النقل: `tests/direct_downloads.py` و`tests/transfers.py` و`tests/large_transfer.py` من جذر المستودع.
-- اختبارات الواجهة بعد آخر إصلاح نجحت؛ استُخدمت صورة 640×480 والتمرير بالعجلة وبرمجيًا والتبديل المتكرر بين المحادثات. فُحصت صورة النتيجة بصريًا.
-- آثار الاختبار: `D:\LAN-Messenger\outputs\.build\windows088-tests`.
-- الحزمة: `D:\LAN-Messenger\outputs\LanMessenger-Windows-0.8.8.zip`؛ تتطلب .NET 9 Desktop Runtime.
-- آخر تعديل كود خاص بالمنصة: `07f2e54`؛ النقل المشترك قبله: `7d9d99c`. محفوظان محليًا.
+- UI: `Program.cs`, especially `BufferedFeed`, `MessageBubble`, `RenderCore`, and `FileAction`.
+- New manual transfer: `DirectDownloads.cs`. Legacy/auto-photo transfer: `Transfers.cs`.
+- Tests from repository root: `tests/WindowsUi`, `tests/direct_downloads.py`, `tests/transfers.py`, `tests/large_transfer.py`.
+- Results: `D:/LAN-Messenger/outputs/.build/windows088-tests`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.8.zip` (requires .NET 9 Desktop Runtime).
+- Last Windows code commit: `07f2e54`; preceding shared-transfer commit: `7d9d99c`. Both are local.
 
-## الخطوة التالية المقترحة
+## Next planned work
 
-خطة تفصيلية جاهزة لـ[آخر 10 رسائل وتحميل الأقدم وكاش التنقل](PLAN-CHAT-PERFORMANCE.md). كل المهام فيها بحالة «لم تبدأ». لا يُعد وجود الخطة تنفيذًا للميزة.
+[Windows chat pagination and cache plan](PLAN-CHAT-PERFORMANCE.md). Every implementation and test task is **Not started**. The plan does not mean the feature has been implemented.

@@ -1,65 +1,63 @@
-# حالة المشروع والمقارنة بين المنصتين
+# LAN Messenger project status and platform comparison
 
-آخر مراجعة: 2026-09-25، بناءً على الكود حتى الكوميت `07f2e54`، وليس على تساوي أرقام الإصدارات.
+Reviewed 2026-09-25 against source at commit 07f2e54. Do not infer feature parity from version numbers.
 
-## تنظيم العمل المعتمد
+## Working arrangement
 
-- مستودع واحد: `D:\LAN-Messenger\source`، وفرع تطوير مشترك حاليًا: `master`.
-- [سجل ويندوز](windows/STATUS.md): الميزات، النواقص، الاختبارات والخطوة التالية للكمبيوتر.
-- [سجل أندرويد](android/STATUS.md): الميزات، النواقص، الاختبارات والخطوة التالية للهاتف.
-- `HANDOFF.md` تاريخ مشترك للتغييرات؛ السجلان أعلاه هما مرجع الحالة الحالية لكل منصة.
-- المخرجات تبقى في `D:\LAN-Messenger\outputs`، مع اسم المنصة ورقم الإصدار. لا ننشئ نسخة سورس أخرى.
-- كل مهمة جديدة تُحدّد: Windows أو Android أو Both. بعد التنفيذ يُحدّث سجل المنصة المعنية وهذه المقارنة إذا تغيّر التوافق.
-- تغيير واجهة منصة لا يفرض إصدارًا جديدًا للأخرى. تعديل بروتوكول مشترك يتطلب مراجعة المستقبل والمرسل واختبار الاتجاهين.
-- لا تعتبر ميزة منقولة للمنصة الثانية لمجرد اشتراك رقم الإصدار. نفصل بين وجودها في الكود ونجاح الاختبار وقبول المستخدم على الجهاز الفعلي.
+- One repository at `D:/LAN-Messenger/source` and one shared development branch, currently `master`.
+- [Windows status](windows/STATUS.md), [Android status](android/STATUS.md), and this comparison are the current platform records. `HANDOFF.md` is historical context.
+- Releases and build/test output live in `D:/LAN-Messenger/outputs`. Do not duplicate the source tree.
+- Label new work Windows, Android, or Both. Update the affected status and this comparison when behavior or compatibility changes.
+- A platform UI change does not force a release on the other platform. A shared protocol change needs review and interoperability tests on both.
+- Separate implemented behavior, automated verification, and acceptance on a real device.
+- For new requests, plan first. Do not implement or build a release until the user explicitly asks to start.
 
-## الإصدارات الحالية
+## Current releases
 
-| المنصة | آخر حزمة | آخر تغيير | مستوى التحقق |
+| Platform | Release | Latest change | Verification |
 |---|---|---|---|
-| Windows | 0.8.8 | إصلاح رسم الصور والبطاقات أثناء التمرير والتبديل | بناء واختبارات واجهة وصورة اختبار؛ ننتظر تأكيد المستخدم على الكمبيوتر الذي أظهر الخلل |
-| Android | 0.8.7 / versionCode 21 | الحفظ في وجهة يختارها المستخدم، الفتح، ونقل Fast دون تشفير المحتوى | APK موقّع واختبارات المحرك؛ نافذة الحفظ والفتح والسرعة على الهاتف الفعلي تحتاج تجربة |
+| Windows | 0.8.8 | Photo/card repaint fix during scroll and chat switching | Build and native UI tests passed; user confirmation on the affected PC is pending |
+| Android | 0.8.7, versionCode 21 | Chosen download destination, open downloaded file, plaintext Fast payload | Signed APK and engine tests passed; physical SAF/viewer/Wi-Fi checks pending |
 
-Windows 0.8.8 متوافق مع Android 0.8.7. ميزة التنزيل المباشر الجديدة تتطلب 0.8.7 أو أحدث على الطرفين.
+Windows 0.8.8 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
 
-## جدول المميزات
+## Feature comparison
 
-| الميزة | Windows | Android |
+| Feature | Windows | Android |
 |---|---|---|
-| اكتشاف الأجهزة والتحقق من الهوية والرسائل المؤجلة وحالة التسليم/القراءة | موجودة | موجودة |
-| مجموعات، صور حساب، عدّاد غير المقروء | موجودة | موجودة |
-| مسح المحادثة محليًا مع إبقاء جهة الاتصال/المجموعة | موجود؛ لا يحذف الملفات المحفوظة في وجهة المستخدم | موجود؛ نفس السلوك |
-| أزرق للمتصل ورمادي لغير المتصل | موجود | موجود |
-| معاينة المرفق ثم الضغط على Send | موجود | موجود |
-| صور عادية تظهر تلقائيًا داخل المحادثة | موجودة ضمن حدود المعاينة والصيغ المدعومة | موجودة ضمن حدود المعاينة والصيغ المدعومة |
-| ملفات عادية حتى 1 GiB | موجودة | موجودة |
-| Fast للملفات الكبيرة حتى 1 TiB حسب حد الكود | موجود | موجود |
-| Download يطلب مكان الحفظ؛ نسخة استقبال واحدة؛ Open يفتح الملف | موجود للتحميل اليدوي | موجود للتحميل اليدوي؛ يلزم موفر ملفات محلي يدعم الاستئناف |
-| Fast: محتوى الملف دون تشفير، والتحقق عبر اتصال تحكم TLS | موجود | موجود |
-| استئناف التنزيل اليدوي من حدود 256 KiB | موجود | موجود |
-| التشغيل بالخلفية | إخفاء قرب الساعة؛ Exit يوقف التطبيق | خدمة foreground؛ يخضع لقيود النظام والبطارية |
-| الكاميرا المباشرة | غير موجودة؛ يمكن إرفاق صورة محفوظة | موجودة |
-| أول عرض لآخر 10 رسائل ثم تحميل الأقدم تدريجيًا | غير موجود؛ يبني بطاقات كل رسائل المحادثة | موجود في العرض: 10 ثم 20 إضافية عند الصعود |
-| كاش صور مصغرة للمحادثات عند التنقل | لا يوجد كاش مماثل؛ يوجد كاش صور الحساب وبطاقات المحادثة الحالية | LRU بحجم 16 MiB طوال حياة الـ Activity |
-| الاحتفاظ ببطاقات المحادثة الحالية عند تحديث الحالة | موجود؛ يعيد استخدام البطاقات غير المتغيرة | يعيد بناء الجزء المرئي عند تغير توقيعه |
-| حفظ واجهات عدة محادثات كاملة في الذاكرة عند التنقل | غير موجود؛ التبديل يعيد بناء البطاقات | غير موجود؛ تبقى بيانات الرسائل وكاش الصور، لكن الواجهة تُبنى مجددًا |
-| حدود رفع يومية: 2 / 5 / 10 GiB ثم 30 / 20 / 10 MiB/s | غير منفذة، وفق النطاق السابق | منفذة؛ حتى 2 GiB السرعة مفتوحة |
-| سياسة شاملة لمكافحة إغراق الرسائل والاتصالات | لم تُنفذ سياسة شاملة؛ توجد قيود اتصال ونقل أساسية | لم تُنفذ سياسة شاملة؛ توجد القيود الأساسية وحصة الرفع اليومية |
+| Discovery, verification, queued messages, delivery/read state | Implemented | Implemented |
+| Groups, avatars, unread count | Implemented | Implemented |
+| Clear chat locally while retaining contact/group and user-saved file | Implemented | Implemented |
+| Blue online / gray offline presence | Implemented | Implemented |
+| Attachment draft followed by explicit Send | Implemented | Implemented |
+| Automatic inline ordinary photos | Implemented within preview/codec limits | Implemented within preview/codec limits |
+| Ordinary attachments up to 1 GiB; Fast offers up to 1 TiB | Implemented | Implemented |
+| Manual Download asks destination, writes one receiver copy, Open launches it | Implemented | Implemented; destination provider must support seeking |
+| Fast payload plaintext with authenticated TLS control | Implemented | Implemented |
+| Manual download resume at 256 KiB boundaries | Implemented | Implemented |
+| Background operation | Tray process until Exit | Foreground service subject to OS/battery limits |
+| Built-in camera capture | Not implemented | Implemented |
+| Initially show newest 10 messages, load 20 older on upward scroll | Not implemented | Implemented at UI level |
+| Attachment-thumbnail cache across chat changes | Not implemented; avatar cache and current-chat card reuse only | 16 MiB Activity LRU cache |
+| Retain unchanged cards on status updates | Implemented | Visible cards are rebuilt when the view signature changes |
+| Keep complete UI trees for multiple active chats | Not implemented | Not implemented |
+| Daily aggregate upload tiers: unlimited below 2 GiB, then 30/20/10 MiB/s at 2/5/10 GiB | Not implemented by earlier Android-only scope | Implemented |
+| Comprehensive anti-flood policy | Not implemented beyond basic connection/transfer limits | Not implemented beyond basic limits and daily upload policy |
 
-الصور العادية التلقائية استثناء من اختيار وجهة الحفظ: تستخدم كاشًا خاصًا بالتطبيق. صور Fast تتبع التنزيل اليدوي، وليست تنزيلًا تلقائيًا مشفرًا.
+Automatic ordinary images are the exception to destination selection and use an app-private cache. Fast image offers remain manual.
 
-## حدود مهمة في موضوع السرعة والكاش
+## Performance and compatibility limits
 
-بيانات الرسائل موجودة في ذاكرة محرك التطبيق على المنصتين. عرض آخر 10 رسائل على أندرويد يقلل بناء عناصر الواجهة، لكنه لا يحوّل التخزين إلى قاعدة بيانات بتحميل 10 سجلات فقط؛ `messages()` ما زالت تفحص بيانات المحادثة. لا يوجد تحسين شامل مكتمل لاستعلام «فقط الجديد» لكل مسارات العرض والتخزين.
+Message records are resident in each engine's memory. Android's 10-message improvement limits UI construction, but `messages()` still scans engine-held records; it is not a disk query for only 10 records. There is no fully implemented "ask only for new records" path across all UI/storage flows.
 
-مسار الصور التلقائية القديم ليس متطابقًا: أندرويد يدعم FETCHSTREAM والاستئناف المشفر 256 KiB؛ ويندوز يستخدم FETCH وأجزاء 100 MiB في الكاش القديم. هذا مختلف عن التنزيل اليدوي الجديد FETCHDIRECT الذي يعمل على الاثنين.
+The automatic-photo legacy paths differ: Android has encrypted FETCHSTREAM with 256 KiB resume, while Windows uses FETCH with 100 MiB cached segments. The new manual FETCHDIRECT path works on both.
 
-## ترتيب العمل المقترح، وليس ميزات منفذة
+## Proposed work, not implemented
 
-1. تأكيد إصلاح رسم Windows 0.8.8 على جهاز المستخدم.
-2. Windows: عرض آخر 10 رسائل، تحميل الأقدم تدريجيًا، وكاش صور مصغرة؛ تجنب محاولة فك صور الملفات غير الصورية.
-3. مراجعة حفظ واجهات المحادثات النشطة والتحديث حسب التغييرات على المنصتين، بقياسات قبل/بعد.
-4. نقل سياسة حدود الرفع إلى ويندوز فقط إذا توسّع النطاق المعتمد؛ غيابها الحالي مقصود وليس فقدانًا لتعديل سابق.
-5. تجربة أندرويد الفعلية: اختيار الوجهة، Pause/Resume، الفتح، الخلفية وسرعة Wi-Fi.
+1. Obtain user acceptance of the Windows 0.8.8 repaint fix on the affected PC.
+2. Follow [the Windows pagination/cache plan](windows/PLAN-CHAT-PERFORMANCE.md): newest 10 messages, progressive history, bounded thumbnail and chat-view caches.
+3. Measure and consider retention/update of active chat UI on both platforms.
+4. Add Windows upload tiers only if the user expands the previously Android-only scope.
+5. Validate Android destination choice, pause/resume, Open, background operation, and throughput on physical phones.
 
-المستودع مرتبط بـ GitHub. آخر تغييرات الإصدارين محفوظة محليًا ولم تُرفع في هذه الجلسات. فحص الفروع البعيدة كان من المراجع المحلية؛ لم يُجرَ fetch لتدقيق حالة الخادم.
+The repository has a GitHub origin. Recent release commits are local; no push was made for those releases. Remote refs were not refreshed for this status audit.

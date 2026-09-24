@@ -1,43 +1,36 @@
-# سجل Android
+# Android status
 
-آخر مراجعة: 2026-09-25. الإصدار: **0.8.7**، `versionCode=21`. [المقارنة المشتركة](../PROJECT_STATUS.md).
+Reviewed 2026-09-25. Release: **0.8.7**, versionCode 21. See the [platform comparison](../PROJECT_STATUS.md).
 
-## المنفذ
+## Implemented
 
-- الرسائل والمجموعات والتحقق والحضور الأزرق/الرمادي والمعاينة قبل Send والمسح المحلي.
-- صور عادية تلقائية داخل المحادثة، وكاميرا مباشرة مع معاينة قبل الإرسال.
-- عرض آخر 10 رسائل أولًا ثم 20 أقدم عند الصعود، وكاش صور مصغرة LRU بحجم 16 MiB في MainActivity.
-- حدود رفع يومية مجمّعة: أقل من 2 GiB مفتوح، من 2 إلى 5: 30 MiB/s، من 5 إلى 10: 20 MiB/s، من 10 فما فوق: 10 MiB/s؛ مع عرض الاستهلاك في الملف الشخصي.
-- إصلاح تجميع القراءات وكتابات الشبكة وحراس المهلة، واستئناف مشفر لمسار الكاش القديم FETCHSTREAM.
-- الإصدار 0.8.7: اختيار الوجهة عبر ACTION_CREATE_DOCUMENT، الكتابة المباشرة بملف واحد، فتح الملف عبر ACTION_VIEW، واستئناف التحميل اليدوي على حدود 256 KiB.
-- Fast ينقل المحتوى دون تشفير على اتصال بيانات TCP؛ التحقق والتفويض على اتصال تحكم TLS. النقل العادي عبر TLS.
-- خدمة foreground لاستمرار التشغيل؛ إيقاف التطبيق بالقوة وقيود البطارية قد توقف الاستقبال.
+- Messaging, groups, verification, blue/gray presence, attachment draft before Send, and local chat clear.
+- Automatic inline ordinary photos and built-in camera capture with preview before sending.
+- Initially render newest 10 messages, then 20 more when scrolling upward; MainActivity has a 16 MiB thumbnail LRU cache.
+- Aggregate daily upload limits: unlimited below 2 GiB; 30 MiB/s at 2-5 GiB, 20 MiB/s at 5-10 GiB, and 10 MiB/s at 10 GiB and above. Usage appears in profile.
+- Aggregated network reads/writes, timeout-watchdog cleanup, and encrypted FETCHSTREAM resume for the older private-cache path.
+- Since 0.8.7: ACTION_CREATE_DOCUMENT destination choice, direct single-copy manual download, ACTION_VIEW opening, and 256 KiB direct resume.
+- Fast file payload uses unencrypted TCP data with authenticated TLS control; ordinary files use TLS.
+- Foreground service for background receipt, subject to Android battery and network restrictions.
 
-## حدود ونواقص
+## Limits and unimplemented behavior
 
-- اختيار الوجهة يحتاج موفرًا محليًا يدعم القراءة والكتابة وتغيير موضع الملف؛ بعض موفري التخزين السحابي لا يصلحون للاستئناف.
-- آخر 10 رسائل تحسين للعرض فقط: قائمة بيانات المحادثة ما زالت تُستخرج من الرسائل الموجودة في ذاكرة المحرك.
-- لا توجد واجهات كاملة محفوظة لعدة محادثات. التبديل يعيد إنشاء الواجهة؛ كاش الصور والبيانات يقللان العمل فقط.
-- عند تغير توقيع المحادثة يعاد بناء الجزء المرئي؛ لا يوجد مكافئ كامل لإعادة استخدام بطاقات ويندوز الحالية.
-- حصة الرفع محلية لكل هوية تطبيق/جهاز، وليست سياسة مركزية تمنع أي تطبيق معدل من إغراق الشبكة.
+- The chosen Android document provider must support reading, writing, and seeking. Some cloud providers cannot support direct resume.
+- Newest-10 is a UI construction optimization; `messages()` still scans engine-held message records.
+- Complete view trees for several chats are not retained. Switching reconstructs the UI, helped by the message records and thumbnail cache.
+- On a changed chat signature, the visible cards are rebuilt. This does not fully mirror Windows's current-card reuse.
+- Daily limits are local to the app/device, not centralized enforcement against a modified app.
 
-## التحقق
+## Verification and handoff
 
-- بناء APK وتوقيعه بالمفتاح الأصلي والتحقق من التوقيع نجح.
-- اختبارات محركات Java وC# والتحويل بينهما والاستئناف والانقطاع وسلامة المحتوى والحصة اليومية نجحت.
-- اختبار Fast بحجم 1025 MiB تحت ذاكرة Java محدودة إلى 64 MiB نجح على الكمبيوتر؛ هذا ليس قياسًا لهاتف حقيقي.
-- تجربة اختيار الوجهة وفتح الملف والكاميرا والخلفية وقياس Wi-Fi على أجهزة أندرويد فعلية ما زالت مطلوبة.
+- APK build and signature verification with the original signing key passed.
+- Java/C# engine interoperability, resume/disconnect, integrity, and daily-policy tests passed.
+- A 1025 MiB Fast test passed on a computer with a 64 MiB Java test heap; that is not a physical-phone benchmark.
+- Real-device acceptance is pending for destination chooser, file opening, camera, background behavior, and Wi-Fi throughput.
+- UI/cache: `src/net/lanmsg/chat/MainActivity.java`. SAF/service: `MessengerService.java`. Direct transfer: `DirectFileTransfer.java`, `DownloadDestination.java`. Legacy encrypted path: `ResumableTransfer.java`, `ResumeStore.java`. Upload tiers: `DailyUploadPolicy.java`.
+- Package: `D:/LAN-Messenger/outputs/LanMessenger-0.8.7.apk`; install over the existing app without uninstalling. Test outputs: `D:/LAN-Messenger/outputs/.build/release-tests-087`.
+- Last Android code commit: `7d9d99c`. Windows-only commit `07f2e54` needs no Android update.
 
-## الملفات والمخرجات
+## Next proposed check
 
-- الواجهة والكاش: `src/net/lanmsg/chat/MainActivity.java`.
-- الربط مع SAF والخلفية: `src/net/lanmsg/chat/MessengerService.java`.
-- النقل اليدوي: `DirectFileTransfer.java` و`DownloadDestination.java` في نفس حزمة السورس.
-- المسار المشفر القديم: `ResumableTransfer.java` و`ResumeStore.java`؛ الحصة: `DailyUploadPolicy.java`.
-- الحزمة: `D:\LAN-Messenger\outputs\LanMessenger-0.8.7.apk`؛ تثبيت فوق النسخة الموجودة دون إزالة التطبيق.
-- نتائج الإصدار: `D:\LAN-Messenger\outputs\.build\release-tests-087`.
-- آخر كوميت غيّر أندرويد: `7d9d99c`. تغيير ويندوز `07f2e54` لا يتطلب تحديث الهاتف.
-
-## الخطوة التالية المقترحة
-
-اختبار قبول فعلي على هاتفين: Download واختيار المكان، قطع الشبكة والاستئناف، Open، ثم السرعة والخلفية. لا نسجل قبول الأجهزة الفعلية مكتملًا بناءً على اختبارات المحرك وحدها.
+Acceptance on two physical phones: destination choice, connection interruption/resume, Open, background receipt, and throughput. Engine tests alone do not complete this acceptance check.
