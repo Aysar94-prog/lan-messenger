@@ -218,6 +218,24 @@ class Check
     foreach(var key in keys)release.Invoke(cacheObj,new object[]{key});
     if((long)bytesProp.GetValue(cacheObj)!>beforeP)throw new Exception("T02: releasing retired thumbnails must free bytes");
     Console.WriteLine("PASS: T02 white-box budget retirement releases bytes");
+    // Regression: opening a chat for the first time at five messages must not
+    // freeze its visible window at five when the sixth message arrives.
+    var shortChat=engine.CreateGroup("Short arrival regression",new[]{remote.Id,second.Id});
+    long shortTime=PeerEngine.Now;
+    var shortMessages=Enumerable.Range(1,5).Select(i=>new PeerEngine.Message(Guid.NewGuid().ToString(),second.Id,engine.Id,"short arrival "+i,shortTime+i,"Received",shortChat)).ToArray();
+    Inject(shortMessages);Call("RestoreWindow",shortChat);Call("Render");
+    if(AllCards().Count()!=5||!TextIn((Control)Field("feed")).Contains("short arrival 1"))throw new Exception("Short-chat setup did not display five messages");
+    Inject(new PeerEngine.Message(Guid.NewGuid().ToString(),second.Id,engine.Id,"short arrival 6",shortTime+6,"Received",shortChat));Call("Render");
+    if(AllCards().Count()!=6||!TextIn((Control)Field("feed")).Contains("short arrival 1")||!TextIn((Control)Field("feed")).Contains("short arrival 6")||TextIn((Control)Field("feed")).Contains("Older messages"))throw new Exception("A sixth arrival hid an earlier message before the ten-message limit");
+    Console.WriteLine("PASS: a first-open five-message chat grows to six without hiding history");
+    // Repeated redraws and switches must leave exactly one empty-chat hint.
+    var emptyChat=engine.CreateGroup("Empty hint regression",new[]{remote.Id,second.Id});
+    Call("RestoreWindow",emptyChat);Call("Render");
+    type.GetField("lastFeed",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,"");Call("Render");
+    Call("RestoreWindow",shortChat);Call("RestoreWindow",emptyChat);Call("Render");
+    var hintCount=((Control)Field("feed")).Controls.Cast<Control>().Count(c=>c.Text=="A fresh start. Send a message or share a file.");
+    if(hintCount!=1)throw new Exception("Empty-chat hint repeated "+hintCount+" times");
+    Console.WriteLine("PASS: empty-chat hint remains single after redraw and chat switching");
    }catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
    finally{type.GetField("exiting",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,true);form.Close();if(engine.Running||trayVisible())Environment.ExitCode=1;Application.ExitThread();}
   bool trayVisible()=>((NotifyIcon)Field("tray")).Visible;

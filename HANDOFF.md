@@ -1,8 +1,14 @@
-# LAN Messenger handoff — Android 0.8.7 / Windows 0.8.8
+# LAN Messenger handoff — Android 0.8.7 / Windows 0.8.10
 
 Start continuation with [PROJECT_STATUS.md](PROJECT_STATUS.md), then [windows/STATUS.md](windows/STATUS.md) or [android/STATUS.md]. The user chose one shared Git branch with separate platform tracking on 2026-09-25. These records distinguish implemented features, remaining work and physical-device acceptance. Historical entries below retain their original scope and may describe superseded behavior.
 
 Current local layout: `D:\LAN-Messenger\source` is the canonical Git source repository; `D:\LAN-Messenger\outputs` contains releases and historical build/test material. Android signing key is private at `source\.private\development.keystore` and is excluded from Git and source archives. Historical paths below describe where older work was originally done.
+
+## Windows 0.8.10 - short-chat growth and empty-chat hint
+
+The user confirmed a six-message manual test that had opened the chat while empty, which did not cover the reported first-open-at-five case. An isolated native UI reproduction opened a conversation for the first time after five messages had arrived; 0.8.9 then hid message one on arrival six because VisibleCount stayed at five. The fix grows the visible window to min(10, total) while preserving larger previously loaded windows. Separately, repeated empty-feed redraws added duplicate "A fresh start" labels; the old hint is disposed before rebuilding.
+
+New WindowsUi tests cover first-open five-to-six growth and repeated empty-chat redraw/switch. The complete native Windows UI suite passed; the original isolated reproduction changed from five to six visible cards, with all six messages present and no older-history hint. No Android or wire protocol change. Release: Windows 0.8.10. Local commit only unless the user asks to push.
 
 ## Windows 0.8.8 - scrolled photo repaint fix
 

@@ -1,6 +1,6 @@
 # LAN Messenger project status and platform comparison
 
-Reviewed 2026-09-25 against source at commit 2241347 (Windows 0.8.9 plan implementation). Do not infer feature parity from version numbers.
+Reviewed 2026-09-25 against Windows 0.8.10 source (0.8.9 plan implementation plus short-chat and empty-hint fixes). Do not infer feature parity from version numbers.
 
 ## Working arrangement
 
@@ -16,10 +16,10 @@ Reviewed 2026-09-25 against source at commit 2241347 (Windows 0.8.9 plan impleme
 
 | Platform | Release | Latest change | Verification |
 |---|---|---|---|
-| Windows | 0.8.9 | Newest-10 initial messages, progressive older history, bounded thumbnail and chat-view caches | Build and native UI tests (regression + paging T01/T02) passed; loopback before/after measurements recorded; DPI/real-device confirmation pending |
+| Windows | 0.8.10 | Newest-10 and progressive history, bounded caches, plus fixes for short-chat growth and duplicate empty-chat hint | Build, native UI tests, and isolated five-to-six-message reproduction passed; confirmation on the affected PC pending |
 | Android | 0.8.7, versionCode 21 | Chosen download destination, open downloaded file, plaintext Fast payload | Signed APK and engine tests passed; physical SAF/viewer/Wi-Fi checks pending |
 
-Windows 0.8.9 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
+Windows 0.8.10 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
 
 ## Feature comparison
 
@@ -54,7 +54,7 @@ The automatic-photo legacy paths differ: Android has encrypted FETCHSTREAM with 
 
 ## Proposed work, not implemented
 
-1. Confirm the Windows 0.8.9/0.8.8 rendering, paging, and repaint behavior on the affected PC/DPI setup; check large-chat opening and throughput on real LAN hardware.
+1. Confirm the Windows 0.8.10 rendering, paging, and repaint behavior on the affected PC/DPI setup; check large-chat opening and throughput on real LAN hardware.
 2. Add a Windows engine recent-message index only if real-device measurements later show message scanning dominating open time (deferred by the finished pagination plan with recorded evidence).
 3. Measure and consider retention/update of active chat UI on both platforms (Windows now caches up to 3 recent chats' cards; Android still rebuilds visible cards on signature changes).
 4. Add Windows upload tiers only if the user expands the previously Android-only scope.

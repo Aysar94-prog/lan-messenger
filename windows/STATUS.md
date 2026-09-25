@@ -1,8 +1,10 @@
 # Windows status
 
-Reviewed 2026-09-25. Release: **0.8.9**. See the [platform comparison](../PROJECT_STATUS.md).
+Reviewed 2026-09-25. Release: **0.8.10**. See the [platform comparison](../PROJECT_STATUS.md).
 
 ## Implemented
+
+- 0.8.10 hotfix: a conversation first opened with fewer than 10 messages now grows its visible window up to 10 as messages arrive. Empty-chat hints are removed before redraw/switch, preventing duplicate text. Native UI regressions and an independent five-to-six-message reproduction passed.
 
 - Messaging, groups, device verification, blue/gray presence, attachment draft before Send, and local chat clear.
 - Automatic inline ordinary photos within preview/codec limits.
@@ -22,7 +24,7 @@ Reviewed 2026-09-25. Release: **0.8.9**. See the [platform comparison](../PROJEC
 
 ## Verification and open checks
 
-- Windows 0.8.9 built and passed native UI tests: 640x480 colored image; repeated wheel/programmatic scrolling, chat switching, and geometry checks; automatic images; destination cancel/open; notifications; seen receipts; plus the new paging/cache tests T01 (newest-10 open, +20 pages with preserved anchor, full-history load, arrivals, chat-switch card/scroll preservation) and T02 (12-image cache bounds, clear safety, white-box thumbnail hits/retirements/byte release). Final screenshots inspected.
+- Windows 0.8.10 built and passed native UI tests, including the 0.8.9 coverage: 640x480 colored image; repeated wheel/programmatic scrolling, chat switching, and geometry checks; automatic images; destination cancel/open; notifications; seen receipts; plus the new paging/cache tests T01 (newest-10 open, +20 pages with preserved anchor, full-history load, arrivals, chat-switch card/scroll preservation) and T02 (12-image cache bounds, clear safety, white-box thumbnail hits/retirements/byte release). Final screenshots inspected.
 - Before/after measurements via tests/MeasureWindows (loopback): large-chat paint 300→55 ms, cards built 112→10; medium paint 115→60 ms with 10 cards; first-open/revisit single-digit ms before and after (large revisit 13→3 ms). Repeat opens of the 112-message chat: 2-4 ms. Detailed record in outputs: `windows-chatperf-measure/baseline-0.8.8.txt`, `after-final.txt`, `comparison-0.8.8-vs-0.8.9.txt`.
 - Windows 0.8.8 UI tests results are kept in `outputs/.build/windows-ui-tests`. The 0.8.8 repaint-fix confirmation on the affected PC/DPI setup is still the user's to confirm.
 - Loopback measurements are not Wi-Fi guarantees; large-chat opening and real LAN throughput on actual hardware remain worth a check.
@@ -32,8 +34,8 @@ Reviewed 2026-09-25. Release: **0.8.9**. See the [platform comparison](../PROJEC
 - UI: `Program.cs`, especially `BufferedFeed`, `MessageBubble`, `RenderCore`, `ChatViewState`, `ThumbnailCache`, `LoadOlderPage`, and `FileAction`.
 - New manual transfer: `DirectDownloads.cs`. Legacy/auto-photo transfer: `Transfers.cs`.
 - Tests from repository root: `tests/WindowsUi` (includes paging T01 and cache T02), `tests/MeasureWindows` (chat-performance harness), `tests/direct_downloads.py`, `tests/transfers.py`, `tests/large_transfer.py`.
-- Results: `D:/LAN-Messenger/outputs/.build/windows-ui-tests` and `windows-chatperf-measure`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.9.zip` (requires .NET 9 Desktop Runtime).
-- Last Windows code commit: `2241347` (0.8.9), local on `master`, not pushed.
+- Results: `D:/LAN-Messenger/outputs/.build/windows-0810-ui`, earlier 0.8.9 results in `windows-ui-tests`, and `windows-chatperf-measure`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.10.zip` (requires .NET 9 Desktop Runtime).
+- Windows 0.8.9 code commit: `2241347`; 0.8.10 hotfix committed locally on `master`, not pushed.
 
 ## Next planned work
 

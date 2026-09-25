@@ -127,12 +127,13 @@ sealed class ChatWindow : Form
     readonly ThumbnailCache thumbnails=new();
     bool loadingOlder;
     Control? olderHint;
+    Control? emptyHint;
     readonly Button clear=new(){Text="Clear chat",AutoSize=true};
     readonly Button members=new(){Text="Members",AutoSize=true};
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.8.9";
+    public const string AppVersion="0.8.10";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -268,8 +269,10 @@ sealed class ChatWindow : Form
         var items=engine.Messages(selected!);
         // Per-conversation view state: newest N rendered, scroll position, cached cards.
         if(!chatViews.TryGetValue(selected!,out var current)){current=new ChatViewState(selected!,Math.Min(InitialVisibleMessages,items.Length),0,feed.Width,TimestampMs(),true);chatViews[selected!]=current;}
-        var visibleCount=Math.Min(items.Length,Math.Max(0,current.VisibleCount));
-        if(visibleCount==0&&items.Length>0)visibleCount=Math.Min(InitialVisibleMessages,items.Length);
+        // A chat first opened with fewer than ten messages must grow up to ten
+        // as new messages arrive; keep any older pages the user has loaded.
+        var visibleCount=Math.Min(items.Length,Math.Max(InitialVisibleMessages,current.VisibleCount));
+        if(current.VisibleCount<visibleCount){current=current with{VisibleCount=visibleCount};chatViews[selected!]=current;}
         int start=items.Length-visibleCount;
         bool moreOlder=start>0;
         var slice=items.Skip(start);
@@ -281,6 +284,9 @@ sealed class ChatWindow : Form
             var scroll=Math.Max(0,-feed.AutoScrollPosition.Y);
             var anchor=FindTopAnchor();
             feed.SuspendLayout();
+            // Empty-chat hints are not message cards, so remove the previous one
+            // before a rebuild or chat switch instead of accumulating labels.
+            emptyHint?.Dispose();emptyHint=null;
             if(reset){
                 if(switching)StashFeed(feedConversation);
                 else if(feedConversation.Length>0)DiscardFeed();
@@ -303,7 +309,7 @@ sealed class ChatWindow : Form
                 old.card?.Dispose();var card=MessageCard(m);cards[key]=(card,content,m);feed.Controls.Add(card);}
             if(moreOlder){olderHint??=MessageLabel("Older messages — scroll up to load",9,Color.SlateGray,Math.Max(300,feed.Width-30));if(!feed.Controls.Contains(olderHint))feed.Controls.Add(olderHint);}
             else if(olderHint!=null&&feed.Controls.Contains(olderHint))feed.Controls.Remove(olderHint);
-            if(items.Length==0&&cards.Count==0)feed.Controls.Add(MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30)));
+            if(items.Length==0&&cards.Count==0){emptyHint=MessageLabel("A fresh start. Send a message or share a file.",11,Ink,Math.Max(300,feed.Width-30));feed.Controls.Add(emptyHint);}
             // Enforce chronological order: optional older-history hint first, then the rendered slice.
             var ordered=new List<Control>();if(moreOlder&&feed.Controls.Contains(olderHint!))ordered.Add(olderHint!);
             foreach(var m in slice)if(cards.TryGetValue(m.From+"/"+m.Id,out var placed))ordered.Add(placed.card);

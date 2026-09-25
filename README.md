@@ -1,8 +1,10 @@
-# LAN Messenger — Android 0.8.7 / Windows 0.8.8
+# LAN Messenger — Android 0.8.7 / Windows 0.8.10
+
+Windows 0.8.10 fixes two pagination UI regressions: new messages grow short chats up to the initial ten, and an empty chat shows its hint once after redraws or switches.
 
 Current feature parity and platform work are tracked separately: [project comparison](PROJECT_STATUS.md), [Windows status](windows/STATUS.md), [Android status](android/STATUS.md). One shared Git branch; independent platform releases and status records. Do not infer feature parity from version numbers.
 
-Windows 0.8.8 fixes fragmented image/card repainting during scrolling and conversation switching. It remains compatible with Android 0.8.7.
+Windows 0.8.8 fixed fragmented image/card repainting during scrolling and conversation switching. It remains compatible with Android 0.8.7.
 
 0.8.7: ordinary and Fast downloads ask where to save, write directly there, and open on click after completion. Fast file bytes use plaintext TCP; authenticated TLS still authorizes the transfer. Normal file bytes use TLS. Both save one plaintext copy at your chosen destination. Update both endpoints. Ordinary inline photos still appear automatically. Partial downloads resume at 256 KiB boundaries; clearing chat preserves your saved file.
 
@@ -58,9 +60,9 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 Android: install LanMessenger-0.8.7.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.8.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.10.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
-Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.8 and Android 0.8.7 interoperate. Do not downgrade.
+Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.10 and Android 0.8.7 interoperate. Do not downgrade.
 
 ## Pair, chat and groups
 
@@ -98,4 +100,4 @@ Android: JDK 17, SDK 34, build-tools 35.0.0. Build script accepts SDK/JDK/build 
 
 Tests run real Java/C# engines with isolated data and test protectors: migration, verification, tampering/spoof rejection, restart queues, groups/relay/expiry, manual downloads, corruption, local clear, receipts and avatars. Transfer regression uses 128 MiB with Java heap capped at 64 MiB, pause/restart to the chosen destination, verified content and text latency during a throttled transfer. Native Windows tests cover notifications, draft previews, manual Download, retained controls and screenshots.
 
-An additional optional tests/large_transfer.py run transferred and fully verified 1025 MiB with Java heap capped at 64 MiB (7.830 s for the 0.8.7 direct path on local loopback, not a Wi-Fi guarantee). Physical Android picker/camera/Keystore/background behavior, real Wi-Fi throughput and larger files still require device acceptance testing. See HANDOFF.md for exact measured results and release paths. The repository has a GitHub origin. Latest 0.8.7/0.8.8 changes are committed locally; no push was performed for these releases.
+An additional optional tests/large_transfer.py run transferred and fully verified 1025 MiB with Java heap capped at 64 MiB (7.830 s for the 0.8.7 direct path on local loopback, not a Wi-Fi guarantee). Physical Android picker/camera/Keystore/background behavior, real Wi-Fi throughput and larger files still require device acceptance testing. See HANDOFF.md for exact measured results and release paths. The repository has a GitHub origin. Recent Windows and Android changes are committed locally; no push was performed for these releases.
