@@ -41,6 +41,12 @@ public class MainActivity extends Activity {
     @Override protected int sizeOf(String key,Bitmap bitmap){return bitmap.getByteCount();}
   };
   boolean loadingEarlier;
+  // People-screen side menu: Profile, About, and the persisted offline-row filter. stage is the
+  // single full-screen FrameLayout the overlay is added to; menuOverlay is null while it is closed.
+  FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline;
+  // Android-local UI preference only. Nothing here reaches the wire, so the two platforms may
+  // legitimately differ here without any interoperability impact.
+  static final String PREFS_UI="lan_messenger_ui",KEY_SHOW_OFFLINE="show_offline_users";
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -51,18 +57,27 @@ public class MainActivity extends Activity {
   TextView circle(String letter,int color,int diameterDp,int textSize){TextView t=new TextView(this);t.setText(letter);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(textSize);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(color,diameterDp));return t;}
   EditText input(String hint,int max){EditText e=new EditText(this);e.setHint(hint);e.setTextSize(17);e.setSingleLine(true);e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});return e;}
   GradientDrawable bg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(12));return d;}
-  @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");showPeople();startConnection();if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
+  @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");startConnection();
+    // The people rows are filtered by a persisted preference, so the first render has to wait for
+    // the read instead of flashing unfiltered rows and then hiding them. Reading preferences
+    // touches disk, so it stays off the UI thread; the service start above is deliberately first
+    // so background connection work begins immediately, as before.
+    new Thread(()->{final boolean value=readShowOffline();ui.post(()->{if(isDestroyed())return;showOffline=value;showPeople();});},"lan-ui-preference").start();
+    if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
   void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class));}catch(Exception e){MessengerService.problem="Could not start. Open the app and try again.";}}
   // The header is built by each screen (showPeople/showChat) and inserted at chrome index 0, so a
   // space-constrained chat can use a single compact bar instead of always paying for the full app banner.
-  void frame(){if(root!=null)releaseImages(root);if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}
-    chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);setContentView(chrome);
+  // The content view is a single full-screen stage so the people side menu can overlay everything,
+  // header bar included, without changing the chrome column that each screen already builds.
+  void frame(){if(root!=null)releaseImages(root);closeMenu();if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}
+    stage=new FrameLayout(this);chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);stage.addView(chrome,new FrameLayout.LayoutParams(-1,-1));setContentView(stage);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
   void saveDraft(){if(selected!=null&&composer!=null)drafts.put(selected,composer.getText().toString());}
   void showPeople(){saveDraft();clearPendingAttachment();selected=null;composer=null;lastSignature="";frame();
     LinearLayout headerBar=new LinearLayout(this);headerBar.setOrientation(LinearLayout.HORIZONTAL);headerBar.setGravity(android.view.Gravity.CENTER_VERTICAL);headerBar.setBackgroundColor(headerDark);headerBar.setPadding(dp(18),dp(14),dp(18),dp(14));
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+    Button menuButton=barButton("☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->openMenu());headerBar.addView(menuButton);
     chrome.addView(headerBar,0);
     root.addView(status);
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -73,10 +88,34 @@ public class MainActivity extends Activity {
     if(ownBitmap!=null){avatarView.setImageBitmap(ownBitmap);avatarWrap.addView(avatarView);}
     else{avatarWrap.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);avatarWrap.addView(t,new FrameLayout.LayoutParams(-1,-1));}
     avatarWrap.setOnClickListener(v->changeAvatar());
-    Button profile=button("Profile"),refresh=button("Refresh"),add=button("Add by IP"),about=button("About");tools.addView(profile);tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);tools.addView(about);group.setOnClickListener(v->createGroup());about.setOnClickListener(v->showAbout());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
-    profile.setOnClickListener(v->profile());refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
-    root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay here when offline.\nOnly devices using LAN Messenger appear.",14));render();
+    // Profile and About moved into the side menu to keep this row to the per-conversation actions.
+    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
+    refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
+    root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay saved when hidden.\nOnly devices using LAN Messenger appear.",14));render();
   }
+  // Side menu for the people screen: a scrim plus a start-aligned panel rebuilt on every open, so
+  // the toggle always shows the current value. Removed from the stage when closed or on frame().
+  void openMenu(){if(selected!=null||stage==null||menuOpen)return;
+    FrameLayout overlay=new FrameLayout(this);overlay.setBackgroundColor(Color.argb(110,0,0,0));overlay.setOnClickListener(v->closeMenu());
+    LinearLayout panel=column();panel.setPadding(dp(20),dp(14),dp(20),dp(16));panel.setBackgroundColor(Color.WHITE);
+    overlay.addView(panel,new FrameLayout.LayoutParams(Math.min(dp(300),(int)(getResources().getDisplayMetrics().widthPixels*0.82f)),-1,android.view.Gravity.START));
+    LinearLayout headRow=new LinearLayout(this);headRow.setGravity(android.view.Gravity.CENTER_VERTICAL);TextView head=label("Menu",19);head.setTypeface(null,Typeface.BOLD);head.setPadding(0,0,0,0);headRow.addView(head,new LinearLayout.LayoutParams(0,-2,1));Button closeMenuItem=button("Close");closeMenuItem.setOnClickListener(v->closeMenu());headRow.addView(closeMenuItem);panel.addView(headRow);
+    Button profileItem=menuItem("Profile");profileItem.setOnClickListener(v->{closeMenu();profile();});panel.addView(profileItem);
+    Button aboutItem=menuItem("About");aboutItem.setOnClickListener(v->{closeMenu();showAbout();});panel.addView(aboutItem);
+    // setChecked runs before the listener is attached, so building the menu never reports a change.
+    Switch offlineToggle=new Switch(this);offlineToggle.setText("Show offline users");offlineToggle.setTextSize(16);offlineToggle.setPadding(0,dp(12),0,0);offlineToggle.setChecked(showOffline);offlineToggle.setOnCheckedChangeListener((view,checked)->setShowOffline(checked));panel.addView(offlineToggle,new LinearLayout.LayoutParams(-1,-2));
+    panel.addView(label("Hiding a row only removes it from this list. The contact, its chats, its unread count and any queued message stay on this device.",13));
+    stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));menuOverlay=overlay;menuOpen=true;}
+  void closeMenu(){if(menuOverlay!=null){if(stage!=null)stage.removeView(menuOverlay);menuOverlay=null;}menuOpen=false;}
+  Button barButton(String glyph,int size){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(size);b.setTextColor(Color.WHITE);b.setBackgroundColor(Color.TRANSPARENT);b.setMinWidth(dp(46));return b;}
+  Button menuItem(String text){Button b=button(text);b.setTextSize(17);b.setTextColor(ink);b.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);b.setPadding(dp(4),dp(12),dp(4),dp(12));b.setBackgroundColor(Color.TRANSPARENT);return b;}
+  // Android-local, defaults to false. A failed read must not crash startup, and a failed write only
+  // costs persistence across restarts, so both ends swallow the error and keep the in-memory value.
+  boolean readShowOffline(){try{return getSharedPreferences(PREFS_UI,MODE_PRIVATE).getBoolean(KEY_SHOW_OFFLINE,false);}catch(Exception ignored){return false;}}
+  void setShowOffline(boolean value){if(showOffline==value)return;showOffline=value;try{getSharedPreferences(PREFS_UI,MODE_PRIVATE).edit().putBoolean(KEY_SHOW_OFFLINE,value).apply();}catch(Exception ignored){}
+    // Force a rebuild rather than relying on the row signature: the filter also decides the
+    // empty-state hint, and the signature only describes rows that are currently visible.
+    closeMenu();lastSignature="";render();}
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
   void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))clearPendingAttachment();selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
@@ -150,7 +189,7 @@ public class MainActivity extends Activity {
     wrap.addView(avatar,new FrameLayout.LayoutParams(-1,-1));View dot=new View(this);GradientDrawable d=circleBg(p.online()?Color.rgb(33,150,243):Color.GRAY,12);d.setStroke(dp(2),Color.WHITE);dot.setBackground(d);dot.setContentDescription(p.online()?"Online":"Offline");wrap.addView(dot,new FrameLayout.LayoutParams(dp(12),dp(12),android.view.Gravity.BOTTOM|android.view.Gravity.RIGHT));return wrap;
   }
   PeerEngine transferProgressWiredFor;
-  void render(){PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
+  void render(){if(root==null||status==null)return;PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
     if(e!=transferProgressWiredFor){
       // Attachment transfers run on background connection threads, not the UI thread — marshal
       // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
@@ -166,11 +205,20 @@ public class MainActivity extends Activity {
       // together by last message time, not name/online order. {lastActivity, isGroup, id, group-or-peer}
       List<Object[]> convos=new ArrayList<>();
       for(PeerEngine.Group g:e.groups()){long last=0;for(PeerEngine.Message m:e.messages(g.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.TRUE,g.id,g});}
-      for(PeerEngine.Peer p:people){long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
+      // Presentation-time filter only. An offline direct peer is skipped while building the visible
+      // list, but the engine keeps the peer, its messages, unread count and queued sends untouched,
+      // and an incoming deep link or an already-open chat still reaches it. Group rows are never
+      // filtered, so a group whose members are all offline stays reachable.
+      for(PeerEngine.Peer p:people){if(!showOffline&&!p.online())continue;long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
       convos.sort((x,y)->Long.compare((Long)y[0],(Long)x[0]));
-      StringBuilder signature=new StringBuilder();for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
+      // The preference is part of the signature because it also decides the empty-state hint, which
+      // is a rendered row of its own and would otherwise survive a toggle with the wrong wording.
+      StringBuilder signature=new StringBuilder(showOffline?"offline-shown:":"offline-hidden:");for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
       if(signature.toString().equals(lastSignature)&&body.getChildCount()>0)return;lastSignature=signature.toString();body.removeAllViews();
-      if(people.isEmpty()&&e.groups().isEmpty())body.addView(label("No contacts yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi. No host computer is needed.\n\nIf your router blocks discovery, use Add by IP.",17));
+      if(convos.isEmpty()){
+        if(people.isEmpty()&&e.groups().isEmpty())body.addView(label("No contacts yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi. No host computer is needed.\n\nIf your router blocks discovery, use Add by IP.",17));
+        else body.addView(label(showOffline?"No conversations yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi, or use Add by IP.":"No conversations to show.\n\nEvery contact is offline right now and hidden from this list.\n\nOpen the menu and turn on Show offline users to see them again.",17));
+      }
       for(Object[] c:convos){
         if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));addContactRow(contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));}
         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);addContactRow(contact,e.unread(p.id),peerAvatarView(e,p,initial));contact.setOnClickListener(v->showChat(p.id));}
@@ -343,7 +391,8 @@ public class MainActivity extends Activity {
   void addAddress(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText address=input("192.168.1.20",60);address.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);StringBuilder ips=new StringBuilder();try{Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();while(all.hasMoreElements()){Enumeration<InetAddress> addresses=all.nextElement().getInetAddresses();while(addresses.hasMoreElements()){InetAddress a=addresses.nextElement();if(a instanceof Inet4Address&&!a.isLoopbackAddress())ips.append(a.getHostAddress()).append("  ");}}}catch(Exception ignored){}
     new AlertDialog.Builder(this).setTitle("Add a device").setMessage("Your IP: "+ips+"\nEnter the other device's IP. It must be running LAN Messenger.").setView(address).setPositiveButton("Find device",(d,w)->{String value=address.getText().toString();new Thread(()->{try{e.addAddress(value);ui.post(()->{lastSignature="";render();});}catch(Exception error){ui.post(()->Toast.makeText(this,"Device not reachable. Check Wi-Fi, IP and firewall.",Toast.LENGTH_LONG).show());}}).start();}).setNegativeButton("Cancel",null).show();
   }
-  @Override public void onBackPressed(){if(selected!=null)showPeople();else super.onBackPressed();}
+  // Back closes an open side menu first; only then does the existing navigation run.
+  @Override public void onBackPressed(){if(menuOpen){closeMenu();return;}if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;ui.removeCallbacks(tick);ui.post(tick);}
   @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);saveDraft();}
   @Override protected void onDestroy(){super.onDestroy();ui.removeCallbacksAndMessages(null);}

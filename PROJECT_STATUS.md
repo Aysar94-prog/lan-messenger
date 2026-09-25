@@ -21,6 +21,8 @@ Reviewed 2026-09-25 against Windows 0.8.10 source (0.8.9 plan implementation plu
 
 Windows 0.8.10 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
 
+Unreleased Android working-tree change: the people-screen side menu and the `Show offline users` filter, described in [Android status](android/STATUS.md). It is Android UI and an Android-local preference only. Nothing on the wire changed, no engine semantics changed, and Windows needs no update and no rebuild. The `0.8.7` APK in outputs was rebuilt from this tree, so it now also carries this unreleased change with the same versionCode; that rebuild ran a temporary copy of `android/build.ps1` with only its `$ErrorActionPreference` line neutralized, because the unmodified script aborts on a javac stderr note, and the tracked script was not changed.
+
 ## Feature comparison
 
 | Feature | Windows | Android |
@@ -29,6 +31,8 @@ Windows 0.8.10 interoperates with Android 0.8.7. New direct-to-destination manua
 | Groups, avatars, unread count | Implemented | Implemented |
 | Clear chat locally while retaining contact/group and user-saved file | Implemented | Implemented |
 | Blue online / gray offline presence | Implemented | Implemented |
+| People-screen side menu | Not implemented | Implemented on Android; Profile and About live in it |
+| Hide offline direct peers in the people list | Not implemented | Implemented on Android as an Android-local persisted `Show offline users` flag, default off; a people-list display filter for direct-peer rows only, group rows are never hidden; it does not change engine state, routing or the wire, and deep links and open chats bypass the list rather than being filtered |
 | Attachment draft followed by explicit Send | Implemented | Implemented |
 | Automatic inline ordinary photos | Implemented within preview/codec limits | Implemented within preview/codec limits |
 | Ordinary attachments up to 1 GiB; Fast offers up to 1 TiB | Implemented | Implemented |
