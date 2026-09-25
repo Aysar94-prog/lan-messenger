@@ -44,9 +44,6 @@ public class MainActivity extends Activity {
   // People-screen side menu: Profile, About, and the persisted offline-row filter. stage is the
   // single full-screen FrameLayout the overlay is added to; menuOverlay is null while it is closed.
   FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline;
-  // Android-local UI preference only. Nothing here reaches the wire, so the two platforms may
-  // legitimately differ here without any interoperability impact.
-  static final String PREFS_UI="lan_messenger_ui",KEY_SHOW_OFFLINE="show_offline_users";
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -62,22 +59,22 @@ public class MainActivity extends Activity {
     // the read instead of flashing unfiltered rows and then hiding them. Reading preferences
     // touches disk, so it stays off the UI thread; the service start above is deliberately first
     // so background connection work begins immediately, as before.
-    new Thread(()->{final boolean value=readShowOffline();ui.post(()->{if(isDestroyed())return;showOffline=value;showPeople();});},"lan-ui-preference").start();
+    new Thread(()->{final boolean value=PeopleListView.readShowOffline(this);ui.post(()->{if(isDestroyed())return;showOffline=value;showPeople();});},"lan-ui-preference").start();
     if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
   void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class));}catch(Exception e){MessengerService.problem="Could not start. Open the app and try again.";}}
   // The header is built by each screen (showPeople/showChat) and inserted at chrome index 0, so a
   // space-constrained chat can use a single compact bar instead of always paying for the full app banner.
   // The content view is a single full-screen stage so the people side menu can overlay everything,
   // header bar included, without changing the chrome column that each screen already builds.
-  void frame(){if(root!=null)releaseImages(root);closeMenu();if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}
+  void frame(){if(root!=null)releaseImages(root);PeopleListView.closeMenu(this);if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}
     stage=new FrameLayout(this);chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);stage.addView(chrome,new FrameLayout.LayoutParams(-1,-1));setContentView(stage);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
   void saveDraft(){if(selected!=null&&composer!=null)drafts.put(selected,composer.getText().toString());}
-  void showPeople(){saveDraft();clearPendingAttachment();selected=null;composer=null;lastSignature="";frame();
+  void showPeople(){saveDraft();AttachmentFlow.clearPendingAttachment(this);selected=null;composer=null;lastSignature="";frame();
     LinearLayout headerBar=new LinearLayout(this);headerBar.setOrientation(LinearLayout.HORIZONTAL);headerBar.setGravity(android.view.Gravity.CENTER_VERTICAL);headerBar.setBackgroundColor(headerDark);headerBar.setPadding(dp(18),dp(14),dp(18),dp(14));
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-    Button menuButton=barButton("☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->openMenu());headerBar.addView(menuButton);
+    Button menuButton=PeopleListView.barButton(this,"☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->PeopleListView.openMenu(this));headerBar.addView(menuButton);
     chrome.addView(headerBar,0);
     root.addView(status);
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -93,32 +90,9 @@ public class MainActivity extends Activity {
     refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
     root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay saved when hidden.\nOnly devices using LAN Messenger appear.",14));render();
   }
-  // Side menu for the people screen: a scrim plus a start-aligned panel rebuilt on every open, so
-  // the toggle always shows the current value. Removed from the stage when closed or on frame().
-  void openMenu(){if(selected!=null||stage==null||menuOpen)return;
-    FrameLayout overlay=new FrameLayout(this);overlay.setBackgroundColor(Color.argb(110,0,0,0));overlay.setOnClickListener(v->closeMenu());
-    LinearLayout panel=column();panel.setPadding(dp(20),dp(14),dp(20),dp(16));panel.setBackgroundColor(Color.WHITE);
-    overlay.addView(panel,new FrameLayout.LayoutParams(Math.min(dp(300),(int)(getResources().getDisplayMetrics().widthPixels*0.82f)),-1,android.view.Gravity.START));
-    LinearLayout headRow=new LinearLayout(this);headRow.setGravity(android.view.Gravity.CENTER_VERTICAL);TextView head=label("Menu",19);head.setTypeface(null,Typeface.BOLD);head.setPadding(0,0,0,0);headRow.addView(head,new LinearLayout.LayoutParams(0,-2,1));Button closeMenuItem=button("Close");closeMenuItem.setOnClickListener(v->closeMenu());headRow.addView(closeMenuItem);panel.addView(headRow);
-    Button profileItem=menuItem("Profile");profileItem.setOnClickListener(v->{closeMenu();profile();});panel.addView(profileItem);
-    Button aboutItem=menuItem("About");aboutItem.setOnClickListener(v->{closeMenu();showAbout();});panel.addView(aboutItem);
-    // setChecked runs before the listener is attached, so building the menu never reports a change.
-    Switch offlineToggle=new Switch(this);offlineToggle.setText("Show offline users");offlineToggle.setTextSize(16);offlineToggle.setPadding(0,dp(12),0,0);offlineToggle.setChecked(showOffline);offlineToggle.setOnCheckedChangeListener((view,checked)->setShowOffline(checked));panel.addView(offlineToggle,new LinearLayout.LayoutParams(-1,-2));
-    panel.addView(label("Hiding a row only removes it from this list. The contact, its chats, its unread count and any queued message stay on this device.",13));
-    stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));menuOverlay=overlay;menuOpen=true;}
-  void closeMenu(){if(menuOverlay!=null){if(stage!=null)stage.removeView(menuOverlay);menuOverlay=null;}menuOpen=false;}
-  Button barButton(String glyph,int size){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(size);b.setTextColor(Color.WHITE);b.setBackgroundColor(Color.TRANSPARENT);b.setMinWidth(dp(46));return b;}
-  Button menuItem(String text){Button b=button(text);b.setTextSize(17);b.setTextColor(ink);b.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);b.setPadding(dp(4),dp(12),dp(4),dp(12));b.setBackgroundColor(Color.TRANSPARENT);return b;}
-  // Android-local, defaults to false. A failed read must not crash startup, and a failed write only
-  // costs persistence across restarts, so both ends swallow the error and keep the in-memory value.
-  boolean readShowOffline(){try{return getSharedPreferences(PREFS_UI,MODE_PRIVATE).getBoolean(KEY_SHOW_OFFLINE,false);}catch(Exception ignored){return false;}}
-  void setShowOffline(boolean value){if(showOffline==value)return;showOffline=value;try{getSharedPreferences(PREFS_UI,MODE_PRIVATE).edit().putBoolean(KEY_SHOW_OFFLINE,value).apply();}catch(Exception ignored){}
-    // Force a rebuild rather than relying on the row signature: the filter also decides the
-    // empty-state hint, and the signature only describes rows that are currently visible.
-    closeMenu();lastSignature="";render();}
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
-  void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))clearPendingAttachment();selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
+  void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
     PeerEngine chatEngine=MessengerService.engine;boolean isGroup=false;String chatInitial="?";int chatColor=accent;
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
       if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
@@ -139,7 +113,7 @@ public class MainActivity extends Activity {
       loadingEarlier=true;int previousHeight=feed.getHeight();visibleMessageCounts.put(selected,current+20);lastSignature="";render();
       scroll.post(()->{scroll.scrollTo(0,Math.max(0,feed.getHeight()-previousHeight));loadingEarlier=false;});
     });
-    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->capturePhoto());photo.setOnClickListener(v->pickFile(true));file.setOnClickListener(v->pickFile(false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->pickFastFile());HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
+    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->AttachmentFlow.capturePhoto(this));photo.setOnClickListener(v->AttachmentFlow.pickFile(this,true));file.setOnClickListener(v->AttachmentFlow.pickFile(this,false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->AttachmentFlow.pickFastFile(this));HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
     send.setOnClickListener(v->{
       PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}
       if(pendingAttachmentUri==null&&composer.getText().toString().trim().isEmpty())return;
@@ -157,11 +131,11 @@ public class MainActivity extends Activity {
             }
             if(cameraFile2!=null)cameraFile2.delete();
           }else e.queueLocal(target,caption);
-          ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)clearPendingAttachment();sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);lastSignature="";render();});
+          ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)AttachmentFlow.clearPendingAttachment(this);sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);lastSignature="";render();});
           if(uri==null)try{e.flush();}catch(Exception ignored){}
         }catch(Exception error){ui.post(()->{sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);problem(error);});}
       },"lan-send").start();
-    });renderPendingAttachment();render();
+    });AttachmentFlow.renderPendingAttachment(this);render();
     // The header is now a single always-compact bar, so keyboard-open only needs to hide the group
     // notice and snap to the latest message — there is no separate button row left to collapse.
     View decor=getWindow().getDecorView();final boolean[] keyboardWasVisible={false};
@@ -172,21 +146,6 @@ public class MainActivity extends Activity {
       if(keyboardVisible)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
     };
     decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
-  }
-  TextView badge(int count){TextView t=new TextView(this);t.setText(count>99?"99+":String.valueOf(count));t.setTextColor(Color.WHITE);t.setTextSize(11);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(accent,26));return t;}
-  void addContactRow(Button contact,int unread,String initial,int avatarColor){addContactRow(contact,unread,circle(initial,avatarColor,40,15));}
-  // A contact's real photo, once received (see peerAvatarView) — otherwise the colored-initial circle.
-  void addContactRow(Button contact,int unread,View avatarView){LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,dp(2),0,dp(2));
-    LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarParams.setMargins(dp(6),0,dp(8),0);row.addView(avatarView,avatarParams);
-    row.addView(contact,new LinearLayout.LayoutParams(0,-2,1));
-    if(unread>0){LinearLayout.LayoutParams badgeParams=new LinearLayout.LayoutParams(dp(26),dp(26));badgeParams.setMargins(dp(8),0,dp(6),0);row.addView(badge(unread),badgeParams);}
-    body.addView(row,new LinearLayout.LayoutParams(-1,-2));}
-  View peerAvatarView(PeerEngine e,PeerEngine.Peer p,String initial){
-    byte[] raw=e.peerAvatar(p.id);Bitmap bmp=raw!=null?inlineBitmap(raw):null;
-    FrameLayout wrap=new FrameLayout(this);View avatar;
-    if(bmp==null)avatar=circle(initial,nameColor(p.id),40,15);
-    else{ImageView iv=new ImageView(this);iv.setImageBitmap(bmp);iv.setScaleType(ImageView.ScaleType.CENTER_CROP);iv.setBackground(circleBg(nameColor(p.id),40));iv.setClipToOutline(true);avatar=iv;}
-    wrap.addView(avatar,new FrameLayout.LayoutParams(-1,-1));View dot=new View(this);GradientDrawable d=circleBg(p.online()?Color.rgb(33,150,243):Color.GRAY,12);d.setStroke(dp(2),Color.WHITE);dot.setBackground(d);dot.setContentDescription(p.online()?"Online":"Offline");wrap.addView(dot,new FrameLayout.LayoutParams(dp(12),dp(12),android.view.Gravity.BOTTOM|android.view.Gravity.RIGHT));return wrap;
   }
   PeerEngine transferProgressWiredFor;
   void render(){if(root==null||status==null)return;PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
@@ -220,8 +179,8 @@ public class MainActivity extends Activity {
         else body.addView(label(showOffline?"No conversations yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi, or use Add by IP.":"No conversations to show.\n\nEvery contact is offline right now and hidden from this list.\n\nOpen the menu and turn on Show offline users to see them again.",17));
       }
       for(Object[] c:convos){
-        if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));addContactRow(contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));}
-        else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);addContactRow(contact,e.unread(p.id),peerAvatarView(e,p,initial));contact.setOnClickListener(v->showChat(p.id));}
+        if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));}
+        else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial));contact.setOnClickListener(v->showChat(p.id));}
       }
       return;
     }
@@ -240,7 +199,7 @@ public class MainActivity extends Activity {
       else if(peerAvatarBmp!=null){ImageView miniAvatar=new ImageView(this);miniAvatar.setImageBitmap(peerAvatarBmp);miniAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);miniAvatar.setClipToOutline(true);whoRow.addView(miniAvatar,miniAvatarParams);}
       else whoRow.addView(circle(whoName.isEmpty()?"?":whoName.substring(0,1).toUpperCase(Locale.ROOT),whoColor,18,9),miniAvatarParams);
       TextView who=label(whoName,14);who.setPadding(0,0,0,0);who.setTypeface(null,Typeface.BOLD);who.setTextColor(whoColor);whoRow.addView(who);
-      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else{Bitmap thumbnail=inlineBitmap(e,m);if(thumbnail!=null){ImageView image=new ImageView(this);image.setImageBitmap(thumbnail);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);int height=Math.max(dp(150),Math.min(dp(320),(int)((long)maxBubble*thumbnail.getHeight()/Math.max(1,thumbnail.getWidth()))));image.setLayoutParams(new LinearLayout.LayoutParams(maxBubble,height));image.setBackground(bg(Color.rgb(232,236,243)));image.setClipToOutline(true);image.setContentDescription("Open "+m.fileName);image.setOnClickListener(v->previewImage(m));card.addView(image);}TextView name=label(m.fileName+"  ·  "+formatSize(m.fileSize),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);name.setOnClickListener(v->{if(e.hasAttachment(m))fileAction(m);});card.addView(name);LinearLayout fileActions=new LinearLayout(this);boolean available=e.hasAttachment(m);Button save=button(available?"Open":e.downloading(m)?"Pause":e.pendingDestination(m).isEmpty()?"Download":"Resume");fileActions.addView(save);save.setOnClickListener(v->fileAction(m));if(thumbnail!=null){Button open=button("Open");fileActions.addView(open);open.setOnClickListener(v->previewImage(m));}card.addView(fileActions);TextView progressLine=label("",13);card.addView(progressLine);progressLabels.put(m.id,progressLine);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";String statusText=m.status;long[] progress=m.status.equals("Queued")&&!m.fileName.isEmpty()?transferProgress.get(m.id):null;if(progress!=null&&progress[1]>0)statusText="Sending "+(progress[0]*100/progress[1])+"%";TextView statusLine=label(when+"  ·  "+ticks+" "+statusText,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
+      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else{Bitmap thumbnail=inlineBitmap(e,m);if(thumbnail!=null){ImageView image=new ImageView(this);image.setImageBitmap(thumbnail);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);int height=Math.max(dp(150),Math.min(dp(320),(int)((long)maxBubble*thumbnail.getHeight()/Math.max(1,thumbnail.getWidth()))));image.setLayoutParams(new LinearLayout.LayoutParams(maxBubble,height));image.setBackground(bg(Color.rgb(232,236,243)));image.setClipToOutline(true);image.setContentDescription("Open "+m.fileName);image.setOnClickListener(v->AttachmentFlow.previewImage(this,m));card.addView(image);}TextView name=label(m.fileName+"  ·  "+formatSize(m.fileSize),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);name.setOnClickListener(v->{if(e.hasAttachment(m))AttachmentFlow.fileAction(this,m);});card.addView(name);LinearLayout fileActions=new LinearLayout(this);boolean available=e.hasAttachment(m);Button save=button(available?"Open":e.downloading(m)?"Pause":e.pendingDestination(m).isEmpty()?"Download":"Resume");fileActions.addView(save);save.setOnClickListener(v->AttachmentFlow.fileAction(this,m));if(thumbnail!=null){Button open=button("Open");fileActions.addView(open);open.setOnClickListener(v->AttachmentFlow.previewImage(this,m));}card.addView(fileActions);TextView progressLine=label("",13);card.addView(progressLine);progressLabels.put(m.id,progressLine);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";String statusText=m.status;long[] progress=m.status.equals("Queued")&&!m.fileName.isEmpty()?transferProgress.get(m.id):null;if(progress!=null&&progress[1]>0)statusText="Sending "+(progress[0]*100/progress[1])+"%";TextView statusLine=label(when+"  ·  "+ticks+" "+statusText,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
       LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);View spacer=new View(this);
       if(mine){row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));row.addView(card,new LinearLayout.LayoutParams(-2,-2));}else{row.addView(card,new LinearLayout.LayoutParams(-2,-2));row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));}
       LinearLayout.LayoutParams rowParams=new LinearLayout.LayoutParams(-1,-2);rowParams.setMargins(0,dp(5),0,dp(5));feed.addView(row,rowParams);}
@@ -277,36 +236,11 @@ public class MainActivity extends Activity {
   void chatMenu(View anchor){if(selected==null)return;PeerEngine e=MessengerService.engine;boolean isPeer=false;if(e!=null)for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))isPeer=true;
     PopupMenu menu=new PopupMenu(this,anchor);if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");
     menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else showMembers();return true;});menu.show();}
-  void clearChat(){final PeerEngine e=MessengerService.engine;final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");clearPendingAttachment();lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
+  void clearChat(){final PeerEngine e=MessengerService.engine;final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
   void showMembers(){PeerEngine e=MessengerService.engine;if(e==null)return;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected)){StringBuilder text=new StringBuilder();for(String id:g.members){boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();text.append(e.displayName(id)).append(id.equals(e.id)?" (you)":verified?" · Verified":" · Verify in People").append('\n');}text.append("\nEach pair must verify each other in People. Membership is fixed for this group.");new AlertDialog.Builder(this).setTitle(g.name+" · Members").setMessage(text).setPositiveButton("OK",null).show();return;}Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();}
   void createGroup(){final PeerEngine e=MessengerService.engine;if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
     final EditText name=input("Group name",50);final boolean[] checked=new boolean[peers.size()];String[] names=new String[peers.size()];for(int i=0;i<names.length;i++)names[i]=peers.get(i).name+" · "+peers.get(i).id.substring(0,6);
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New group · select 2–15 contacts").setView(name).setMultiChoiceItems(names,checked,(d,which,on)->checked[which]=on).setNegativeButton("Cancel",null).setPositiveButton("Create",null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{try{ArrayList<String> ids=new ArrayList<>();for(int i=0;i<checked.length;i++)if(checked[i])ids.add(peers.get(i).id);String id=e.createGroup(name.getText().toString(),ids);dialog.dismiss();showChat(id);}catch(Exception error){problem(error);}}));dialog.show();
-  }
-  void pickFastFile(){if(selected==null||send==null||!send.isEnabled())return;attachmentTarget=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);try{startActivityForResult(intent,46);}catch(Exception error){problem(error);}}
-  void pickFile(boolean photo){PeerEngine e=MessengerService.engine;if(e==null||selected==null)return;if(send!=null&&!send.isEnabled()){Toast.makeText(this,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}attachmentTarget=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(photo?"image/*":"*/*");try{startActivityForResult(intent,photo?41:42);}catch(Exception error){problem(error);}}
-  void capturePhoto(){if(selected==null||send==null||!send.isEnabled()){Toast.makeText(this,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}try{attachmentTarget=selected;cameraFile=new File(getCacheDir(),"camera-"+UUID.randomUUID()+".jpg");cameraUri=Uri.parse("content://"+getPackageName()+".camera/capture/"+cameraFile.getName());Intent intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT,cameraUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);intent.setClipData(android.content.ClipData.newRawUri("Camera photo",cameraUri));startActivityForResult(intent,44);}catch(Exception error){if(cameraFile!=null)cameraFile.delete();problem(error);}}
-  void exportFile(PeerEngine.Message message){exportMessage=message;try{startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,message.fileName),43);}catch(Exception error){problem(error);}}
-  void fileAction(PeerEngine.Message message){
-    PeerEngine e=MessengerService.engine;if(e==null)return;
-    if(e.downloading(message)){e.cancelDownload(message);return;}
-    String saved=e.savedDestination(message);
-    if(!saved.isEmpty()){
-      try{Uri uri=Uri.parse(saved);String type=getContentResolver().getType(uri);
-        int dot=message.fileName.lastIndexOf('.');if((type==null||type.equals("application/octet-stream"))&&dot>=0)type=android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(message.fileName.substring(dot+1).toLowerCase(Locale.ROOT));
-        Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,type==null?"application/octet-stream":type).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        open.setClipData(ClipData.newRawUri(message.fileName,uri));startActivity(Intent.createChooser(open,"Open file"));
-      }catch(Exception failure){problem(failure);}return;
-    }
-    if(e.hasAttachment(message)&&PeerEngine.isImageAttachment(message)){previewImage(message);return;}
-    String pending=e.pendingDestination(message);
-    if(!pending.isEmpty()){startDirectDownload(message,pending);return;}
-    exportMessage=message;
-    try{startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,message.fileName).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),47);}catch(Exception failure){problem(failure);}
-  }
-  void startDirectDownload(PeerEngine.Message message,String reference){
-    PeerEngine e=MessengerService.engine;if(e==null)return;
-    new Thread(()->{ui.postDelayed(()->render(),100);try{e.downloadTo(message,reference);}catch(Exception failure){ui.post(()->problem(failure));}finally{ui.post(()->{lastSignature="";render();});}},"lan-direct-download").start();
   }
   void problem(Exception error){Toast.makeText(this,error.getMessage()==null?"Operation failed":error.getMessage(),Toast.LENGTH_LONG).show();}
   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if(request==44&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online and try again.",Toast.LENGTH_LONG).show();return;}
@@ -333,55 +267,18 @@ public class MainActivity extends Activity {
         if(name==null)name="attachment";
         boolean fastMode=request==46;long limit=fastMode?PeerEngine.MAX_FAST_FILE_SIZE:PeerEngine.MAX_FILE_SIZE;
         if(size>limit)throw new IOException(fastMode?"Fast transfer limit is 1 TiB.":"Files must be 1 GiB or smaller.");
-        if(fastMode){getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);if(size<0){size=0;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open attachment");byte[] buffer=new byte[262144];int n;while((n=in.read(buffer))!=-1){size+=n;if(size>limit)throw new IOException("File too large");}}}prepareAttachment(target,name,uri,size,null,true);}
-        else if(size>=0)prepareAttachment(target,name,uri,size,null);
-        else{File tmp=File.createTempFile("attachment-",".tmp",getCacheDir());long count=0;try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(tmp)){if(in==null)throw new IOException("Cannot open attachment");byte[] buffer=new byte[262144];int n;while((n=in.read(buffer))!=-1){count+=n;if(count>limit)throw new IOException("File too large");out.write(buffer,0,n);}}catch(Exception error){tmp.delete();throw error;}prepareAttachment(target,name,Uri.fromFile(tmp),count,tmp);}
+        if(fastMode){getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);if(size<0){size=0;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open attachment");byte[] buffer=new byte[262144];int n;while((n=in.read(buffer))!=-1){size+=n;if(size>limit)throw new IOException("File too large");}}}AttachmentFlow.prepareAttachment(this,target,name,uri,size,null,true);}
+        else if(size>=0)AttachmentFlow.prepareAttachment(this,target,name,uri,size,null);
+        else{File tmp=File.createTempFile("attachment-",".tmp",getCacheDir());long count=0;try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(tmp)){if(in==null)throw new IOException("Cannot open attachment");byte[] buffer=new byte[262144];int n;while((n=in.read(buffer))!=-1){count+=n;if(count>limit)throw new IOException("File too large");out.write(buffer,0,n);}}catch(Exception error){tmp.delete();throw error;}AttachmentFlow.prepareAttachment(this,target,name,Uri.fromFile(tmp),count,tmp);}
 
       }
       else if(request==44&&target!=null&&captured!=null){
         String name="Photo-"+new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+".jpg";
-        prepareAttachment(target,name,Uri.fromFile(captured),captured.length(),captured);
+        AttachmentFlow.prepareAttachment(this,target,name,Uri.fromFile(captured),captured.length(),captured);
       }
-      else if(request==45&&uri!=null){byte[] raw;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open image");raw=readLimited(in);}Bitmap bitmap=inlineBitmap(raw);if(bitmap==null)throw new IOException("This file is not a supported image.");ByteArrayOutputStream png=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,90,png);e.setAvatar(png.toByteArray());bitmap.recycle();ui.post(()->{Toast.makeText(this,"Profile picture updated",Toast.LENGTH_SHORT).show();if(selected==null)showPeople();});}
+      else if(request==45&&uri!=null){byte[] raw;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open image");raw=AttachmentFlow.readLimited(in);}Bitmap bitmap=inlineBitmap(raw);if(bitmap==null)throw new IOException("This file is not a supported image.");ByteArrayOutputStream png=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,90,png);e.setAvatar(png.toByteArray());bitmap.recycle();ui.post(()->{Toast.makeText(this,"Profile picture updated",Toast.LENGTH_SHORT).show();if(selected==null)showPeople();});}
     }catch(Exception error){if(captured!=null&&request==44)captured.delete();ui.post(()->problem(error));}},"lan-attachment").start();
   }
-  byte[] readLimited(InputStream in)throws IOException{try(ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] buffer=new byte[65536];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>PeerEngine.MAX_FILE_SIZE)throw new IOException("Files must be "+(PeerEngine.MAX_FILE_SIZE/1024/1024)+" MB or smaller.");out.write(buffer,0,n);}return out.toByteArray();}}
-  void prepareAttachment(String target,String name,Uri uri,long size,File cameraFileForCleanup){prepareAttachment(target,name,uri,size,cameraFileForCleanup,false);}
-  void prepareAttachment(String target,String name,Uri uri,long size,File cameraFileForCleanup,boolean fast){ui.post(()->{if(!target.equals(selected)){if(cameraFileForCleanup!=null)cameraFileForCleanup.delete();return;}clearPendingAttachment();pendingFast=fast;pendingAttachmentUri=uri;pendingAttachmentSize=size;pendingCameraFile=cameraFileForCleanup;pendingAttachmentName=PeerEngine.safeFileName(name);pendingAttachmentTarget=target;renderPendingAttachment();if(composer!=null)composer.requestFocus();Toast.makeText(this,"Ready to send",Toast.LENGTH_SHORT).show();});}
-  // Fallback path only, for the rare picker that doesn't report a usable size (see above) —
-  // small enough already (bounded by MAX_FILE_SIZE) that keeping it as bytes is fine; written to
-  // a private cache file so the rest of the send pipeline can treat it like any other Uri source.
-  void prepareAttachmentBytes(String target,String name,byte[] bytes)throws IOException{
-    File tmp=new File(getCacheDir(),"attach-"+UUID.randomUUID());
-    try(FileOutputStream out=new FileOutputStream(tmp)){out.write(bytes);}
-    prepareAttachment(target,name,Uri.fromFile(tmp),bytes.length,tmp);
-  }
-  void renderPendingAttachment(){
-    if(attachmentDraft==null)return;releaseImages(attachmentDraft);attachmentDraft.removeAllViews();
-    if(pendingAttachmentUri==null)return;
-    attachmentDraft.setPadding(dp(10),dp(6),dp(10),dp(6));attachmentDraft.setBackground(bg(Color.rgb(235,240,250)));
-    attachmentDraft.addView(label(pendingAttachmentName+"  ·  "+formatSize(pendingAttachmentSize)+(pendingFast?"\nFast transfer · unencrypted · keep original until downloaded":"\nReady to send"),14));
-    Button remove=button("Remove");remove.setOnClickListener(v->clearPendingAttachment());attachmentDraft.addView(remove);
-    // Decoding even a small thumbnail is still blocking I/O — off the UI thread, then posted back
-    // only if this is still the pending attachment (the user may have picked something else, or
-    // sent/cleared it, by the time the decode finishes).
-    if(pendingAttachmentSize>0&&pendingAttachmentSize<=THUMBNAIL_PREVIEW_CAP){
-      final Uri uri=pendingAttachmentUri;final String forName=pendingAttachmentName;
-      new Thread(()->{
-        byte[] bytes=null;try(InputStream in=getContentResolver().openInputStream(uri)){if(in!=null)bytes=readLimited(in);}catch(Exception ignored){}
-        Bitmap bitmap=bytes!=null?inlineBitmap(bytes):null;
-        if(bitmap==null)return;
-        final byte[] previewBytes=bytes;
-        ui.post(()->{
-          if(uri!=pendingAttachmentUri||attachmentDraft==null){bitmap.recycle();return;}
-          ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(170)));image.setBackground(bg(Color.rgb(220,226,237)));image.setClipToOutline(true);image.setContentDescription("Preview "+forName);image.setOnClickListener(v->previewBytes(previewBytes,forName));attachmentDraft.addView(image,0);
-        });
-      },"lan-draft-thumbnail").start();
-    }
-  }
-  void clearPendingAttachment(){if(pendingCameraFile!=null){pendingCameraFile.delete();pendingCameraFile=null;}pendingAttachmentUri=null;pendingAttachmentSize=0;pendingAttachmentName="";pendingAttachmentTarget=null;if(attachmentDraft!=null){releaseImages(attachmentDraft);attachmentDraft.removeAllViews();}}
-  void previewImage(PeerEngine.Message message){PeerEngine e=MessengerService.engine;if(e==null)return;new Thread(()->{try{byte[] bytes=e.readAttachment(message);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("Not a supported image. Use Save file.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{if(isFinishing()||isDestroyed()){bitmap.recycle();return;}ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(message.fileName).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-image-preview").start();}
-  void previewBytes(byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");ui.post(()->{ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(dp(500));AlertDialog dialog=new AlertDialog.Builder(this).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){ui.post(()->problem(error));}},"lan-draft-preview").start();}
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
 
   static final String APP_VERSION="0.8.7";
@@ -392,7 +289,7 @@ public class MainActivity extends Activity {
     new AlertDialog.Builder(this).setTitle("Add a device").setMessage("Your IP: "+ips+"\nEnter the other device's IP. It must be running LAN Messenger.").setView(address).setPositiveButton("Find device",(d,w)->{String value=address.getText().toString();new Thread(()->{try{e.addAddress(value);ui.post(()->{lastSignature="";render();});}catch(Exception error){ui.post(()->Toast.makeText(this,"Device not reachable. Check Wi-Fi, IP and firewall.",Toast.LENGTH_LONG).show());}}).start();}).setNegativeButton("Cancel",null).show();
   }
   // Back closes an open side menu first; only then does the existing navigation run.
-  @Override public void onBackPressed(){if(menuOpen){closeMenu();return;}if(selected!=null)showPeople();else super.onBackPressed();}
+  @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;ui.removeCallbacks(tick);ui.post(tick);}
   @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);saveDraft();}
   @Override protected void onDestroy(){super.onDestroy();ui.removeCallbacksAndMessages(null);}
