@@ -71,6 +71,51 @@ public sealed partial class PeerEngine
         foreach(var m in removed.Where(m=>m.FileName.Length>0))DeleteTransfer(m);}
         Notify();
     }
+    // Like ClearConversation, but also forgets the contact or leaves the group so it drops off the
+    // list entirely. A forgotten peer that reappears on the LAN shows up as a brand-new, unverified
+    // device — chatting again requires comparing safety codes from scratch.
+    public void DeleteConversation(string conversation)
+    {
+        lock(gate){
+            var removed=messages.Where(m=>m.GroupId.Length>0?m.GroupId==conversation:m.From==conversation||m.To==conversation).ToArray();
+            var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
+            peers.TryGetValue(conversation,out var oldPeer);groups.TryGetValue(conversation,out var oldGroup);
+            foreach(var m in removed)hidden.Add(m.From+"/"+m.Id);
+            messages.RemoveAll(m=>removed.Contains(m));
+            if(oldPeer!=null)peers.Remove(conversation);
+            if(oldGroup!=null)groups.Remove(conversation);
+            try{Save();}
+            catch{
+                messages.Clear();messages.AddRange(oldMessages);hidden.Clear();hidden.UnionWith(oldHidden);
+                if(oldPeer!=null)peers[conversation]=oldPeer; if(oldGroup!=null)groups[conversation]=oldGroup;
+                throw;
+            }
+            Save(); // Replace the backup too; deleted content must not return on recovery.
+            foreach(var m in removed.Where(m=>m.FileName.Length>0))DeleteTransfer(m);
+            if(oldPeer!=null)SetPeerAvatar(conversation,null);
+        }
+        Notify();
+    }
+    // Wipes every conversation, contact and group — everything except this device's own identity,
+    // display name and profile picture.
+    public void DeleteAllData()
+    {
+        lock(gate){
+            var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
+            var oldPeers=new Dictionary<string,Peer>(peers);var oldGroups=new Dictionary<string,Group>(groups);
+            var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
+            messages.Clear();peers.Clear();groups.Clear();hidden.Clear();
+            try{Save();}
+            catch{messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;throw;}
+            Save();
+            foreach(var m in withFiles)DeleteTransfer(m);
+            // Final sweep for anything orphaned (e.g. a crash before an earlier cleanup finished).
+            // Own avatar.sec and identity.sec are siblings of these two folders, never touched.
+            try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"attachments"),true);}catch{}
+            try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"avatars"),true);}catch{}
+        }
+        Notify();
+    }
     public static string SafeFileName(string name)
     {
         name=name.Replace('\\','/').Split('/').Last();name=new string(name.Where(c=>c>=32&&!"<>:\"/\\|?*".Contains(c)).ToArray()).Trim().Trim('.');return name.Length==0?"attachment":name[..Math.Min(120,name.Length)];

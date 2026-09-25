@@ -405,6 +405,38 @@ public final class PeerEngine implements Closeable {
     messages.removeAll(removed);try{save();}catch(IOException e){messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);throw e;}save();
     for(Message m:removed)if(!m.fileName.isEmpty())TransferManager.deleteTransfer(this,m);notifyChanged();
   }
+  // Like clearConversation, but also forgets the contact or leaves the group so it drops off the
+  // list entirely. A forgotten peer that reappears on the LAN shows up as a brand-new, unverified
+  // device — chatting again requires comparing safety codes from scratch.
+  public synchronized void deleteConversation(String conversation)throws IOException {
+    ArrayList<Message> removed=new ArrayList<>(),old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
+    Peer oldPeer=peers.get(conversation);Group oldGroup=groups.get(conversation);
+    for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)||m.to.equals(conversation)){removed.add(m);hidden.add(m.from+"/"+m.id);}
+    messages.removeAll(removed);
+    if(oldPeer!=null)peers.remove(conversation);
+    if(oldGroup!=null)groups.remove(conversation);
+    try{save();}catch(IOException e){messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);if(oldPeer!=null)peers.put(conversation,oldPeer);if(oldGroup!=null)groups.put(conversation,oldGroup);throw e;}
+    save();
+    for(Message m:removed)if(!m.fileName.isEmpty())TransferManager.deleteTransfer(this,m);
+    if(oldPeer!=null)try{AvatarSync.setPeerAvatar(this,conversation,null);}catch(IOException ignored){}
+    notifyChanged();
+  }
+  // Wipes every conversation, contact and group — everything except this device's own identity,
+  // display name and profile picture.
+  public synchronized void deleteAllData()throws IOException {
+    ArrayList<Message> old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
+    LinkedHashMap<String,Peer> oldPeers=new LinkedHashMap<>(peers);LinkedHashMap<String,Group> oldGroups=new LinkedHashMap<>(groups);
+    ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
+    messages.clear();peers.clear();groups.clear();hidden.clear();
+    try{save();}catch(IOException e){messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);throw e;}
+    save();
+    for(Message m:withFiles)TransferManager.deleteTransfer(this,m);
+    deleteRecursively(new File(file.getParentFile(),"attachments"));
+    deleteRecursively(new File(file.getParentFile(),"avatars"));
+    try{uploadPolicy.reset();}catch(IOException ignored){}
+    notifyChanged();
+  }
+  static void deleteRecursively(File dir){File[] children=dir.listFiles();if(children!=null)for(File child:children){if(child.isDirectory())deleteRecursively(child);else child.delete();}dir.delete();}
   public static String safeFileName(String name){String[] parts=name.replace('\\','/').split("/",-1);name=parts[parts.length-1];StringBuilder b=new StringBuilder();for(char c:name.toCharArray())if(c>=32&&"<>:\"/\\|?*".indexOf(c)<0)b.append(c);name=b.toString().trim().replaceAll("^\\.+|\\.+$","");return name.isEmpty()?"attachment":name.substring(0,Math.min(120,name.length()));}
   File attachmentPath(Message m)throws IOException {return AttachmentStore.attachmentPath(this,m);}
   static void readTransferBlock(InputStream in,byte[] buffer,int count)throws IOException{int at=0;while(at<count){int n=in.read(buffer,at,count-at);if(n<0)throw new EOFException("Transfer interrupted");if(n>0)at+=n;}}

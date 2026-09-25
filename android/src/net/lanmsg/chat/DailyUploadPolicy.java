@@ -56,6 +56,7 @@ public final class DailyUploadPolicy {
       if(bytes-checkpointBytes>=4*MIB||clock.nanos()-lastCheckpoint>=1_000_000_000L)flush();
     }
   }
+  public synchronized void reset()throws IOException{day=clock.day();bytes=0;checkpointBytes=0;dirty=true;flush();}
   public synchronized void flush()throws IOException {
     rollDay();if(!dirty)return;
     File temp=new File(file+".tmp");
