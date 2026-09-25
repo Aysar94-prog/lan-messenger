@@ -28,6 +28,7 @@ final class PeopleListView {
     Button aboutItem=menuItem(activity,"About");aboutItem.setOnClickListener(v->{closeMenu(activity);activity.showAbout();});panel.addView(aboutItem);
     // setChecked runs before the listener is attached, so building the menu never reports a change.
     Switch offlineToggle=new Switch(activity);offlineToggle.setText("Show offline users");offlineToggle.setTextSize(16);offlineToggle.setPadding(0,activity.dp(12),0,0);offlineToggle.setChecked(activity.showOffline);offlineToggle.setOnCheckedChangeListener((view,checked)->setShowOffline(activity,checked));panel.addView(offlineToggle,new LinearLayout.LayoutParams(-1,-2));
+    Button deleteDataItem=menuItem(activity,"Delete app data");deleteDataItem.setTextColor(Color.rgb(211,47,47));deleteDataItem.setOnClickListener(v->{closeMenu(activity);activity.confirmDeleteAllData();});panel.addView(deleteDataItem);
     panel.addView(activity.label("Hiding a row only removes it from this list. The contact, its chats, its unread count and any queued message stay on this device.",13));
     activity.stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));activity.menuOverlay=overlay;activity.menuOpen=true;}
   static void closeMenu(MainActivity activity){if(activity.menuOverlay!=null){if(activity.stage!=null)activity.stage.removeView(activity.menuOverlay);activity.menuOverlay=null;}activity.menuOpen=false;}
