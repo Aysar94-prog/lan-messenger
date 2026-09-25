@@ -5,6 +5,27 @@ namespace LanMessenger;
 sealed partial class ChatWindow
 {
     void ClearChat(){if(selected==null)return;if(MessageBox.Show(this,"Clear this conversation on this device? Local messages and attachments will be removed and pending sends cancelled. Other devices keep their copies.","Clear conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;try{engine.ClearConversation(selected);chatViews.Remove(selected);thumbnails.RemoveConversation(selected);drafts.Remove(selected);composer.Clear();ClearPendingAttachment();lastFeed="";Render();}catch(Exception e){MessageBox.Show(this,e.Message,"Could not clear conversation");}}
+    void DeleteConversationConfirm()
+    {
+        if(contacts.SelectedItem is not ContactItem item)return;
+        if(MessageBox.Show(this,$"Delete \"{item.Name}\" entirely? This removes the conversation and its attachments, and revokes verification. Seeing this device again on the network starts from an unverified state. Other devices keep their own copies.","Delete conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+        try{
+            engine.DeleteConversation(item.Id);
+            chatViews.Remove(item.Id);thumbnails.RemoveConversation(item.Id);drafts.Remove(item.Id);
+            if(selected==item.Id){selected=null;feed.Controls.Clear();cards.Clear();statusLabels.Clear();feedConversation="";composer.Clear();ClearPendingAttachment();}
+            lastFeed="";lastContacts="";Render();
+        }catch(Exception e){MessageBox.Show(this,e.Message,"Could not delete conversation");}
+    }
+    void DeleteAllDataConfirm()
+    {
+        if(MessageBox.Show(this,"Delete ALL app data? This permanently removes every conversation, contact, group and downloaded file on this device. Your profile name and picture are kept. This cannot be undone.","Delete app data",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+        try{
+            engine.DeleteAllData();
+            foreach(var conv in chatViews.Keys.ToList())thumbnails.RemoveConversation(conv);
+            chatViews.Clear();drafts.Clear();selected=null;feed.Controls.Clear();cards.Clear();statusLabels.Clear();feedConversation="";composer.Clear();ClearPendingAttachment();lastFeed="";lastContacts="";
+            Render();
+        }catch(Exception e){MessageBox.Show(this,e.Message,"Could not delete app data");}
+    }
     void ShowMembers(){var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;MessageBox.Show(this,string.Join("\n",g.Members.Select(id=>engine.DisplayName(id)+(id==engine.Id?" (you)":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People")))+"\n\nEvery pair must verify each other to exchange group messages. Membership is fixed for this group.",g.Name+" · Members");}
     void CreateGroup()
     {
