@@ -12,11 +12,15 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="NOTIFYCOUNT")Console.WriteLine("COUNT\t"+notifications);
  if(a[0]=="GROUP")Console.WriteLine("GROUP\t"+engine.CreateGroup(Encoding.UTF8.GetString(Convert.FromBase64String(a[1])),a[2].Split(',')));
  if(a[0]=="CLEAR")engine.ClearConversation(a[1]);
+ if(a[0]=="DELETECONV")engine.DeleteConversation(a[1]);
+ if(a[0]=="DELETEALL")engine.DeleteAllData();
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
  if(a[0]=="SETAVATAR")engine.SetAvatar(Convert.FromBase64String(a[1]));
  if(a[0]=="CLEARAVATAR")engine.SetAvatar(null);
  if(a[0]=="PEERAVATAR"){var data=engine.PeerAvatar(a[1]);Console.WriteLine(data==null?"PEERAVATAR\tNONE":$"PEERAVATAR\t{SecureIdentity.Hash(data)}\t{data.Length}");}
+ if(a[0]=="OWNAVATAR"){var data=engine.Avatar;Console.WriteLine(data==null?"OWNAVATAR\tNONE":$"OWNAVATAR\t{SecureIdentity.Hash(data)}\t{data.Length}");}
+ if(a[0]=="NAME")Console.WriteLine("NAME\t"+Convert.ToBase64String(Encoding.UTF8.GetBytes(engine.Name)));
  if(a[0]=="FILE")engine.QueueFile(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])),Convert.FromBase64String(a[3]));
  if(a[0]=="FASTFILE")await engine.QueueFastFileAsync(a[1],"",a[2]);
  if(a[0]=="DOWNLOADTOASYNC"){var m=engine.Messages(a[1]).First(m=>m.Id==a[2]);_=Task.Run(async()=>{try{await engine.DownloadToAsync(m,a[3]);}catch{}});}

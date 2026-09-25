@@ -70,11 +70,16 @@ public class PeerHarness {
    }
    if(a[0].equals("GROUP"))System.out.println("GROUP\t"+e.createGroup(PeerEngine.dec(a[1]),Arrays.asList(a[2].split(","))));
    if(a[0].equals("CLEAR"))e.clearConversation(a[1]);
+   if(a[0].equals("DELETECONV"))e.deleteConversation(a[1]);
+   if(a[0].equals("DELETEALL"))e.deleteAllData();
+   if(a[0].equals("USAGE"))System.out.println("USAGE\t"+e.uploadPolicy.sentToday());
    if(a[0].equals("READ"))e.markRead(a[1]);
    if(a[0].equals("UNREAD"))System.out.println("UNREAD\t"+e.unread(a[1]));
    if(a[0].equals("SETAVATAR"))e.setAvatar(Base64.getDecoder().decode(a[1]));
    if(a[0].equals("CLEARAVATAR"))e.setAvatar(null);
    if(a[0].equals("PEERAVATAR")){byte[] data=e.peerAvatar(a[1]);System.out.println("PEERAVATAR\t"+(data==null?"NONE":SecureIdentity.hash(data)+"\t"+data.length));}
+   if(a[0].equals("OWNAVATAR")){byte[] data=e.avatar();System.out.println("OWNAVATAR\t"+(data==null?"NONE":SecureIdentity.hash(data)+"\t"+data.length));}
+   if(a[0].equals("NAME"))System.out.println("NAME\t"+PeerEngine.enc(e.name));
    if(a[0].equals("FILE"))e.queueFile(a[1],PeerEngine.dec(a[2]),Base64.getDecoder().decode(a[3]));
    if(a[0].equals("FILEPATH"))try(InputStream source=new FileInputStream(a[2])){File file=new File(a[2]);e.queueFileStream(a[1],"",source,file.length(),file.getName(),null);}
    if(a[0].equals("FASTFILE"))e.queueFastFile(a[1],"",a[2],new File(a[2]).length(),new File(a[2]).getName());
