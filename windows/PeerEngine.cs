@@ -66,51 +66,11 @@ public sealed partial class PeerEngine : IDisposable
         return m with{Status=seen==total?"Seen":delivered==total?"Delivered":$"Queued ({delivered}/{total} delivered)"};}).ToArray();}}
     public int Pending {get{lock(gate)return messages.Count(m=>m.Status=="Queued");}}
     public void Rename(string name){lock(gate){var old=Name;Name=CleanName(name);try{Save();}catch{Name=old;throw;}}Notify();}
-    string AvatarPath=>Path.Combine(Path.GetDirectoryName(file)!,"avatar.sec");
-    public byte[]? Avatar{get{lock(gate){if(!File.Exists(AvatarPath))return null;try{return protector.Unprotect(File.ReadAllBytes(AvatarPath));}catch{return null;}}}}
-    public void SetAvatar(byte[]? data)
-    {
-        lock(gate){var path=AvatarPath;if(data==null){if(File.Exists(path))File.Delete(path);Notify();return;}
-        var tmp=path+".tmp";File.WriteAllBytes(tmp,protector.Protect(data));File.Move(tmp,path,true);}Notify();
-    }
-    // A peer's photo, once they've sent it over a verified connection — never fetched or guessed, only what they pushed us.
-    string PeerAvatarPath(string peerId)=>Path.Combine(Path.GetDirectoryName(file)!,"avatars",peerId+".sec");
-    public byte[]? PeerAvatar(string peerId){lock(gate){var path=PeerAvatarPath(peerId);if(!File.Exists(path))return null;try{return protector.Unprotect(File.ReadAllBytes(path));}catch{return null;}}}
-    void SetPeerAvatar(string peerId,byte[]? data)
-    {
-        var path=PeerAvatarPath(peerId);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if(data==null||data.Length==0){if(File.Exists(path))File.Delete(path);return;}
-        var tmp=path+".tmp";File.WriteAllBytes(tmp,protector.Protect(data));File.Move(tmp,path,true);
-    }
     public void Queue(string peer,string text)
     {
         QueueContentAsync(peer,text,"",null,0,null).GetAwaiter().GetResult();
     }
 
-    void Load(string source)
-    {
-        var stored=File.ReadAllBytes(source);if(stored.AsSpan().StartsWith(StorageMagic))stored=protector.Unprotect(stored[StorageMagic.Length..]);
-        var lines=Encoding.UTF8.GetString(stored).TrimEnd('\n','\r').Replace("\r","").Split('\n');if(lines.Length<2||lines[^1]!="END")throw new IOException("Incomplete storage");
-        var h=lines[0].Split('\t');if(h.Length!=3||(h[0]!="LMSTORE2"&&h[0]!="LMSTORE3"&&h[0]!="LMSTORE4")||!Uuid(h[1]))throw new IOException("Invalid storage");
-        var loadedPeers=new Dictionary<string,Peer>();var loadedMessages=new List<Message>();var loadedGroups=new Dictionary<string,Group>();var loadedHidden=new HashSet<string>();
-        foreach(var line in lines.Skip(1).SkipLast(1)){var a=line.Split('\t');
-            if((a.Length==5||a.Length==7||a.Length==8||a.Length==10)&&a[0]=="P")loadedPeers[a[1]]=new(a[1],Dec(a[2]),a[3],int.Parse(a[4]),0,a.Length>=7?a[5]:"",a.Length>=7?a[6]:"",a.Length>=8?a[7]:"",a.Length==10?a[8]:"",a.Length==10?a[9]:"");
-            else if((a.Length==8||a.Length==12||a.Length==14)&&a[0]=="M")loadedMessages.Add(new(a[1],a[2],a[3],Dec(a[5]),long.Parse(a[4]),a[6],a.Length>=12?a[8]:"",a.Length>=12?Dec(a[9]):"",a.Length>=12?long.Parse(a[10]):0,a.Length>=12?a[11]:"",a.Length==14?a[12]:"",a.Length==14&&a[13]=="1"));
-            else if(a.Length==6&&a[0]=="G")loadedGroups[a[1]]=new(a[1],a[2],Dec(a[3]),a[4].Split(','),a[5]);
-            else if(a.Length==2&&a[0]=="H")loadedHidden.Add(a[1]);
-            else throw new IOException("Invalid storage row");}
-        groups.Clear();foreach(var g in loadedGroups)groups[g.Key]=g.Value;hidden.Clear();hidden.UnionWith(loadedHidden);
-        Id=h[1];Name=Dec(h[2]);peers.Clear();foreach(var pair in loadedPeers)peers[pair.Key]=pair.Value;messages.Clear();messages.AddRange(loadedMessages);
-    }
-    void Save()
-    {
-        lock(gate){var text=new StringBuilder($"LMSTORE4\t{Id}\t{Enc(Name)}\n");
-        foreach(var p in peers.Values)text.Append($"P\t{p.Id}\t{Enc(p.Name)}\t{p.Host}\t{p.Port}\t{p.Fingerprint}\t{p.Verified}\t{p.PublicKey}\t{p.SentAvatarHash}\t{p.ReceivedAvatarHash}\n");
-        foreach(var m in messages)text.Append($"M\t{m.Id}\t{m.From}\t{m.To}\t{m.Time}\t{Enc(m.Text)}\t{m.Status}\t1\t{m.GroupId}\t{Enc(m.FileName)}\t{m.FileSize}\t{m.FileHash}\t{m.Signature}\t{(m.TtlEligible?"1":"0")}\n");foreach(var g in groups.Values)text.Append($"G\t{g.Id}\t{g.Owner}\t{Enc(g.Name)}\t{string.Join(",",g.Members)}\t{g.Acknowledged}\n");foreach(var key in hidden)text.Append($"H\t{key}\n");text.Append("END\n");
-        using(var stream=new FileStream(file+".tmp",FileMode.Create,FileAccess.Write,FileShare.None)){stream.Write(StorageMagic);stream.Write(protector.Protect(Encoding.UTF8.GetBytes(text.ToString())));stream.Flush(true);}
-        if(File.Exists(file))File.Move(file,file+".bak",true);
-        try{File.Move(file+".tmp",file,true);}catch{if(File.Exists(file+".bak"))File.Move(file+".bak",file,true);throw;}}
-    }
     public void Start(string bindAddress="0.0.0.0",int tcpPort=MessagePort,int udpPort=DiscoveryPort)
     {
         if(Running)return;bind=IPAddress.Parse(bindAddress);discoveryPort=udpPort;
@@ -224,17 +184,6 @@ public sealed partial class PeerEngine : IDisposable
         }catch{return;}
         try{await Write(tls,"LM4\tSYNCDONE");}catch{}
     }
-    const int MaxAvatarSize=2_000_000;
-    async Task HandleAvatar(SecureChannel tls,string senderId,string hash,string lengthText)
-    {
-        if(!int.TryParse(lengthText,out var length)||length<0||length>MaxAvatarSize)return;
-        var data=length>0?await ReadBytes(tls,length):Array.Empty<byte>();
-        if(length>0&&SecureIdentity.Hash(data)!=hash)return;
-        lock(gate)if(!peers.TryGetValue(senderId,out var p)||!p.Trusted)return;
-        SetPeerAvatar(senderId,length>0?data:null);
-        lock(gate){if(!peers.TryGetValue(senderId,out var p))return;var old=p;peers[senderId]=p with{ReceivedAvatarHash=hash};try{Save();}catch{peers[senderId]=old;throw;}}
-        await Write(tls,$"LM4\tAVATARACK\t{hash}");
-    }
     void MarkSeen(string messageId,string readerId){lock(gate){int i=messages.FindIndex(x=>x.Id==messageId&&x.From==Id&&x.To==readerId&&x.Status!="Seen");if(i<0)return;var old=messages[i];messages[i]=old with{Status="Seen"};try{Save();}catch{messages[i]=old;throw;}}}
     public void MarkRead(string conversation)
     {
@@ -313,18 +262,7 @@ public sealed partial class PeerEngine : IDisposable
                 if(incoming is not null){try{Received?.Invoke(incoming);}catch{}Notify();}
             }
         }catch{return;}
-        if(peer.Trusted){
-            var avatar=Avatar;var hash=avatar!=null?SecureIdentity.Hash(avatar):"";
-            if(peer.SentAvatarHash!=hash)
-            try{
-                using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fingerprint=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fingerprint))return;
-                await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;RecordCertificate(h[2],fingerprint,SecureIdentity.RemotePublicKey(tls));if(await Read(tls)!="LM4\tREADY"||!Trusted(peer.Id,fingerprint))return;
-                await Write(tls,$"LM4\tAVATAR\t{Id}\t{hash}\t{avatar?.Length??0}");
-                if(avatar!=null&&avatar.Length>0){using var timeout=new CancellationTokenSource(TransferTimeout(avatar.Length));await tls.WriteAsync(avatar,timeout.Token);}
-                if(await Read(tls)!=$"LM4\tAVATARACK\t{hash}"||!Trusted(peer.Id,fingerprint))return;
-                lock(gate){if(!peers.TryGetValue(peer.Id,out var p))return;var old=p;peers[peer.Id]=p with{SentAvatarHash=hash};try{Save();}catch{peers[peer.Id]=old;throw;}}Notify();
-            }catch{return;}
-        }
+        await PushAvatarIfChanged(peer);
     }
 
     void Notify(){try{Changed?.Invoke();}catch{}}
