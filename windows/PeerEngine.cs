@@ -138,7 +138,9 @@ public sealed partial class PeerEngine : IDisposable
         var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]==Id)return;Remember(h[2],Dec(h[3]),((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(),int.Parse(h[4]));RecordCertificate(h[2],fingerprint,SecureIdentity.RemotePublicKey(tls));await Write(tls,Hello());
         if(!Trusted(h[2],fingerprint)){await Write(tls,"LM4\tPAIR");return;}await Write(tls,"LM4\tREADY");
         var a=(await Read(tls)).Split('\t');
-        if(a.Length==6&&a[0]=="LM4"&&a[1]=="GROUP"){AcceptGroup(a,h[2],fingerprint);await Write(tls,"LM4\tGROUPACK\t"+a[2]);Notify();return;}
+        if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CAPS"){await Write(tls,"LM4\tCAPS\t1");return;}
+        if((a.Length==6||a.Length==7)&&a[0]=="LM4"&&a[1]=="GROUP"){AcceptGroup(a,h[2],fingerprint);await Write(tls,"LM4\tGROUPACK\t"+a[2]);Notify();return;}
+        if(!SimulateLegacyBuild&&a.Length==5&&a[0]=="LM4"&&a[1]=="MEMBERSUPDATE"){HandleMembersUpdate(a,h[2],fingerprint);await Write(tls,$"LM4\tMEMBERSUPDATEACK\t{a[2]}\t{a[3]}");Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SEEN"&&Uuid(a[2])&&a[3]==h[2]){MarkSeen(a[2],h[2]);await Write(tls,"LM4\tSEENACK\t"+a[2]);Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SYNCREQ2"&&Uuid(a[2])){await HandleSync(tls,a[2],a[3],h[2]);Notify();return;}
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="AVATAR"&&a[2]==h[2]){await HandleAvatar(tls,a[2],a[3],a[4]);Notify();return;}
@@ -209,11 +211,18 @@ public sealed partial class PeerEngine : IDisposable
     {
         // Probe every known endpoint for its TLS certificate, even when there are no messages.
         try{using var probe=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(probe.GetStream());await identity.Authenticate(tls,false);await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;Remember(h[2],Dec(h[3]),peer.Host,int.Parse(h[4]));RecordCertificate(h[2],SecureIdentity.Remote(tls),SecureIdentity.RemotePublicKey(tls));}catch{return;}
-        foreach(var group in Groups.Where(g=>g.Owner==Id&&g.Members.Contains(peer.Id)&&!g.Acknowledged.Split(',').Contains(peer.Id)&&!g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).Contains(peer.Id)))
+        foreach(var group in Groups.Where(g=>g.Owner==Id&&g.Members.Contains(peer.Id)&&MemberAckedVersion(g.Id,peer.Id)<g.MembersVersion))
         try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fp=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fp))return;await Write(tls,Hello());var hello=(await Read(tls)).Split('\t');if(!ValidHello(hello)||hello[2]!=peer.Id||await Read(tls)!="LM4\tREADY")return;
-            await Write(tls,$"LM4\tGROUP\t{group.Id}\t{group.Owner}\t{Enc(group.Name)}\t{string.Join(",",group.Members)}");
-            if(await Read(tls)!="LM4\tGROUPACK\t"+group.Id||!Trusted(peer.Id,fp))return;
-            lock(gate){var old=groups[group.Id];groups[group.Id]=old with{Acknowledged=string.Join(",",old.Acknowledged.Split(',',StringSplitOptions.RemoveEmptyEntries).Append(peer.Id).Distinct())};try{Save();}catch{groups[group.Id]=old;throw;}}
+            var sentVersion=group.MembersVersion;var neverAcked=MemberAckedVersion(group.Id,peer.Id)<0;
+            if(neverAcked){
+                var wire=$"LM4\tGROUP\t{group.Id}\t{group.Owner}\t{Enc(group.Name)}\t{string.Join(",",group.Members)}"+(sentVersion>0?$"\t{sentVersion}":"");
+                await Write(tls,wire);
+                if(await Read(tls)!="LM4\tGROUPACK\t"+group.Id||!Trusted(peer.Id,fp))return;
+            }else{
+                await Write(tls,$"LM4\tMEMBERSUPDATE\t{group.Id}\t{sentVersion}\t{string.Join(",",group.Members)}");
+                if(await Read(tls)!=$"LM4\tMEMBERSUPDATEACK\t{group.Id}\t{sentVersion}"||!Trusted(peer.Id,fp))return;
+            }
+            lock(gate){if(!memberAcked.TryGetValue(group.Id,out var m))memberAcked[group.Id]=m=[];var had=m.TryGetValue(peer.Id,out var old);m[peer.Id]=sentVersion;try{Save();}catch{if(had)m[peer.Id]=old;else m.Remove(peer.Id);throw;}}
         }catch{return;}
         Message[] queued;lock(gate)queued=messages.Where(m=>m.To==peer.Id&&m.Status=="Queued").ToArray();
         foreach(var m in queued)try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fingerprint=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fingerprint))return;

@@ -8,17 +8,42 @@ public sealed partial class PeerEngine
     // MaxFileSize are never buffered whole in memory at any step; peak memory stays near this size.
     const int ChunkSize=3*1024*1024;
     static readonly byte[] AttachmentMagic=Encoding.ASCII.GetBytes("LMATCS1");
-    // Left holds member ids the owner has been told (via LEAVE) have departed — distinct from
-    // Acknowledged, so Deliver's invite-resend loop stops for them until the owner explicitly
-    // re-invites. Membership itself (Members) never changes; it stays exactly as created.
-    public sealed record Group(string Id,string Owner,string Name,string[] Members,string Acknowledged="",string Left="");
+    // Members is the live, active roster — it shrinks when someone leaves and grows when the owner
+    // adds someone, propagated to every active member via MEMBERSUPDATE (see PeerEngine.cs's
+    // Deliver/Receive). MembersVersion is a plain monotonic counter, bumped by exactly 1 on every
+    // such change; a receiving device only ever adopts a strictly greater version.
+    public sealed record Group(string Id,string Owner,string Name,string[] Members,int MembersVersion=0);
     readonly Dictionary<string,Group> groups=[];
     readonly HashSet<string> hidden=[];
     // Peer ids we've deleted and still owe a FORGET notice; groups we've left, keyed by the
     // owner id we still owe a LEAVE notice to (captured before the local group record is dropped).
     readonly HashSet<string> forgotten=[];
     readonly Dictionary<string,string> pendingLeaves=[];
+    // Owner-only bookkeeping, never sent over the wire: ids who used to be a member of a group,
+    // kept purely so the Members dialog can show them and offer Re-invite. Disjoint from the live
+    // Members above (a departed id is removed from Members, not merely flagged here).
+    readonly Dictionary<string,HashSet<string>> departedHistory=[];
+    // Owner-only: per group, the last MembersVersion each active member has acked. Drives Deliver's
+    // broadcast/retry loop — a member whose acked version is behind the group's current version is
+    // still owed either a first GROUP invite (never acked anything before) or a MEMBERSUPDATE.
+    readonly Dictionary<string,Dictionary<string,int>> memberAcked=[];
+    // Test-only: makes this engine behave as if it predates group-membership changes entirely —
+    // refuses CAPS and MEMBERSUPDATE while HELLO and ordinary messaging behave normally. Used by
+    // tests/CsharpHarness and tests/PeerHarness.java to simulate a not-yet-updated peer without a
+    // real legacy binary.
+    public bool SimulateLegacyBuild;
     public Group[] Groups {get{lock(gate)return groups.Values.Select(g=>g with{Members=g.Members.ToArray()}).ToArray();}}
+    // Union of the live roster and the departed-history record, for the Members dialog — a departed
+    // id no longer appears in Groups[].Members, so callers that want to show (and Re-invite) them
+    // need this instead.
+    public (string Id,bool Active)[] AllKnownMembers(string groupId)
+    {
+        lock(gate){
+            if(!groups.TryGetValue(groupId,out var g))return [];
+            var departed=departedHistory.TryGetValue(groupId,out var h)?h:[];
+            return g.Members.Select(id=>(id,true)).Concat(departed.Select(id=>(id,false))).ToArray();
+        }
+    }
     public string DisplayName(string id){lock(gate)return id==Id?Name:groups.TryGetValue(id,out var g)?g.Name:peers.TryGetValue(id,out var p)?p.Name:"Device "+id[..Math.Min(8,id.Length)];}
     public string CreateGroup(string name,IEnumerable<string> members)
     {
@@ -27,24 +52,99 @@ public sealed partial class PeerEngine
         var g=new Group(Guid.NewGuid().ToString(),Id,name,ids);groups.Add(g.Id,g);try{Save();}catch{groups.Remove(g.Id);throw;}Notify();return g.Id;}
     }
     bool AllowedGroup(string id,string sender)=>id.Length==0||(groups.TryGetValue(id,out var g)&&g.Members.Contains(Id)&&g.Members.Contains(sender));
-    // Owner-side: a member has told us they left. Recorded separately from Acknowledged so the
-    // invite-resend loop stops for them until ReinviteMember explicitly clears it.
+    // Owner-side: a member has told us they left. This is never gated by anyone's capability — it's
+    // a fact that already happened, not a request the owner can refuse. Removes them from the live
+    // roster (shrinking it), records them in the separate departed history, and bumps the version so
+    // Deliver's broadcast loop picks up every remaining active member automatically.
     void HandleLeave(string groupId,string memberId)
     {
         lock(gate){
-            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id)return;
-            var left=g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries);
-            if(left.Contains(memberId))return;
-            var old=g;groups[groupId]=g with{Left=string.Join(",",left.Append(memberId))};
-            try{Save();}catch{groups[groupId]=old;throw;}
+            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id||!g.Members.Contains(memberId))return;
+            var hadHistory=departedHistory.TryGetValue(groupId,out var set)&&set.Contains(memberId);
+            groups[groupId]=g with{Members=g.Members.Where(x=>x!=memberId).ToArray(),MembersVersion=g.MembersVersion+1};
+            if(!departedHistory.TryGetValue(groupId,out set))departedHistory[groupId]=set=[];
+            set.Add(memberId);
+            try{Save();}catch{groups[groupId]=g;if(!hadHistory)set.Remove(memberId);throw;}
         }
     }
     void AcceptGroup(string[] a,string sender,string fingerprint)
     {
-        var members=a[5].Split(',');var name=Dec(a[4]);
-        lock(gate){if(!Trusted(sender,fingerprint)||!Uuid(a[2])||a[3]!=sender||name.Trim().Length==0||name.Length>50||members.Length is <3 or >16||members.Distinct().Count()!=members.Length||members.Any(x=>!Uuid(x))||!members.Contains(Id)||!members.Contains(sender)||peers.ContainsKey(a[2])||a[2]==Id)throw new IOException("Invalid group invitation");
-        if(groups.TryGetValue(a[2],out var old)){if(old.Owner!=sender||old.Name!=name||!old.Members.SequenceEqual(members))throw new IOException("Group membership cannot be replaced");return;}
-        groups[a[2]]=new(a[2],sender,name,members);try{Save();}catch{groups.Remove(a[2]);throw;}}
+        var members=a[5].Split(',');var name=Dec(a[4]);var version=a.Length==7?int.Parse(a[6]):0;
+        lock(gate){
+        if(!Trusted(sender,fingerprint)||!Uuid(a[2])||a[3]!=sender||name.Trim().Length==0||name.Length>50||members.Length>16||members.Distinct().Count()!=members.Length||members.Any(x=>!Uuid(x))||!members.Contains(Id)||!members.Contains(sender)||peers.ContainsKey(a[2])||a[2]==Id)throw new IOException("Invalid group invitation");
+        if(groups.TryGetValue(a[2],out var old)){
+            if(old.Owner!=sender||old.Name!=name)throw new IOException("Group membership cannot be replaced");
+            if(version<=old.MembersVersion)return; // stale/duplicate retry; already at least this current
+            groups[a[2]]=old with{Members=members,MembersVersion=version};try{Save();}catch{groups[a[2]]=old;throw;}
+            return;
+        }
+        groups[a[2]]=new(a[2],sender,name,members,version);try{Save();}catch{groups.Remove(a[2]);throw;}}
+    }
+    // Update-only: applies only to a group the recipient already has a local record for. A stray or
+    // late MEMBERSUPDATE for a group with no local record (departed, or never a member) is ignored,
+    // same as an unknown group id is rejected elsewhere — only a GROUP frame ever creates a record.
+    void HandleMembersUpdate(string[] a,string sender,string fingerprint)
+    {
+        if(!Uuid(a[2])||!int.TryParse(a[3],out var version))throw new IOException("Invalid membership update");
+        var members=a[4].Split(',');
+        lock(gate){
+            if(!groups.TryGetValue(a[2],out var old))return;
+            if(old.Owner!=sender||!Trusted(sender,fingerprint))return;
+            if(version<=old.MembersVersion)return;
+            if(members.Length>16||members.Distinct().Count()!=members.Length||members.Any(x=>!Uuid(x))||!members.Contains(Id)||!members.Contains(sender))return;
+            groups[a[2]]=old with{Members=members,MembersVersion=version};try{Save();}catch{groups[a[2]]=old;throw;}
+        }
+    }
+    int MemberAckedVersion(string groupId,string peerId){lock(gate)return memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(peerId,out var v)?v:-1;}
+    // Queries a peer live, every time — a past success is never trusted as durable proof, since the
+    // same device could have been downgraded, reinstalled, or restored from a backup since. Returns
+    // 0 (unsupported) for any failure: unreachable, connection error, or an invalid/missing reply —
+    // which is exactly how a build that's never heard of CAPS also looks from here.
+    async Task<int> QueryCapability(Peer peer)
+    {
+        try{
+            using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);
+            var fp=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fp))return 0;
+            await Write(tls,Hello());var hello=(await Read(tls)).Split('\t');if(!ValidHello(hello)||hello[2]!=peer.Id)return 0;
+            if(await Read(tls)!="LM4\tREADY")return 0;
+            await Write(tls,"LM4\tCAPS");var reply=(await Read(tls)).Split('\t');
+            if(reply.Length!=3||reply[0]!="LM4"||reply[1]!="CAPS"||!int.TryParse(reply[2],out var v))return 0;
+            return v;
+        }catch{return 0;}
+    }
+    // The one real membership mutation — Re-invite and Accept-on-a-join-request both call this and
+    // nothing else. Refuses outright (nothing mutated) unless every id that would end up in Members —
+    // every current active member, plus whoever's being added — answers a fresh CAPS query, at this
+    // exact moment, confirming support. Never gates an incoming LEAVE; leaving is handled separately
+    // in HandleLeave and can never be refused.
+    public async Task AddMember(string groupId,string memberId)
+    {
+        string[] toCheck;
+        lock(gate){
+            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can add a member.");
+            if(g.Members.Contains(memberId))return;
+            if(g.Members.Length>=16)throw new IOException("This group already has 16 members.");
+            toCheck=[..g.Members,memberId];
+        }
+        foreach(var id in toCheck.Where(x=>x!=Id)){
+            Peer? p;lock(gate)p=peers.TryGetValue(id,out var found)?found:null;
+            if(p is null)throw new IOException("Every member must already be a verified contact.");
+            if(await QueryCapability(p)<1)throw new IOException($"Can't change this group's membership: {p.Name} hasn't updated to a version that supports it.");
+        }
+        lock(gate){
+            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can add a member.");
+            if(g.Members.Contains(memberId))return;
+            if(g.Members.Length>=16)throw new IOException("This group already has 16 members.");
+            groups[groupId]=g with{Members=[..g.Members,memberId],MembersVersion=g.MembersVersion+1};
+            // Whether brand-new or returning, whoever's added needs a fresh first-time GROUP invite,
+            // not a MEMBERSUPDATE — a returning member deleted their own local record when they left
+            // (that's how leaving works), so any stale acked-version from before they left must not
+            // make Deliver() think they already have a live copy to merely update.
+            int? oldAck=memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(memberId,out var v)?v:null;
+            m?.Remove(memberId);
+            try{Save();}catch{groups[groupId]=g;if(oldAck is int restore)m![memberId]=restore;throw;}
+        }
+        Notify();WakeDelivery();
     }
     public void QueueFile(string conversation,string name,byte[] data)=>QueueFile(conversation,"",name,data);
     public void QueueFile(string conversation,string caption,string name,byte[] data)
@@ -126,14 +226,17 @@ public sealed partial class PeerEngine
             var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
             var oldPeers=new Dictionary<string,Peer>(peers);var oldGroups=new Dictionary<string,Group>(groups);
             var oldForgotten=forgotten.ToArray();var oldPendingLeaves=new Dictionary<string,string>(pendingLeaves);
+            var oldDeparted=departedHistory.ToDictionary(kv=>kv.Key,kv=>new HashSet<string>(kv.Value));
+            var oldAcked=memberAcked.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,int>(kv.Value));
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();groups.Clear();hidden.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();
             foreach(var id in oldPeers.Keys)forgotten.Add(id);
             peers.Clear();
             try{Save();}
             catch{
                 messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);
                 foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;
+                foreach(var kv in oldDeparted)departedHistory[kv.Key]=kv.Value;foreach(var kv in oldAcked)memberAcked[kv.Key]=kv.Value;
                 forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
                 throw;
             }
@@ -146,18 +249,13 @@ public sealed partial class PeerEngine
         }
         Notify();WakeDelivery();
     }
-    // Owner-only: brings a departed member back by clearing their Acknowledged/Left flags, so the
-    // next Deliver cycle treats them as not-yet-invited and resends the GROUP invite normally.
-    public void ReinviteMember(string groupId,string memberId)
+    // Owner-only: brings a departed member back. Same underlying action as AddMember — a fresh
+    // capability check, live, every time — just triggered from the Members dialog instead of an
+    // incoming join request.
+    public Task ReinviteMember(string groupId,string memberId)
     {
-        lock(gate){
-            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can re-invite a member.");
-            var ack=string.Join(",",g.Acknowledged.Split(',',StringSplitOptions.RemoveEmptyEntries).Where(x=>x!=memberId));
-            var left=string.Join(",",g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).Where(x=>x!=memberId));
-            groups[groupId]=g with{Acknowledged=ack,Left=left};
-            try{Save();}catch{groups[groupId]=g;throw;}
-        }
-        Notify();WakeDelivery();
+        lock(gate)if(groups[groupId].Owner!=Id)throw new IOException("Only the group owner can re-invite a member.");
+        return AddMember(groupId,memberId);
     }
     public static string SafeFileName(string name)
     {
