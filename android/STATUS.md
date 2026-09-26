@@ -1,11 +1,13 @@
 # Android status
 
-Reviewed 2026-09-25. Release: **0.8.7**, versionCode 21. See the [platform comparison](../PROJECT_STATUS.md).
+Reviewed 2026-09-26. Release: **0.8.7**, versionCode 21. See the [platform comparison](../PROJECT_STATUS.md).
 
-Unreleased working-tree change: the people-screen side menu and the `Show offline users` filter. The `0.8.7` APK in outputs was rebuilt from this tree, so that artifact now also contains this change; versionCode is unchanged, so it still installs over an existing 0.8.7 install.
+Unreleased working-tree changes: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows 0.8.11); and a contact-forget notice plus group-leave + owner re-invite (mirrors an unreleased Windows addition on top of 0.8.11 — see [Windows status](../windows/STATUS.md)). The `0.8.7` APK in outputs was rebuilt from this tree, so that artifact now also contains these changes; versionCode is unchanged, so it still installs over an existing 0.8.7 install.
 
 ## Implemented
 
+- Unreleased, in source: long-press a conversation row for "Delete conversation" — clears its history/attachments and, for a contact, revokes verification and removes the peer record entirely (a group is left); a rediscovered forgotten contact reappears as a brand-new, unverified device. "Delete app data" in the side menu wipes every conversation/contact/group/attachment while keeping identity, display name, profile picture, and also resets the daily upload counter (`deleteConversation`/`deleteAllData` in `PeerEngine.java`).
+- Unreleased, in source: deleting a contact now also notifies them. `deleteConversation`/`deleteAllData` queue a peer id in a persisted `forgotten` set; `deliver()` sends them a new `LM4\tFORGET` frame (retried until acked, same shape as `SEEN`/`SEENACK`) whenever that peer is next reachable, which calls `revoke` on their side and raises a new `forgottenCallback`, wired in `MessengerService.java` to a notification ("Removed you as a contact..."). Deleting a group is still a leave (unaffected for other members), but it now queues a `LM4\tLEAVE` frame to the group's owner (persisted `pendingLeaves`); the owner records the departed member in a new `Group.left` field (an optional 7th, backward-compatible `G` storage field, via `GroupSync.handleLeave`) and `deliver()`'s invite-resend loop skips anyone in `left`. `showMembers()` in `MainActivity.java` now shows departed members distinctly with an owner-only "Re-invite" button, calling the new `reinviteMember(groupId, memberId)`, which clears the Acknowledged/Left flags so the next delivery cycle resends the `GROUP` invite and they rejoin with the same member list — no re-verification needed. An old build that doesn't understand `FORGET`/`LEAVE` simply never acks; the sender keeps retrying rather than erroring.
 - Messaging, groups, verification, blue/gray presence, attachment draft before Send, and local chat clear.
 - Automatic inline ordinary photos and built-in camera capture with preview before sending.
 - Initially render newest 10 messages, then 20 more when scrolling upward; MainActivity has a 16 MiB thumbnail LRU cache.
@@ -30,11 +32,12 @@ Unreleased working-tree change: the people-screen side menu and the `Show offlin
 
 ## Verification and handoff
 
+- Forget-notice / group re-invite (unreleased): APK build and signature verification with the original signing key passed against the current working tree. The full `tests/run.ps1` suite passed, including the extended `tests/delete_conversation.py`, which exercises the real Java engine for both new behaviors: contact delete followed by the other side's own verification being auto-revoked once the `FORGET` notice arrives (new `VERIFIED` harness command), and a non-owner group member leaving, the owner seeing them recorded in `left` (new `LEFT` harness command), re-inviting them (new `REINVITE` harness command), and confirming they rejoin and receive new group messages again. No manual click-through of `showMembers()`'s new "Re-invite" button was performed in this environment.
 - APK build and signature verification with the original signing key passed.
 - Java/C# engine interoperability, resume/disconnect, integrity, and daily-policy tests passed.
 - A 1025 MiB Fast test passed on a computer with a 64 MiB Java test heap; that is not a physical-phone benchmark.
 - Real-device acceptance is pending for destination chooser, file opening, camera, background behavior, and Wi-Fi throughput.
-- UI/cache: `src/net/lanmsg/chat/MainActivity.java`. SAF/service: `MessengerService.java`. Direct transfer: `DirectFileTransfer.java`, `DownloadDestination.java`. Legacy encrypted path: `ResumableTransfer.java`, `ResumeStore.java`. Upload tiers: `DailyUploadPolicy.java`.
+- UI/cache: `src/net/lanmsg/chat/MainActivity.java`. SAF/service: `MessengerService.java`. Direct transfer: `DirectFileTransfer.java`, `DownloadDestination.java`. Legacy encrypted path: `ResumableTransfer.java`, `ResumeStore.java`. Upload tiers: `DailyUploadPolicy.java`. Groups (including `Left`/re-invite): `GroupSync.java`.
 - Package: `D:/LAN-Messenger/outputs/LanMessenger-0.8.7.apk`; install over the existing app without uninstalling. Test outputs: `D:/LAN-Messenger/outputs/.build/release-tests-087`.
 - Last Android code commit: `7d9d99c`. Windows-only commit `07f2e54` needs no Android update. The people side menu work is uncommitted in the working tree.
 

@@ -1,6 +1,6 @@
 # LAN Messenger project status and platform comparison
 
-Reviewed 2026-09-26 against Windows 0.8.11 source (delete-conversation/delete-app-data feature, plus a purely internal file-split refactor of `Program.cs`/`PeerEngine.cs`). Do not infer feature parity from version numbers.
+Reviewed 2026-09-26 against Windows 0.8.11 source (delete-conversation/delete-app-data feature, plus a purely internal file-split refactor of `Program.cs`/`PeerEngine.cs`), plus an unreleased-in-source addition on both platforms: a contact-forget notice (auto-revokes the other side's verification, with an on-device notice) and group-leave + owner re-invite. Do not infer feature parity from version numbers.
 
 ## Working arrangement
 
@@ -23,6 +23,8 @@ Windows 0.8.11 interoperates with Android 0.8.7. New direct-to-destination manua
 
 Unreleased Android working-tree changes (not yet packaged as a new APK release): the people-screen side menu and `Show offline users` filter (Android UI/local preference only, no wire or engine-semantics change), and the same Delete conversation / Delete app data feature just released for Windows (`deleteConversation`/`deleteAllData` in `PeerEngine.java`, long-press in the people list, "Delete app data" in the side menu). Both were compiled and verified via a signed/verified APK build in this environment but the `outputs/LanMessenger-0.8.7.apk` file was rebuilt from this same working tree, so it now also carries these unreleased changes under the same version/versionCode; that rebuild ran a temporary copy of `android/build.ps1` with only its `$ErrorActionPreference` line neutralized, because the unmodified script aborts on a javac stderr note, and the tracked script was not changed.
 
+Unreleased on **both** platforms (not yet a new version/build on either side): deleting a contact now queues a `FORGET` wire notice, delivered once the other side is next reachable — it revokes their own verification of you (`Revoke`/`revoke`) and raises an on-device notice, instead of the deletion being silent to them. Deleting a group is still a leave (unchanged for other members), but it now queues a `LEAVE` notice to the group's owner; the owner's Members dialog shows departed members distinctly with a "Re-invite" action that clears their `Acknowledged`/`Left` flags so the next delivery cycle resends the `GROUP` invite and they rejoin with the same member list, no re-verification needed. Both notices are queued/retried the same way as existing frames (`SEEN`/`GROUP`), so an old build that doesn't understand `FORGET`/`LEAVE` never acks and the sender simply keeps retrying rather than erroring. Verified end to end (both directions, both notice types, and the re-invite/rejoin round trip) by the extended `tests/delete_conversation.py`, part of the full `tests/run.ps1` suite, which passed clean; the Android side was also verified via a signed/verified APK rebuild in this environment (same version/versionCode as the existing unreleased Android changes above).
+
 Both platforms also went through a purely internal file-split refactor (largest files broken into smaller, cohesive ones by concern) with no behavior change — see [Windows status](windows/STATUS.md) and [Android status](android/STATUS.md) for the exact file lists.
 
 ## Feature comparison
@@ -34,6 +36,8 @@ Both platforms also went through a purely internal file-split refactor (largest 
 | Clear chat locally while retaining contact/group and user-saved file | Implemented | Implemented |
 | Delete conversation: forgets a contact (revokes verification, removes peer record) or leaves a group | Implemented; right-click a conversation row | Implemented in source (not yet a packaged release); long-press a conversation row |
 | Delete app data: wipes every conversation/contact/group/attachment, keeps identity/name/avatar | Implemented; toolbar button | Implemented in source (not yet a packaged release); side-menu item, also resets daily upload usage |
+| Forgetting a contact also notifies them: their verification of you is auto-revoked, with an on-device notice | Implemented in source (not yet a packaged release) | Implemented in source (not yet a packaged release) |
+| Leaving a group lets the owner see who departed and re-invite them back into the same group | Implemented in source (not yet a packaged release); "Re-invite" in Members dialog | Implemented in source (not yet a packaged release); "Re-invite" in Members dialog |
 | Blue online / gray offline presence | Implemented | Implemented |
 | People-screen side menu | Not implemented | Implemented on Android; Profile and About live in it |
 | Hide offline direct peers in the people list | Not implemented | Implemented on Android as an Android-local persisted `Show offline users` flag, default off; a people-list display filter for direct-peer rows only, group rows are never hidden; it does not change engine state, routing or the wire, and deep links and open chats bypass the list rather than being filtered |

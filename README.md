@@ -2,6 +2,8 @@
 
 Windows 0.8.11 adds a way to remove a conversation entirely: right-click a contact or group in the list and choose Delete conversation. This clears its history and attachments and, for a contact, revokes verification and forgets the device — seeing it again on the network starts from an unverified state, same as a brand-new contact. A group is simply left; other members are unaffected. A new "Delete app data" toolbar button wipes every conversation, contact, group and downloaded file on the device, keeping only your identity, display name and profile picture. Both actions ask for confirmation first and cannot be undone. The same feature exists in Android's source tree (long-press a conversation; "Delete app data" is in the side menu) but has not been packaged as a new Android release.
 
+An unreleased addition on top of 0.8.11, mirrored in Android's source tree and likewise not yet packaged, closes two gaps in the above: deleting a contact now also notifies them — their own verification of you is automatically revoked and they see an on-device notice — delivered whenever they're next reachable. Deleting a group is still a leave, but the group's owner can now see who has departed and bring them back into the same group with one "Re-invite" action from the Members dialog.
+
 Windows 0.8.10 fixes two pagination UI regressions: new messages grow short chats up to the initial ten, and an empty chat shows its hint once after redraws or switches.
 
 Current feature parity and platform work are tracked separately: [project comparison](PROJECT_STATUS.md), [Windows status](windows/STATUS.md), [Android status](android/STATUS.md). One shared Git branch; independent platform releases and status records. Do not infer feature parity from version numbers.
