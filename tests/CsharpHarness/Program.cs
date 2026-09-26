@@ -17,6 +17,7 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="VERIFIED")Console.WriteLine("VERIFIED\t"+engine.Peers.Any(p=>p.Id==a[1]&&p.Trusted).ToString().ToLowerInvariant());
  if(a[0]=="REINVITE")await engine.ReinviteMember(a[1],a[2]);
  if(a[0]=="LEFT")Console.WriteLine("LEFT\t"+engine.AllKnownMembers(a[1]).Any(m=>m.Id==a[2]&&!m.Active).ToString().ToLowerInvariant());
+ if(a[0]=="ROSTER")foreach(var g in engine.Groups.Where(g=>g.Id==a[1]))Console.WriteLine($"ROSTER\t{g.MembersVersion}\t{string.Join(",",g.Members)}");
  if(a[0]=="LEGACY")engine.SimulateLegacyBuild=a[1]=="true";
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
