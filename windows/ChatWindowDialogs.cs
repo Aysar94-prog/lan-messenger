@@ -26,7 +26,27 @@ sealed partial class ChatWindow
             Render();
         }catch(Exception e){MessageBox.Show(this,e.Message,"Could not delete app data");}
     }
-    void ShowMembers(){var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;MessageBox.Show(this,string.Join("\n",g.Members.Select(id=>engine.DisplayName(id)+(id==engine.Id?" (you)":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People")))+"\n\nEvery pair must verify each other to exchange group messages. Membership is fixed for this group.",g.Name+" · Members");}
+    void ShowMembers()
+    {
+        var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;
+        var left=g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).ToHashSet();bool isOwner=g.Owner==engine.Id;
+        using var dialog=new Form{Text=g.Name+" · Members",Size=new Size(460,Math.Min(640,140+g.Members.Length*44)),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        var layout=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18),FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};
+        layout.Controls.Add(MessageLabel("Every pair must verify each other to exchange group messages. Membership is fixed for this group.",10,Color.SlateGray,400));
+        foreach(var id in g.Members){
+            var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,Margin=new Padding(0,4,0,4)};
+            var status=id==engine.Id?" (you)":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People";
+            row.Controls.Add(MessageLabel(engine.DisplayName(id)+status+(left.Contains(id)?" · Left":""),11,Ink,left.Contains(id)&&isOwner?190:280));
+            if(isOwner&&left.Contains(id)){
+                var reinvite=new Button{Text="Re-invite",AutoSize=true};
+                reinvite.Click+=(_,_)=>{try{engine.ReinviteMember(g.Id,id);dialog.Close();}catch(Exception e){MessageBox.Show(dialog,e.Message,"Could not re-invite");}};
+                row.Controls.Add(reinvite);
+            }
+            layout.Controls.Add(row);
+        }
+        var close=new Button{Text="Close",AutoSize=true};close.Click+=(_,_)=>dialog.Close();StyleButtons(layout);layout.Controls.Add(close);
+        dialog.Controls.Add(layout);dialog.ShowDialog(this);
+    }
     void CreateGroup()
     {
         var peers=engine.Peers.Where(p=>p.Trusted).ToArray();if(peers.Length<2){MessageBox.Show(this,"Verify at least two contacts before creating a group.","New group");return;}
