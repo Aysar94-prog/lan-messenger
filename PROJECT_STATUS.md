@@ -1,6 +1,6 @@
 # LAN Messenger project status and platform comparison
 
-Reviewed 2026-09-25 against Windows 0.8.10 source (0.8.9 plan implementation plus short-chat and empty-hint fixes). Do not infer feature parity from version numbers.
+Reviewed 2026-09-26 against Windows 0.8.11 source (delete-conversation/delete-app-data feature, plus a purely internal file-split refactor of `Program.cs`/`PeerEngine.cs`). Do not infer feature parity from version numbers.
 
 ## Working arrangement
 
@@ -16,12 +16,14 @@ Reviewed 2026-09-25 against Windows 0.8.10 source (0.8.9 plan implementation plu
 
 | Platform | Release | Latest change | Verification |
 |---|---|---|---|
-| Windows | 0.8.10 | Newest-10 and progressive history, bounded caches, plus fixes for short-chat growth and duplicate empty-chat hint | Build, native UI tests, and isolated five-to-six-message reproduction passed; confirmation on the affected PC pending |
+| Windows | 0.8.11 | Delete conversation (forgets a contact/leaves a group) and Delete app data (wipes everything but identity/profile/avatar) | Build (0 warnings/errors) and full `tests/run.ps1` suite passed, including new `tests/delete_conversation.py`; no manual click-through in this environment |
 | Android | 0.8.7, versionCode 21 | Chosen download destination, open downloaded file, plaintext Fast payload | Signed APK and engine tests passed; physical SAF/viewer/Wi-Fi checks pending |
 
-Windows 0.8.10 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
+Windows 0.8.11 interoperates with Android 0.8.7. New direct-to-destination manual downloads require at least 0.8.7 on both peers.
 
-Unreleased Android working-tree change: the people-screen side menu and the `Show offline users` filter, described in [Android status](android/STATUS.md). It is Android UI and an Android-local preference only. Nothing on the wire changed, no engine semantics changed, and Windows needs no update and no rebuild. The `0.8.7` APK in outputs was rebuilt from this tree, so it now also carries this unreleased change with the same versionCode; that rebuild ran a temporary copy of `android/build.ps1` with only its `$ErrorActionPreference` line neutralized, because the unmodified script aborts on a javac stderr note, and the tracked script was not changed.
+Unreleased Android working-tree changes (not yet packaged as a new APK release): the people-screen side menu and `Show offline users` filter (Android UI/local preference only, no wire or engine-semantics change), and the same Delete conversation / Delete app data feature just released for Windows (`deleteConversation`/`deleteAllData` in `PeerEngine.java`, long-press in the people list, "Delete app data" in the side menu). Both were compiled and verified via a signed/verified APK build in this environment but the `outputs/LanMessenger-0.8.7.apk` file was rebuilt from this same working tree, so it now also carries these unreleased changes under the same version/versionCode; that rebuild ran a temporary copy of `android/build.ps1` with only its `$ErrorActionPreference` line neutralized, because the unmodified script aborts on a javac stderr note, and the tracked script was not changed.
+
+Both platforms also went through a purely internal file-split refactor (largest files broken into smaller, cohesive ones by concern) with no behavior change — see [Windows status](windows/STATUS.md) and [Android status](android/STATUS.md) for the exact file lists.
 
 ## Feature comparison
 
@@ -30,6 +32,8 @@ Unreleased Android working-tree change: the people-screen side menu and the `Sho
 | Discovery, verification, queued messages, delivery/read state | Implemented | Implemented |
 | Groups, avatars, unread count | Implemented | Implemented |
 | Clear chat locally while retaining contact/group and user-saved file | Implemented | Implemented |
+| Delete conversation: forgets a contact (revokes verification, removes peer record) or leaves a group | Implemented; right-click a conversation row | Implemented in source (not yet a packaged release); long-press a conversation row |
+| Delete app data: wipes every conversation/contact/group/attachment, keeps identity/name/avatar | Implemented; toolbar button | Implemented in source (not yet a packaged release); side-menu item, also resets daily upload usage |
 | Blue online / gray offline presence | Implemented | Implemented |
 | People-screen side menu | Not implemented | Implemented on Android; Profile and About live in it |
 | Hide offline direct peers in the people list | Not implemented | Implemented on Android as an Android-local persisted `Show offline users` flag, default off; a people-list display filter for direct-peer rows only, group rows are never hidden; it does not change engine state, routing or the wire, and deep links and open chats bypass the list rather than being filtered |

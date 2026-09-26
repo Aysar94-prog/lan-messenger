@@ -1,4 +1,6 @@
-# LAN Messenger — Android 0.8.7 / Windows 0.8.10
+# LAN Messenger — Android 0.8.7 / Windows 0.8.11
+
+Windows 0.8.11 adds a way to remove a conversation entirely: right-click a contact or group in the list and choose Delete conversation. This clears its history and attachments and, for a contact, revokes verification and forgets the device — seeing it again on the network starts from an unverified state, same as a brand-new contact. A group is simply left; other members are unaffected. A new "Delete app data" toolbar button wipes every conversation, contact, group and downloaded file on the device, keeping only your identity, display name and profile picture. Both actions ask for confirmation first and cannot be undone. The same feature exists in Android's source tree (long-press a conversation; "Delete app data" is in the side menu) but has not been packaged as a new Android release.
 
 Windows 0.8.10 fixes two pagination UI regressions: new messages grow short chats up to the initial ten, and an empty chat shows its hint once after redraws or switches.
 
@@ -60,9 +62,9 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 Android: install LanMessenger-0.8.7.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.10.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.11.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
-Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.10 and Android 0.8.7 interoperate. Do not downgrade.
+Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.11 and Android 0.8.7 interoperate. Do not downgrade.
 
 ## Pair, chat and groups
 

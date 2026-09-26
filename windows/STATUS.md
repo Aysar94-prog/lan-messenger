@@ -1,9 +1,10 @@
 # Windows status
 
-Reviewed 2026-09-25. Release: **0.8.10**. See the [platform comparison](../PROJECT_STATUS.md).
+Reviewed 2026-09-26. Release: **0.8.11**. See the [platform comparison](../PROJECT_STATUS.md).
 
 ## Implemented
 
+- 0.8.11: right-click a conversation or group row for a "Delete conversation" option — clears its history/attachments and, for a contact, also revokes verification and removes the peer record entirely (a group is left). A rediscovered forgotten contact reappears as a brand-new, unverified device. A new "Delete app data" toolbar button wipes every conversation/contact/group/attachment on the device while keeping identity, display name and profile picture. Both ask for confirmation first. `PeerEngine.cs` also went through a purely internal file-split refactor in the same window (`ChatWindow` split across `ChatWindowRender.cs`/`ChatWindowMessages.cs`/`ChatWindowAttachments.cs`/`ChatWindowDialogs.cs`/`ChatControls.cs`; `PeerEngine` split into `Storage.cs`/`Avatars.cs`) — no behavior change, not user-visible.
 - 0.8.10 hotfix: a conversation first opened with fewer than 10 messages now grows its visible window up to 10 as messages arrive. Empty-chat hints are removed before redraw/switch, preventing duplicate text. Native UI regressions and an independent five-to-six-message reproduction passed.
 
 - Messaging, groups, device verification, blue/gray presence, attachment draft before Send, and local chat clear.
@@ -24,6 +25,7 @@ Reviewed 2026-09-25. Release: **0.8.10**. See the [platform comparison](../PROJE
 
 ## Verification and open checks
 
+- Windows 0.8.11 built (0 warnings, 0 errors) and passed the full test suite (`tests/run.ps1`): all prior C#/Java engine, integration, transfer and native UI coverage, plus the new `tests/delete_conversation.py` (peer forgotten and rediscovered as unverified, group left without disrupting other members, Delete app data wipes conversations/contacts/groups while keeping identity/name/avatar and resetting Android's daily upload usage). No manual click-through of the new Windows context menu / toolbar button was performed in this environment — only the engine methods and their call sites were exercised by the automated suite and a clean build.
 - Windows 0.8.10 built and passed native UI tests, including the 0.8.9 coverage: 640x480 colored image; repeated wheel/programmatic scrolling, chat switching, and geometry checks; automatic images; destination cancel/open; notifications; seen receipts; plus the new paging/cache tests T01 (newest-10 open, +20 pages with preserved anchor, full-history load, arrivals, chat-switch card/scroll preservation) and T02 (12-image cache bounds, clear safety, white-box thumbnail hits/retirements/byte release). Final screenshots inspected.
 - Before/after measurements via tests/MeasureWindows (loopback): large-chat paint 300→55 ms, cards built 112→10; medium paint 115→60 ms with 10 cards; first-open/revisit single-digit ms before and after (large revisit 13→3 ms). Repeat opens of the 112-message chat: 2-4 ms. Detailed record in outputs: `windows-chatperf-measure/baseline-0.8.8.txt`, `after-final.txt`, `comparison-0.8.8-vs-0.8.9.txt`.
 - Windows 0.8.8 UI tests results are kept in `outputs/.build/windows-ui-tests`. The 0.8.8 repaint-fix confirmation on the affected PC/DPI setup is still the user's to confirm.
@@ -31,11 +33,11 @@ Reviewed 2026-09-25. Release: **0.8.10**. See the [platform comparison](../PROJE
 
 ## Handoff pointers
 
-- UI: `Program.cs`, especially `BufferedFeed`, `MessageBubble`, `RenderCore`, `ChatViewState`, `ThumbnailCache`, `LoadOlderPage`, and `FileAction`.
-- New manual transfer: `DirectDownloads.cs`. Legacy/auto-photo transfer: `Transfers.cs`.
-- Tests from repository root: `tests/WindowsUi` (includes paging T01 and cache T02), `tests/MeasureWindows` (chat-performance harness), `tests/direct_downloads.py`, `tests/transfers.py`, `tests/large_transfer.py`.
-- Results: `D:/LAN-Messenger/outputs/.build/windows-0810-ui`, earlier 0.8.9 results in `windows-ui-tests`, and `windows-chatperf-measure`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.10.zip` (requires .NET 9 Desktop Runtime).
-- Windows 0.8.9 code commit: `2241347`; 0.8.10 hotfix committed locally on `master`, not pushed.
+- UI: `ChatWindowRender.cs`/`ChatWindowMessages.cs`/`ChatWindowAttachments.cs`/`ChatWindowDialogs.cs`/`ChatControls.cs` (split out of `Program.cs`; `Program.cs` now holds only `Program.Main`, `ChatWindow`'s fields, constructor and `Send`). Delete conversation/app data: `ChatWindowDialogs.cs` (`DeleteConversationConfirm`, `DeleteAllDataConfirm`), engine side in `Conversations.cs` (`DeleteConversation`, `DeleteAllData`).
+- New manual transfer: `DirectDownloads.cs`. Legacy/auto-photo transfer: `Transfers.cs`. Storage/avatars: `Storage.cs`/`Avatars.cs` (split out of `PeerEngine.cs`).
+- Tests from repository root: `tests/WindowsUi` (includes paging T01 and cache T02), `tests/MeasureWindows` (chat-performance harness), `tests/direct_downloads.py`, `tests/transfers.py`, `tests/large_transfer.py`, `tests/delete_conversation.py` (new, cross-platform).
+- Results: `D:/LAN-Messenger/outputs/.build/windows-0810-ui`, earlier 0.8.9 results in `windows-ui-tests`, and `windows-chatperf-measure`. Package: `D:/LAN-Messenger/outputs/LanMessenger-Windows-0.8.11.zip` (requires .NET 9 Desktop Runtime).
+- Windows 0.8.9 code commit: `2241347`; 0.8.10 hotfix and the 0.8.11 file-split/delete-conversation work committed locally on `master`, not pushed.
 
 ## Next planned work
 
