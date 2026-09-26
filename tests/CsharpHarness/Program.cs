@@ -19,6 +19,11 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="LEFT")Console.WriteLine("LEFT\t"+engine.AllKnownMembers(a[1]).Any(m=>m.Id==a[2]&&!m.Active).ToString().ToLowerInvariant());
  if(a[0]=="ROSTER")foreach(var g in engine.Groups.Where(g=>g.Id==a[1]))Console.WriteLine($"ROSTER\t{g.MembersVersion}\t{string.Join(",",g.Members)}");
  if(a[0]=="LEGACY")engine.SimulateLegacyBuild=a[1]=="true";
+ if(a[0]=="REQUESTJOIN")engine.RequestJoin(a[1],a[2]);
+ if(a[0]=="PENDINGREQUESTS")Console.WriteLine("PENDINGREQUESTS\t"+string.Join(",",engine.PendingJoinRequests(a[1])));
+ if(a[0]=="ACCEPTREQUEST")await engine.AcceptJoinRequest(a[1],a[2]);
+ if(a[0]=="IGNOREREQUEST")engine.IgnoreJoinRequest(a[1],a[2]);
+ if(a[0]=="BACKDATEIGNORE")engine.DebugBackdateIgnoredJoinRequest(a[1],a[2],long.Parse(a[3]));
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
  if(a[0]=="SETAVATAR")engine.SetAvatar(Convert.FromBase64String(a[1]));
