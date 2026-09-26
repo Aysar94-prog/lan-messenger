@@ -1,8 +1,10 @@
-# LAN Messenger — Android 0.8.12 / Windows 0.8.12
+# LAN Messenger — Android 2.0.0 / Windows 2.0.0
 
-Windows and Android now share one version number, starting with this release: **0.8.12** (Android versionCode 22). This is a numbering convention going forward, not a claim that every release changes both platforms equally — see [PROJECT_STATUS.md](PROJECT_STATUS.md) for the actual per-feature comparison.
+Windows and Android share one version number: **2.0.0** (Android versionCode 23). This is a numbering convention, not a claim that every release changes both platforms equally — see [PROJECT_STATUS.md](PROJECT_STATUS.md) for the actual per-feature comparison.
 
-0.8.12 closes two gaps in the Delete conversation feature below, on both platforms: deleting a contact now also notifies them — their own verification of you is automatically revoked and they see an on-device notice — delivered whenever they're next reachable. Deleting a group is still a leave, but the group's owner can now see who has departed and bring them back into the same group with one "Re-invite" action from the Members dialog. This release also packages, for Android, everything that had accumulated unreleased in its source tree since 0.8.7: the people-screen side menu, the `Show offline users` filter, and Delete conversation / Delete app data (mirroring Windows).
+2.0.0's headline change: **group membership is no longer fixed after creation.** A group's member list is now a live roster — the owner can add someone at any time (not just re-invite a departed member), and any verified contact of the owner can send a request to join a group whose ID they already know (shared out of band; there is no group discovery). The owner reviews requests in a queue in the Members dialog, with Accept or Ignore per entry; Ignore is silent, with a 1-hour cooldown before the same person can request again. Every membership change propagates to every active member as a versioned snapshot, so a device that was offline through several changes catches up in one step rather than replaying each one. Any growth of a group (a direct add, a re-invite, or an accepted join request) requires every member who would end up in it to answer a **fresh** capability check at that exact moment — a past success is never trusted as durable, since a device could have been downgraded, reinstalled, or restored from a backup since. Leaving a group is never gated by this. A group that has never had its membership changed keeps talking to old, not-yet-updated builds exactly as before; only a group that has actually been mutated requires every device in *that* group to be current.
+
+2.0.0 also carries forward from 0.8.12: deleting a contact now also notifies them — their own verification of you is automatically revoked and they see an on-device notice — delivered whenever they're next reachable. Deleting a group is still a leave, but the group's owner can see who has departed and bring them back into the same group with a "Re-invite" action from the Members dialog. Android packages everything that had accumulated unreleased in its source tree since 0.8.7: the people-screen side menu, the `Show offline users` filter, and Delete conversation / Delete app data (mirroring Windows).
 
 Delete conversation (introduced for Windows in 0.8.11, now packaged for Android too): right-click (Windows) or long-press (Android) a contact or group in the list and choose Delete conversation. This clears its history and attachments and, for a contact, revokes verification and forgets the device — seeing it again on the network starts from an unverified state, same as a brand-new contact. A group is simply left; other members are unaffected. A "Delete app data" action (Windows toolbar button; Android side menu) wipes every conversation, contact, group and downloaded file on the device, keeping only your identity, display name and profile picture. Both actions ask for confirmation first and cannot be undone.
 
@@ -39,7 +41,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install the current LanMessenger-0.8.12.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install the current LanMessenger-2.0.0.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -64,11 +66,11 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.12.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-2.0.0.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.12.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-2.0.0.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
-Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.12 and Android 0.8.12 interoperate, and remain wire-compatible with the prior 0.8.11/0.8.7 pair. Do not downgrade.
+Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 2.0.0 and Android 2.0.0 interoperate, and remain wire-compatible with the prior 0.8.12 pair for any group that has never had its membership changed. Do not downgrade.
 
 ## Pair, chat and groups
 
@@ -76,7 +78,7 @@ Open apps on the same reachable LAN. Discovery is automatic; Add by IP is availa
 
 Queued means saved on the sender. Delivered means the message or **file offer** was saved on the recipient, not that the file was downloaded. Seen means the conversation was opened; group status aggregates members.
 
-Create a group with 2–15 verified contacts. Every pair must independently verify each other. Membership is fixed; create a new group to change it. Signed metadata relays through verified members. Download can use a verified member holding the complete attachment; a member with only an offer cannot serve it. Direct downloads need the original sender online.
+Create a group with 2–15 verified contacts. Every pair must independently verify each other; group membership alone does not imply mutual trust between arbitrary members, only between each member and the owner. Since 2.0.0, membership is no longer fixed at creation: the owner can add a verified contact at any time from the Members dialog, and any verified contact of the owner can request to join a group whose ID they already know — the owner accepts or ignores each request from a queue in the same dialog. The Members dialog also shows, for the owner, whether each member has caught up to the latest membership snapshot or is still lagging. Signed metadata relays through verified members. Download can use a verified member holding the complete attachment; a member with only an offer cannot serve it. Direct downloads need the original sender online.
 
 New group messages and data expire 168 hours after original sending; relaying never renews expiry. Old history predating the expiry feature is retained. Clear conversation deletes only local history, pending sends, private cached data and source references; files at user-selected destinations remain. Contacts/groups remain. External original Fast file sources are never deleted.
 
