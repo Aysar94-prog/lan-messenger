@@ -251,7 +251,31 @@ public class MainActivity extends Activity {
       .setPositiveButton("Delete",(d,w)->{PeerEngine e=MessengerService.engine;if(e==null)return;try{e.deleteAllData();thumbnailCache.evictAll();drafts.clear();selected=null;showPeople();}catch(Exception error){problem(error);}})
       .show();
   }
-  void showMembers(){PeerEngine e=MessengerService.engine;if(e==null)return;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected)){StringBuilder text=new StringBuilder();for(String id:g.members){boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();text.append(e.displayName(id)).append(id.equals(e.id)?" (you)":verified?" · Verified":" · Verify in People").append('\n');}text.append("\nEach pair must verify each other in People. Membership is fixed for this group.");new AlertDialog.Builder(this).setTitle(g.name+" · Members").setMessage(text).setPositiveButton("OK",null).show();return;}Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();}
+  void showMembers(){
+    PeerEngine e=MessengerService.engine;if(e==null)return;
+    for(PeerEngine.Group g:e.groups())if(g.id.equals(selected)){
+      HashSet<String> left=new HashSet<>();for(String x:g.left.split(",",-1))if(!x.isEmpty())left.add(x);
+      boolean isOwner=g.owner.equals(e.id);
+      LinearLayout list=column();list.setPadding(dp(4),dp(4),dp(4),dp(4));
+      list.addView(label("Every pair must verify each other to exchange group messages. Membership is fixed for this group.",13));
+      for(String id:g.members){
+        boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();
+        String status=id.equals(e.id)?" (you)":verified?" · Verified":" · Verify in People";
+        LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.addView(label(e.displayName(id)+status+(left.contains(id)?" · Left":""),15),new LinearLayout.LayoutParams(0,-2,1));
+        if(isOwner&&left.contains(id)){
+          Button reinvite=button("Re-invite");final String memberId=id;final PeerEngine.Group group=g;
+          reinvite.setOnClickListener(v->{try{e.reinviteMember(group.id,memberId);Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show();}catch(Exception error){problem(error);}});
+          row.addView(reinvite);
+        }
+        list.addView(row);
+      }
+      ScrollView scroller=new ScrollView(this);scroller.addView(list);
+      new AlertDialog.Builder(this).setTitle(g.name+" · Members").setView(scroller).setPositiveButton("Close",null).show();
+      return;
+    }
+    Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();
+  }
   void createGroup(){final PeerEngine e=MessengerService.engine;if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
     final EditText name=input("Group name",50);final boolean[] checked=new boolean[peers.size()];String[] names=new String[peers.size()];for(int i=0;i<names.length;i++)names[i]=peers.get(i).name+" · "+peers.get(i).id.substring(0,6);
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New group · select 2–15 contacts").setView(name).setMultiChoiceItems(names,checked,(d,which,on)->checked[which]=on).setNegativeButton("Cancel",null).setPositiveButton("Create",null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{try{ArrayList<String> ids=new ArrayList<>();for(int i=0;i<checked.length;i++)if(checked[i])ids.add(peers.get(i).id);String id=e.createGroup(name.getText().toString(),ids);dialog.dismiss();showChat(id);}catch(Exception error){problem(error);}}));dialog.show();

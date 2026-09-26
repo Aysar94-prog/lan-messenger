@@ -50,6 +50,12 @@ public class MessengerService extends Service {
         Notification n=new Notification.Builder(this,"messages").setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle(sender).setContentText("New encrypted message").setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(open).setAutoCancel(true).build();
         manager.notify((m.id.hashCode()&0x7ffffffc)+2,n);
       };
+      peer.forgottenCallback=peerId->{
+        String name=peer.displayName(peerId);
+        PendingIntent open=PendingIntent.getActivity(this,peerId.hashCode(),new Intent(this,MainActivity.class).setAction(peerId).putExtra("conversation",peerId).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        Notification n=new Notification.Builder(this,"messages").setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle(name).setContentText("Removed you as a contact. Verify again to keep chatting.").setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(open).setAutoCancel(true).build();
+        manager.notify((peerId.hashCode()&0x7ffffffc)+3,n);
+      };
       synchronized(this){if(stopping){peer.close();return;}peer.start();engine=peer;}handler.post(update);
     }catch(Exception e){problem="Could not start local messaging: "+e.getMessage();stopSelf();}},"lan-security-start").start();
   }
