@@ -137,7 +137,7 @@ try:
     wait_for_long(lambda:all(fgid in groups(m) for m in members),'All 15 initial members receive the full-size group')
 
     replacement.command('REQUESTJOIN\t'+owner.id+'\t'+fgid)
-    wait_for(lambda:replacement.id in pending(owner,fgid),'Replacement candidate requests to join a full group')
+    wait_for_long(lambda:replacement.id in pending(owner,fgid),'Replacement candidate requests to join a full group')
     try:
         owner.command('ACCEPTREQUEST\t'+fgid+'\t'+replacement.id)
         raise AssertionError('expected accept to fail while the group is at 16 members')

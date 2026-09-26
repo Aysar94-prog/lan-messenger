@@ -86,7 +86,7 @@ public class MainActivity extends Activity {
     else{avatarWrap.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);avatarWrap.addView(t,new FrameLayout.LayoutParams(-1,-1));}
     avatarWrap.setOnClickListener(v->changeAvatar());
     // Profile and About moved into the side menu to keep this row to the per-conversation actions.
-    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
+    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());Button requestJoin=button("Request to join");tools.addView(requestJoin);requestJoin.setOnClickListener(v->requestJoinGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
     refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
     root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay saved when hidden.\nOnly devices using LAN Messenger appear.",14));render();
   }
@@ -257,12 +257,33 @@ public class MainActivity extends Activity {
       boolean isOwner=g.owner.equals(e.id);
       LinearLayout list=column();list.setPadding(dp(4),dp(4),dp(4),dp(4));
       list.addView(label("Every pair must verify each other to exchange group messages.",13));
+      final AlertDialog[] dialogRef=new AlertDialog[1];
+      if(isOwner){
+        List<String> pending=e.pendingJoinRequests(g.id);
+        if(!pending.isEmpty()){
+          list.addView(label("Join requests",14));
+          for(String requesterId:pending){
+            final String rid=requesterId;final PeerEngine.Group group=g;
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.addView(label(e.displayName(rid),15),new LinearLayout.LayoutParams(0,-2,1));
+            Button accept=button("Accept");
+            accept.setOnClickListener(v->{accept.setEnabled(false);new Thread(()->{try{e.acceptJoinRequest(group.id,rid);ui.post(()->{if(dialogRef[0]!=null)dialogRef[0].dismiss();});}catch(Exception error){ui.post(()->{problem(error);accept.setEnabled(true);});}}).start();});
+            Button ignore=button("Ignore");
+            ignore.setOnClickListener(v->{try{e.ignoreJoinRequest(group.id,rid);}catch(Exception error){problem(error);}if(dialogRef[0]!=null)dialogRef[0].dismiss();});
+            row.addView(accept);row.addView(ignore);
+            list.addView(row);
+          }
+        }
+      }
       for(PeerEngine.KnownMember known:e.allKnownMembers(g.id)){
         String id=known.id;
         boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();
         String status=id.equals(e.id)?" (you)":id.equals(g.owner)?" · Admin":verified?" · Verified":" · Verify in People";
+        // Owner-only, and only meaningful for a currently-active member other than yourself -- never
+        // implies the group as a whole is consistent, just whether this one member has caught up.
+        String sync=isOwner&&known.active&&!id.equals(e.id)?(e.memberAckedVersion(g.id,id)>=g.membersVersion?" · Synced":" · Catching up"):"";
         LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        row.addView(label(e.displayName(id)+status+(known.active?"":" · Left"),15),new LinearLayout.LayoutParams(0,-2,1));
+        row.addView(label(e.displayName(id)+status+sync+(known.active?"":" · Left"),15),new LinearLayout.LayoutParams(0,-2,1));
         if(isOwner&&!known.active){
           Button reinvite=button("Re-invite");final String memberId=id;final PeerEngine.Group group=g;
           reinvite.setOnClickListener(v->{reinvite.setEnabled(false);new Thread(()->{try{e.reinviteMember(group.id,memberId);ui.post(()->Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show());}catch(Exception error){ui.post(()->{problem(error);reinvite.setEnabled(true);});}}).start();});
@@ -271,10 +292,28 @@ public class MainActivity extends Activity {
         list.addView(row);
       }
       ScrollView scroller=new ScrollView(this);scroller.addView(list);
-      new AlertDialog.Builder(this).setTitle(g.name+" · Members").setView(scroller).setPositiveButton("Close",null).show();
+      AlertDialog dialog=new AlertDialog.Builder(this).setTitle(g.name+" · Members").setView(scroller).setPositiveButton("Close",null).create();
+      dialogRef[0]=dialog;dialog.show();
       return;
     }
     Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();
+  }
+  void requestJoinGroup(){
+    PeerEngine e=MessengerService.engine;if(e==null)return;
+    final ArrayList<PeerEngine.Peer> owners=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())owners.add(p);
+    if(owners.isEmpty()){Toast.makeText(this,"Verify at least one contact first — you request to join through the group's owner.",Toast.LENGTH_LONG).show();return;}
+    String[] names=new String[owners.size()];for(int i=0;i<names.length;i++)names[i]=owners.get(i).name+" · "+owners.get(i).id.substring(0,6);
+    LinearLayout list=column();list.setPadding(dp(20),dp(10),dp(20),dp(0));
+    list.addView(label("Choose the group owner (must already be a verified contact) and paste the group ID they shared with you.",13));
+    Spinner owner=new Spinner(this);owner.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));list.addView(owner);
+    final EditText groupId=input("Group ID",64);list.addView(groupId);
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Request to join a group").setView(list).setNegativeButton("Cancel",null).setPositiveButton("Send request",null).create();
+    dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+      String gid=groupId.getText().toString().trim();
+      if(gid.isEmpty()){Toast.makeText(this,"Enter the group ID.",Toast.LENGTH_SHORT).show();return;}
+      try{e.requestJoin(owners.get(owner.getSelectedItemPosition()).id,gid);dialog.dismiss();}catch(Exception error){problem(error);}
+    }));
+    dialog.show();
   }
   void createGroup(){final PeerEngine e=MessengerService.engine;if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
     final EditText name=input("Group name",50);final boolean[] checked=new boolean[peers.size()];String[] names=new String[peers.size()];for(int i=0;i<names.length;i++)names[i]=peers.get(i).name+" · "+peers.get(i).id.substring(0,6);

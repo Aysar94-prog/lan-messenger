@@ -480,6 +480,9 @@ public final class PeerEngine implements Closeable {
   public List<String> pendingJoinRequests(String groupId){return GroupSync.pendingJoinRequests(this,groupId);}
   public void acceptJoinRequest(String groupId,String requesterId)throws IOException {GroupSync.acceptJoinRequest(this,groupId,requesterId);}
   public void ignoreJoinRequest(String groupId,String requesterId)throws IOException {GroupSync.ignoreJoinRequest(this,groupId,requesterId);}
+  // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
+  // screen's sync-status display -- -1 if never (they're not yet caught up to anything).
+  public synchronized int memberAckedVersion(String groupId,String peerId){HashMap<String,Integer> m=memberAcked.get(groupId);return m!=null&&m.containsKey(peerId)?m.get(peerId):-1;}
   public void debugBackdateIgnoredJoinRequest(String groupId,String requesterId,long epochMillis)throws IOException {GroupSync.debugBackdateIgnoredJoinRequest(this,groupId,requesterId,epochMillis);}
   boolean allowedGroup(String group,String sender){return GroupSync.allowedGroup(this,group,sender);}
   public void queueFile(String conversation,String name,byte[] data)throws IOException {queueFile(conversation,"",name,data);}

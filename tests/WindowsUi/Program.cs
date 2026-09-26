@@ -59,6 +59,35 @@ class Check
     Console.WriteLine("PASS: private alert, notification click restores sender, verified offline compose, no repeated alert");
     Console.WriteLine("Screenshot: "+Path.Combine(root,"windows.png"));
     form.Size=form.MinimumSize;form.PerformLayout();using var compact=new Bitmap(form.Width,form.Height);form.DrawToBitmap(compact,new Rectangle(0,0,form.Width,form.Height));compact.Save(Path.Combine(root,"windows-compact.png"));
+    // ============ G4: join-request UI (owner's request queue, Accept button) ============
+    // Both existing members must still be live and reachable — AddMember/AcceptJoinRequest performs a
+    // fresh, never-cached CAPS check of every existing active member, and `remote` was disposed above
+    // to exercise offline compose, so it can no longer answer that check.
+    var thirdRoot=Path.Combine(root,"third");using var third=new PeerEngine(thirdRoot,"Third device",new TestProtector(thirdRoot));third.Start("127.0.0.8",45972,45971);
+    await engine.AddAddress("127.0.0.8:45972");await third.AddAddress("127.0.0.5:45972");
+    var thirdCode=engine.PairingCode(third.Id);engine.Verify(third.Id,thirdCode);third.Verify(engine.Id,thirdCode);
+    var fourthRoot=Path.Combine(root,"fourth");using var fourth=new PeerEngine(fourthRoot,"Fourth device",new TestProtector(fourthRoot));fourth.Start("127.0.0.9",45972,45971);
+    await engine.AddAddress("127.0.0.9:45972");await fourth.AddAddress("127.0.0.5:45972");
+    var fourthCode=engine.PairingCode(fourth.Id);engine.Verify(fourth.Id,fourthCode);fourth.Verify(engine.Id,fourthCode);
+    var uiGroupId=engine.CreateGroup("UI join-request group",new[]{second.Id,fourth.Id});
+    third.RequestJoin(engine.Id,uiGroupId);
+    await Wait(()=>engine.PendingJoinRequests(uiGroupId).Contains(third.Id),"G4: join request reaches the owner");
+    Call("RestoreWindow",uiGroupId);
+    string membersDialogText="";
+    using(var membersTimer=new System.Windows.Forms.Timer{Interval=50}){
+        membersTimer.Tick+=(_,_)=>{
+            var dlg=Application.OpenForms.Cast<Form>().FirstOrDefault(f=>f.Modal&&f.Text.Contains("Members"));
+            if(dlg==null)return;
+            membersTimer.Stop();membersDialogText=TextIn(dlg);
+            AllControls(dlg).OfType<Button>().FirstOrDefault(b=>b.Text=="Accept")?.PerformClick();
+        };
+        membersTimer.Start();
+        Call("ShowMembers");
+    }
+    if(!membersDialogText.Contains("Join requests")||!membersDialogText.Contains("Third device"))throw new Exception("G4: pending join request not shown in Members dialog queue");
+    await Wait(()=>engine.AllKnownMembers(uiGroupId).Any(m=>m.Id==third.Id&&m.Active),"G4: Accept button in the Members dialog adds the requester");
+    if(engine.PendingJoinRequests(uiGroupId).Length!=0)throw new Exception("G4: request still pending after Accept");
+    Console.WriteLine("PASS: G4 Members dialog shows the join-request queue; Accept button adds the requester");
     second.Queue(engine.Id,"Second seen check");
     await Wait(()=>engine.Messages(second.Id).Any(m=>m.Text=="Second seen check"&&m.Status=="Received"),"1:1 message from a verified device arrives before being read");
     Call("RestoreWindow",second.Id);

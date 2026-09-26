@@ -189,7 +189,9 @@ public sealed partial class PeerEngine
             groups[a[2]]=old with{Members=members,MembersVersion=version};try{Save();}catch{groups[a[2]]=old;throw;}
         }
     }
-    int MemberAckedVersion(string groupId,string peerId){lock(gate)return memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(peerId,out var v)?v:-1;}
+    // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
+    // dialog's sync-status display — -1 if never (they're not yet caught up to anything).
+    public int MemberAckedVersion(string groupId,string peerId){lock(gate)return memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(peerId,out var v)?v:-1;}
     // Queries a peer live, every time — a past success is never trusted as durable proof, since the
     // same device could have been downgraded, reinstalled, or restored from a backup since. Returns
     // 0 (unsupported) for any failure: unreachable, connection error, or an invalid/missing reply —
