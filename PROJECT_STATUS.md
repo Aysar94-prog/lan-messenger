@@ -25,6 +25,8 @@ This release folds in everything that was previously tracked as "unreleased in s
 
 Both platforms also went through a purely internal file-split refactor (largest files broken into smaller, cohesive ones by concern) with no behavior change — see [Windows status](windows/STATUS.md) and [Android status](android/STATUS.md) for the exact file lists.
 
+**In progress, not yet a release on either platform**: group membership is no longer fixed after creation. `Members` is now a live roster that shrinks when someone leaves and grows when the owner adds someone, propagated to every active member as a versioned snapshot (new `MEMBERSUPDATE` frame) so a device that's been offline through several changes catches up in one step rather than replaying each one. Any growth (a direct invite, Re-invite, or — once built — an accepted join request) requires a **fresh, live capability check** of everyone who'd be in the group afterward — a past success is never trusted as durable, since the same device could have been downgraded or restored from a backup since. A group that's never been mutated stays on the exact old wire shape, so an unrelated, not-yet-updated device is genuinely unaffected; only a group that has actually changed requires every device in it to be current. Already-saved groups migrate once, automatically, from the old shape where a departed member sat in the member list and a separate flag at the same time. See [PLAN-GROUP-JOIN-REQUESTS.md](PLAN-GROUP-JOIN-REQUESTS.md) for the full design — the foundation (tasks M1–M3) is done and tested (`tests/group_membership.py`, both platforms and cross-platform); the join-request layer on top of it (owner accept/ignore, a 1-hour cooldown after ignoring, tasks G2 onward) has not started.
+
 ## Feature comparison
 
 | Feature | Windows | Android |
@@ -36,6 +38,7 @@ Both platforms also went through a purely internal file-split refactor (largest 
 | Delete app data: wipes every conversation/contact/group/attachment, keeps identity/name/avatar | Implemented; toolbar button | Implemented; side-menu item, also resets daily upload usage |
 | Forgetting a contact also notifies them: their verification of you is auto-revoked, with an on-device notice | Implemented | Implemented |
 | Leaving a group lets the owner see who departed and re-invite them back into the same group | Implemented; "Re-invite" in Members dialog | Implemented; "Re-invite" in Members dialog |
+| Group membership can change after creation (not just re-invite): live roster, versioned propagation, migration of old-shape saved groups, and a live capability check before any growth | Implemented (foundation only; not yet released) | Implemented (foundation only; not yet released) |
 | Blue online / gray offline presence | Implemented | Implemented |
 | People-screen side menu | Not implemented | Implemented on Android; Profile and About live in it |
 | Hide offline direct peers in the people list | Not implemented | Implemented on Android as an Android-local persisted `Show offline users` flag, default off; a people-list display filter for direct-peer rows only, group rows are never hidden; it does not change engine state, routing or the wire, and deep links and open chats bypass the list rather than being filtered |
