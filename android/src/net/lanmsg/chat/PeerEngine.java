@@ -102,19 +102,25 @@ public final class PeerEngine implements Closeable {
     if(lines.size()<2||!lines.get(lines.size()-1).equals("END"))throw new IOException("Incomplete storage");
     String[] h=lines.get(0).split("\t",-1);if(h.length!=3||(!h[0].equals("LMSTORE2")&&!h[0].equals("LMSTORE3")&&!h[0].equals("LMSTORE4"))||!uuid(h[1]))throw new IOException("Invalid storage");
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
+    HashSet<String> loadedForgotten=new HashSet<>();HashMap<String,String> loadedPendingLeaves=new HashMap<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
-      else if(a[0].equals("G")&&a.length==6)loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),a[5]));
-      else if(a[0].equals("H")&&a.length==2)loadedHidden.add(a[1]);else throw new IOException("Invalid storage row");}
+      else if(a[0].equals("G")&&(a.length==6||a.length==7))loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),a[5],a.length==7?a[6]:""));
+      else if(a[0].equals("H")&&a.length==2)loadedHidden.add(a[1]);
+      else if(a[0].equals("F")&&a.length==2)loadedForgotten.add(a[1]);
+      else if(a[0].equals("L")&&a.length==3)loadedPendingLeaves.put(a[1],a[2]);
+      else throw new IOException("Invalid storage row");}
     groups.clear();groups.putAll(loadedGroups);hidden.clear();hidden.addAll(loadedHidden);
+    forgotten.clear();forgotten.addAll(loadedForgotten);pendingLeaves.clear();pendingLeaves.putAll(loadedPendingLeaves);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
   }
   synchronized void save()throws IOException {
     StringBuilder text=new StringBuilder("LMSTORE4\t"+id+"\t"+enc(name)+"\n");
     for(Peer p:peers.values())text.append("P\t").append(p.id).append('\t').append(enc(p.name)).append('\t').append(p.host).append('\t').append(p.port).append('\t').append(p.fingerprint).append('\t').append(p.verified).append('\t').append(p.publicKey).append('\t').append(p.sentAvatarHash).append('\t').append(p.receivedAvatarHash).append('\n');
     for(Message m:messages)text.append("M\t").append(m.id).append('\t').append(m.from).append('\t').append(m.to).append('\t').append(m.time).append('\t').append(enc(m.text)).append('\t').append(m.status).append("\t1\t").append(m.groupId).append('\t').append(enc(m.fileName)).append('\t').append(m.fileSize).append('\t').append(m.fileHash).append('\t').append(m.signature).append('\t').append(m.ttlEligible?"1":"0").append('\n');
-    for(Group g:groups.values())text.append("G\t").append(g.id).append('\t').append(g.owner).append('\t').append(enc(g.name)).append('\t').append(String.join(",",g.members)).append('\t').append(g.acknowledged).append('\n');for(String key:hidden)text.append("H\t").append(key).append('\n');
+    for(Group g:groups.values())text.append("G\t").append(g.id).append('\t').append(g.owner).append('\t').append(enc(g.name)).append('\t').append(String.join(",",g.members)).append('\t').append(g.acknowledged).append('\t').append(g.left).append('\n');for(String key:hidden)text.append("H\t").append(key).append('\n');
+    for(String pid:forgotten)text.append("F\t").append(pid).append('\n');for(Map.Entry<String,String> kv:pendingLeaves.entrySet())text.append("L\t").append(kv.getKey()).append('\t').append(kv.getValue()).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -181,6 +187,8 @@ public final class PeerEngine implements Closeable {
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ2")&&uuid(m[2])){GroupSync.handleSync(this,s,m[2],m[3],h[2]);notifyChanged();return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){AvatarSync.handleAvatar(this,s,m[2],m[3],m[4]);notifyChanged();return;}
+    if(m.length==3&&m[0].equals("LM4")&&m[1].equals("FORGET")&&m[2].equals(h[2])){revoke(h[2]);try{forgottenCallback.accept(h[2]);}catch(Exception ignored){}write(s,"LM4\tFORGETACK");notifyChanged();return;}
+    if(m.length==4&&m[0].equals("LM4")&&m[1].equals("LEAVE")&&uuid(m[2])&&m[3].equals(h[2])){GroupSync.handleLeave(this,m[2],h[2]);write(s,"LM4\tLEAVEACK\t"+m[2]);notifyChanged();return;}
     if(m.length==6&&m[0].equals("LM4")&&m[1].equals("FETCH")){TransferManager.serveDownload(this,s,m,h[2]);return;}
     if((m.length!=8&&m.length!=12&&m.length!=13)||!m[0].equals("LM4")||(!m[1].equals("MSG")&&!m[1].equals("OFFER"))||!uuid(m[2])||!m[3].equals(h[2])||!m[4].equals(id))return;
     long at=Long.parseLong(m[6]);if(at<0||at>253402300799999L)return;
@@ -238,7 +246,7 @@ public final class PeerEngine implements Closeable {
   void startDelivery(Peer p){if(!running||!sending.add(p.id))return;try{outgoing.execute(()->{long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&observed!=queueEpoch.get());}finally{sending.remove(p.id);if(running&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
-    for(Group g:GroupSync.groups(this))if(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&!Arrays.asList(g.acknowledged.split(",")).contains(p.id))try(Socket s=connect(p.host,p.port)){
+    for(Group g:GroupSync.groups(this))if(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&!Arrays.asList(g.acknowledged.split(",")).contains(p.id)&&!Arrays.asList(g.left.split(",",-1)).contains(p.id))try(Socket s=connect(p.host,p.port)){
       String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))return;
       write(s,"LM4\tGROUP\t"+g.id+"\t"+g.owner+"\t"+enc(g.name)+"\t"+String.join(",",g.members));if(!read(s).equals("LM4\tGROUPACK\t"+g.id)||!trusted(p.id,fingerprint))return;
       synchronized(this){Group current=groups.get(g.id);String old=current.acknowledged;current.acknowledged=old.isEmpty()?p.id:old+","+p.id;try{save();}catch(IOException e){current.acknowledged=old;throw e;}}
@@ -291,6 +299,25 @@ public final class PeerEngine implements Closeable {
       }
     }catch(Exception e){return;}
     AvatarSync.pushAvatarIfChanged(this,p);
+    // A deleted contact's forget notice, and a left group's notice to its owner — both queued and
+    // retried here exactly like everything else, until acknowledged.
+    if(forgotten.contains(p.id))
+    try(Socket s=connect(p.host,p.port)){
+      write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;
+      if(read(s).equals("LM4\tREADY")){
+        write(s,"LM4\tFORGET\t"+id);
+        if(read(s).equals("LM4\tFORGETACK")){synchronized(this){forgotten.remove(p.id);try{save();}catch(IOException e){forgotten.add(p.id);throw e;}}}
+      }
+    }catch(Exception e){return;}
+    ArrayList<String> leavingGroupIds=new ArrayList<>();synchronized(this){for(Map.Entry<String,String> kv:pendingLeaves.entrySet())if(kv.getValue().equals(p.id))leavingGroupIds.add(kv.getKey());}
+    for(String groupId:leavingGroupIds)
+    try(Socket s=connect(p.host,p.port)){
+      write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;
+      if(read(s).equals("LM4\tREADY")){
+        write(s,"LM4\tLEAVE\t"+groupId+"\t"+id);
+        if(read(s).equals("LM4\tLEAVEACK\t"+groupId)){synchronized(this){pendingLeaves.remove(groupId);try{save();}catch(IOException e){pendingLeaves.put(groupId,p.id);throw e;}}}
+      }
+    }catch(Exception e){return;}
   }
 
 
@@ -353,12 +380,23 @@ public final class PeerEngine implements Closeable {
   }
   // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
   static long transferTimeoutNanos(int size){return TimeUnit.SECONDS.toNanos(Math.max(60,30+size/1_000_000));}
+  // left holds member ids the owner has been told (via LEAVE) have departed — distinct from
+  // acknowledged, so deliver's invite-resend loop stops for them until the owner re-invites.
+  // Membership itself (members) never changes; it stays exactly as created.
   public static final class Group {
-    public final String id,owner,name;public final String[] members;String acknowledged;
-    Group(String i,String o,String n,String[] m,String ack){id=i;owner=o;name=n;members=m.clone();acknowledged=ack;}
+    public final String id,owner,name;public final String[] members;String acknowledged,left;
+    Group(String i,String o,String n,String[] m,String ack){this(i,o,n,m,ack,"");}
+    Group(String i,String o,String n,String[] m,String ack,String left){id=i;owner=o;name=n;members=m.clone();acknowledged=ack;this.left=left;}
   }
   final LinkedHashMap<String,Group> groups=new LinkedHashMap<>();
   final HashSet<String> hidden=new HashSet<>();
+  // Peer ids we've deleted and still owe a FORGET notice; groups we've left, keyed by the owner
+  // id we still owe a LEAVE notice to (captured before the local group record is dropped).
+  final HashSet<String> forgotten=new HashSet<>();
+  final HashMap<String,String> pendingLeaves=new HashMap<>();
+  // Fired when a contact remotely revokes our verification of them, because we previously
+  // deleted them and they've told us so (the FORGET notice). Carries their peer id.
+  public volatile java.util.function.Consumer<String> forgottenCallback=id->{};
   public List<Group> groups(){return GroupSync.groups(this);}
   public String displayName(String target){return GroupSync.displayName(this,target);}
   public String createGroup(String name,List<String> members)throws IOException {return GroupSync.createGroup(this,name,members);}
@@ -411,32 +449,56 @@ public final class PeerEngine implements Closeable {
   public synchronized void deleteConversation(String conversation)throws IOException {
     ArrayList<Message> removed=new ArrayList<>(),old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
     Peer oldPeer=peers.get(conversation);Group oldGroup=groups.get(conversation);
+    boolean wasForgotten=forgotten.contains(conversation);boolean hadPendingLeave=pendingLeaves.containsKey(conversation);
     for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)||m.to.equals(conversation)){removed.add(m);hidden.add(m.from+"/"+m.id);}
     messages.removeAll(removed);
-    if(oldPeer!=null)peers.remove(conversation);
-    if(oldGroup!=null)groups.remove(conversation);
-    try{save();}catch(IOException e){messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);if(oldPeer!=null)peers.put(conversation,oldPeer);if(oldGroup!=null)groups.put(conversation,oldGroup);throw e;}
+    if(oldPeer!=null){peers.remove(conversation);forgotten.add(conversation);}
+    if(oldGroup!=null){groups.remove(conversation);pendingLeaves.put(conversation,oldGroup.owner);}
+    try{save();}catch(IOException e){
+      messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);
+      if(oldPeer!=null){peers.put(conversation,oldPeer);if(!wasForgotten)forgotten.remove(conversation);}
+      if(oldGroup!=null){groups.put(conversation,oldGroup);if(!hadPendingLeave)pendingLeaves.remove(conversation);}
+      throw e;
+    }
     save();
     for(Message m:removed)if(!m.fileName.isEmpty())TransferManager.deleteTransfer(this,m);
     if(oldPeer!=null)try{AvatarSync.setPeerAvatar(this,conversation,null);}catch(IOException ignored){}
-    notifyChanged();
+    notifyChanged();queueEpoch.incrementAndGet();flush();
   }
   // Wipes every conversation, contact and group — everything except this device's own identity,
-  // display name and profile picture.
+  // display name and profile picture. Every forgotten contact still gets a queued forget notice.
   public synchronized void deleteAllData()throws IOException {
     ArrayList<Message> old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
     LinkedHashMap<String,Peer> oldPeers=new LinkedHashMap<>(peers);LinkedHashMap<String,Group> oldGroups=new LinkedHashMap<>(groups);
+    HashSet<String> oldForgotten=new HashSet<>(forgotten);HashMap<String,String> oldPendingLeaves=new HashMap<>(pendingLeaves);
     ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
-    messages.clear();peers.clear();groups.clear();hidden.clear();
-    try{save();}catch(IOException e){messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);throw e;}
+    messages.clear();groups.clear();hidden.clear();
+    forgotten.addAll(oldPeers.keySet());
+    peers.clear();
+    try{save();}catch(IOException e){
+      messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);
+      forgotten.clear();forgotten.addAll(oldForgotten);pendingLeaves.clear();pendingLeaves.putAll(oldPendingLeaves);
+      throw e;
+    }
     save();
     for(Message m:withFiles)TransferManager.deleteTransfer(this,m);
     deleteRecursively(new File(file.getParentFile(),"attachments"));
     deleteRecursively(new File(file.getParentFile(),"avatars"));
     try{uploadPolicy.reset();}catch(IOException ignored){}
-    notifyChanged();
+    notifyChanged();queueEpoch.incrementAndGet();flush();
   }
   static void deleteRecursively(File dir){File[] children=dir.listFiles();if(children!=null)for(File child:children){if(child.isDirectory())deleteRecursively(child);else child.delete();}dir.delete();}
+  // Owner-only: brings a departed member back by clearing their acknowledged/left flags, so the
+  // next deliver cycle treats them as not-yet-invited and resends the GROUP invite normally.
+  public synchronized void reinviteMember(String groupId,String memberId)throws IOException {
+    Group g=groups.get(groupId);if(g==null||!g.owner.equals(id))throw new IOException("Only the group owner can re-invite a member.");
+    String oldAck=g.acknowledged,oldLeft=g.left;
+    ArrayList<String> ack=new ArrayList<>();for(String x:g.acknowledged.split(",",-1))if(!x.isEmpty()&&!x.equals(memberId))ack.add(x);
+    ArrayList<String> left=new ArrayList<>();for(String x:g.left.split(",",-1))if(!x.isEmpty()&&!x.equals(memberId))left.add(x);
+    g.acknowledged=String.join(",",ack);g.left=String.join(",",left);
+    try{save();}catch(IOException e){g.acknowledged=oldAck;g.left=oldLeft;throw e;}
+    notifyChanged();queueEpoch.incrementAndGet();flush();
+  }
   public static String safeFileName(String name){String[] parts=name.replace('\\','/').split("/",-1);name=parts[parts.length-1];StringBuilder b=new StringBuilder();for(char c:name.toCharArray())if(c>=32&&"<>:\"/\\|?*".indexOf(c)<0)b.append(c);name=b.toString().trim().replaceAll("^\\.+|\\.+$","");return name.isEmpty()?"attachment":name.substring(0,Math.min(120,name.length()));}
   File attachmentPath(Message m)throws IOException {return AttachmentStore.attachmentPath(this,m);}
   static void readTransferBlock(InputStream in,byte[] buffer,int count)throws IOException{int at=0;while(at<count){int n=in.read(buffer,at,count-at);if(n<0)throw new EOFException("Transfer interrupted");if(n>0)at+=n;}}

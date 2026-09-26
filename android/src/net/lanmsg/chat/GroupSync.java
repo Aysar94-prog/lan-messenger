@@ -7,7 +7,7 @@ import javax.net.ssl.SSLSocket;
 /** Group membership, invitations and the SYNCREQ2/META relay that lets members catch up on history. */
 final class GroupSync {
   private GroupSync(){}
-  static List<PeerEngine.Group> groups(PeerEngine e){synchronized(e){ArrayList<PeerEngine.Group> result=new ArrayList<>();for(PeerEngine.Group g:e.groups.values())result.add(new PeerEngine.Group(g.id,g.owner,g.name,g.members,g.acknowledged));return result;}}
+  static List<PeerEngine.Group> groups(PeerEngine e){synchronized(e){ArrayList<PeerEngine.Group> result=new ArrayList<>();for(PeerEngine.Group g:e.groups.values())result.add(new PeerEngine.Group(g.id,g.owner,g.name,g.members,g.acknowledged,g.left));return result;}}
   static String displayName(PeerEngine e,String target){synchronized(e){return target.equals(e.id)?e.name:e.groups.containsKey(target)?e.groups.get(target).name:e.peers.containsKey(target)?e.peers.get(target).name:"Device "+target.substring(0,Math.min(8,target.length()));}}
   static String createGroup(PeerEngine e,String name,List<String> members)throws IOException {
     synchronized(e){
@@ -15,6 +15,17 @@ final class GroupSync {
       if(name.isEmpty()||name.length()>50||ids.size()<3||ids.size()>16)throw new IOException("Name the group and select 2–15 verified contacts.");
       for(String target:ids)if(!target.equals(e.id)&&(!e.peers.containsKey(target)||!e.peers.get(target).trusted()))throw new IOException("Select verified contacts.");
       PeerEngine.Group g=new PeerEngine.Group(UUID.randomUUID().toString(),e.id,name,ids.toArray(new String[0]),"");e.groups.put(g.id,g);try{e.save();}catch(IOException ex){e.groups.remove(g.id);throw ex;}e.notifyChanged();return g.id;
+    }
+  }
+  // Owner-side: a member has told us they left. Recorded separately from acknowledged so the
+  // invite-resend loop stops for them until reinviteMember explicitly clears it.
+  static void handleLeave(PeerEngine e,String groupId,String memberId)throws IOException{
+    synchronized(e){
+      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))return;
+      ArrayList<String> left=new ArrayList<>();for(String x:g.left.split(",",-1))if(!x.isEmpty())left.add(x);
+      if(left.contains(memberId))return;
+      String old=g.left;left.add(memberId);g.left=String.join(",",left);
+      try{e.save();}catch(IOException ex){g.left=old;throw ex;}
     }
   }
   static boolean allowedGroup(PeerEngine e,String group,String sender){synchronized(e){PeerEngine.Group g=e.groups.get(group);return group.isEmpty()||(g!=null&&Arrays.asList(g.members).contains(e.id)&&Arrays.asList(g.members).contains(sender));}}

@@ -31,6 +31,9 @@ public sealed partial class PeerEngine : IDisposable
     public string LastConnectionError {get;private set;}="";
     public event Action? Changed;
     public event Action<Message>? Received;
+    // Fired when a contact remotely revokes our verification of them, because we previously
+    // deleted them and they've told us so (the FORGET notice). Carries their peer id.
+    public event Action<string>? Forgotten;
     // (messageId, bytesTransferred, totalBytes) — fired while streaming an attachment over the
     // network, in either direction. Purely informational/UI, never persisted.
     public event Action<string,long,long>? TransferProgress;
@@ -139,6 +142,8 @@ public sealed partial class PeerEngine : IDisposable
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SEEN"&&Uuid(a[2])&&a[3]==h[2]){MarkSeen(a[2],h[2]);await Write(tls,"LM4\tSEENACK\t"+a[2]);Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SYNCREQ2"&&Uuid(a[2])){await HandleSync(tls,a[2],a[3],h[2]);Notify();return;}
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="AVATAR"&&a[2]==h[2]){await HandleAvatar(tls,a[2],a[3],a[4]);Notify();return;}
+        if(a.Length==3&&a[0]=="LM4"&&a[1]=="FORGET"&&a[2]==h[2]){Revoke(h[2]);try{Forgotten?.Invoke(h[2]);}catch{}await Write(tls,"LM4\tFORGETACK");Notify();return;}
+        if(a.Length==4&&a[0]=="LM4"&&a[1]=="LEAVE"&&Uuid(a[2])&&a[3]==h[2]){HandleLeave(a[2],h[2]);await Write(tls,"LM4\tLEAVEACK\t"+a[2]);Notify();return;}
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="FETCHDIRECT"){await ServeDirect(tls,client,a,h[2]);return;}
         if(a.Length==6&&a[0]=="LM4"&&a[1]=="FETCH"){await ServeDownload(tls,a,h[2]);return;}
         if((a.Length!=8&&a.Length!=12&&a.Length!=13)||a[0]!="LM4"||(a[1]!="MSG"&&a[1]!="OFFER")||!Uuid(a[2])||a[3]!=h[2]||a[4]!=Id)return;
@@ -204,7 +209,7 @@ public sealed partial class PeerEngine : IDisposable
     {
         // Probe every known endpoint for its TLS certificate, even when there are no messages.
         try{using var probe=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(probe.GetStream());await identity.Authenticate(tls,false);await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;Remember(h[2],Dec(h[3]),peer.Host,int.Parse(h[4]));RecordCertificate(h[2],SecureIdentity.Remote(tls),SecureIdentity.RemotePublicKey(tls));}catch{return;}
-        foreach(var group in Groups.Where(g=>g.Owner==Id&&g.Members.Contains(peer.Id)&&!g.Acknowledged.Split(',').Contains(peer.Id)))
+        foreach(var group in Groups.Where(g=>g.Owner==Id&&g.Members.Contains(peer.Id)&&!g.Acknowledged.Split(',').Contains(peer.Id)&&!g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).Contains(peer.Id)))
         try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fp=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fp))return;await Write(tls,Hello());var hello=(await Read(tls)).Split('\t');if(!ValidHello(hello)||hello[2]!=peer.Id||await Read(tls)!="LM4\tREADY")return;
             await Write(tls,$"LM4\tGROUP\t{group.Id}\t{group.Owner}\t{Enc(group.Name)}\t{string.Join(",",group.Members)}");
             if(await Read(tls)!="LM4\tGROUPACK\t"+group.Id||!Trusted(peer.Id,fp))return;
@@ -263,6 +268,27 @@ public sealed partial class PeerEngine : IDisposable
             }
         }catch{return;}
         await PushAvatarIfChanged(peer);
+        // A deleted contact's forget notice, and a left group's notice to its owner — both queued
+        // and retried here exactly like everything else, until acknowledged.
+        if(forgotten.Contains(peer.Id))
+        try{
+            using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);
+            await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;
+            if(await Read(tls)=="LM4\tREADY"){
+                await Write(tls,$"LM4\tFORGET\t{Id}");
+                if(await Read(tls)=="LM4\tFORGETACK"){lock(gate){forgotten.Remove(peer.Id);try{Save();}catch{forgotten.Add(peer.Id);throw;}}}
+            }
+        }catch{return;}
+        string[] leavingGroupIds;lock(gate)leavingGroupIds=pendingLeaves.Where(kv=>kv.Value==peer.Id).Select(kv=>kv.Key).ToArray();
+        foreach(var groupId in leavingGroupIds)
+        try{
+            using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);
+            await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;
+            if(await Read(tls)=="LM4\tREADY"){
+                await Write(tls,$"LM4\tLEAVE\t{groupId}\t{Id}");
+                if(await Read(tls)==$"LM4\tLEAVEACK\t{groupId}"){lock(gate){pendingLeaves.Remove(groupId);try{Save();}catch{pendingLeaves[groupId]=peer.Id;throw;}}}
+            }
+        }catch{return;}
     }
 
     void Notify(){try{Changed?.Invoke();}catch{}}

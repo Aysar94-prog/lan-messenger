@@ -8,9 +8,16 @@ public sealed partial class PeerEngine
     // MaxFileSize are never buffered whole in memory at any step; peak memory stays near this size.
     const int ChunkSize=3*1024*1024;
     static readonly byte[] AttachmentMagic=Encoding.ASCII.GetBytes("LMATCS1");
-    public sealed record Group(string Id,string Owner,string Name,string[] Members,string Acknowledged="");
+    // Left holds member ids the owner has been told (via LEAVE) have departed — distinct from
+    // Acknowledged, so Deliver's invite-resend loop stops for them until the owner explicitly
+    // re-invites. Membership itself (Members) never changes; it stays exactly as created.
+    public sealed record Group(string Id,string Owner,string Name,string[] Members,string Acknowledged="",string Left="");
     readonly Dictionary<string,Group> groups=[];
     readonly HashSet<string> hidden=[];
+    // Peer ids we've deleted and still owe a FORGET notice; groups we've left, keyed by the
+    // owner id we still owe a LEAVE notice to (captured before the local group record is dropped).
+    readonly HashSet<string> forgotten=[];
+    readonly Dictionary<string,string> pendingLeaves=[];
     public Group[] Groups {get{lock(gate)return groups.Values.Select(g=>g with{Members=g.Members.ToArray()}).ToArray();}}
     public string DisplayName(string id){lock(gate)return id==Id?Name:groups.TryGetValue(id,out var g)?g.Name:peers.TryGetValue(id,out var p)?p.Name:"Device "+id[..Math.Min(8,id.Length)];}
     public string CreateGroup(string name,IEnumerable<string> members)
@@ -20,6 +27,18 @@ public sealed partial class PeerEngine
         var g=new Group(Guid.NewGuid().ToString(),Id,name,ids);groups.Add(g.Id,g);try{Save();}catch{groups.Remove(g.Id);throw;}Notify();return g.Id;}
     }
     bool AllowedGroup(string id,string sender)=>id.Length==0||(groups.TryGetValue(id,out var g)&&g.Members.Contains(Id)&&g.Members.Contains(sender));
+    // Owner-side: a member has told us they left. Recorded separately from Acknowledged so the
+    // invite-resend loop stops for them until ReinviteMember explicitly clears it.
+    void HandleLeave(string groupId,string memberId)
+    {
+        lock(gate){
+            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id)return;
+            var left=g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries);
+            if(left.Contains(memberId))return;
+            var old=g;groups[groupId]=g with{Left=string.Join(",",left.Append(memberId))};
+            try{Save();}catch{groups[groupId]=old;throw;}
+        }
+    }
     void AcceptGroup(string[] a,string sender,string fingerprint)
     {
         var members=a[5].Split(',');var name=Dec(a[4]);
@@ -73,40 +92,51 @@ public sealed partial class PeerEngine
     }
     // Like ClearConversation, but also forgets the contact or leaves the group so it drops off the
     // list entirely. A forgotten peer that reappears on the LAN shows up as a brand-new, unverified
-    // device — chatting again requires comparing safety codes from scratch.
+    // device — chatting again requires comparing safety codes from scratch. A forget/leave notice
+    // is queued for delivery whenever the other side is next reachable (see Deliver).
     public void DeleteConversation(string conversation)
     {
         lock(gate){
             var removed=messages.Where(m=>m.GroupId.Length>0?m.GroupId==conversation:m.From==conversation||m.To==conversation).ToArray();
             var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
             peers.TryGetValue(conversation,out var oldPeer);groups.TryGetValue(conversation,out var oldGroup);
+            var wasForgotten=forgotten.Contains(conversation);var hadPendingLeave=pendingLeaves.ContainsKey(conversation);
             foreach(var m in removed)hidden.Add(m.From+"/"+m.Id);
             messages.RemoveAll(m=>removed.Contains(m));
-            if(oldPeer!=null)peers.Remove(conversation);
-            if(oldGroup!=null)groups.Remove(conversation);
+            if(oldPeer!=null){peers.Remove(conversation);forgotten.Add(conversation);}
+            if(oldGroup!=null){groups.Remove(conversation);pendingLeaves[conversation]=oldGroup.Owner;}
             try{Save();}
             catch{
                 messages.Clear();messages.AddRange(oldMessages);hidden.Clear();hidden.UnionWith(oldHidden);
-                if(oldPeer!=null)peers[conversation]=oldPeer; if(oldGroup!=null)groups[conversation]=oldGroup;
+                if(oldPeer!=null){peers[conversation]=oldPeer;if(!wasForgotten)forgotten.Remove(conversation);}
+                if(oldGroup!=null){groups[conversation]=oldGroup;if(!hadPendingLeave)pendingLeaves.Remove(conversation);}
                 throw;
             }
             Save(); // Replace the backup too; deleted content must not return on recovery.
             foreach(var m in removed.Where(m=>m.FileName.Length>0))DeleteTransfer(m);
             if(oldPeer!=null)SetPeerAvatar(conversation,null);
         }
-        Notify();
+        Notify();WakeDelivery();
     }
     // Wipes every conversation, contact and group — everything except this device's own identity,
-    // display name and profile picture.
+    // display name and profile picture. Every forgotten contact still gets a queued forget notice.
     public void DeleteAllData()
     {
         lock(gate){
             var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
             var oldPeers=new Dictionary<string,Peer>(peers);var oldGroups=new Dictionary<string,Group>(groups);
+            var oldForgotten=forgotten.ToArray();var oldPendingLeaves=new Dictionary<string,string>(pendingLeaves);
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();peers.Clear();groups.Clear();hidden.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();
+            foreach(var id in oldPeers.Keys)forgotten.Add(id);
+            peers.Clear();
             try{Save();}
-            catch{messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;throw;}
+            catch{
+                messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);
+                foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;
+                forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
+                throw;
+            }
             Save();
             foreach(var m in withFiles)DeleteTransfer(m);
             // Final sweep for anything orphaned (e.g. a crash before an earlier cleanup finished).
@@ -114,7 +144,20 @@ public sealed partial class PeerEngine
             try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"attachments"),true);}catch{}
             try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"avatars"),true);}catch{}
         }
-        Notify();
+        Notify();WakeDelivery();
+    }
+    // Owner-only: brings a departed member back by clearing their Acknowledged/Left flags, so the
+    // next Deliver cycle treats them as not-yet-invited and resends the GROUP invite normally.
+    public void ReinviteMember(string groupId,string memberId)
+    {
+        lock(gate){
+            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can re-invite a member.");
+            var ack=string.Join(",",g.Acknowledged.Split(',',StringSplitOptions.RemoveEmptyEntries).Where(x=>x!=memberId));
+            var left=string.Join(",",g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).Where(x=>x!=memberId));
+            groups[groupId]=g with{Acknowledged=ack,Left=left};
+            try{Save();}catch{groups[groupId]=g;throw;}
+        }
+        Notify();WakeDelivery();
     }
     public static string SafeFileName(string name)
     {
