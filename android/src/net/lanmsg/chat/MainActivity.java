@@ -254,18 +254,18 @@ public class MainActivity extends Activity {
   void showMembers(){
     PeerEngine e=MessengerService.engine;if(e==null)return;
     for(PeerEngine.Group g:e.groups())if(g.id.equals(selected)){
-      HashSet<String> left=new HashSet<>();for(String x:g.left.split(",",-1))if(!x.isEmpty())left.add(x);
       boolean isOwner=g.owner.equals(e.id);
       LinearLayout list=column();list.setPadding(dp(4),dp(4),dp(4),dp(4));
-      list.addView(label("Every pair must verify each other to exchange group messages. Membership is fixed for this group.",13));
-      for(String id:g.members){
+      list.addView(label("Every pair must verify each other to exchange group messages.",13));
+      for(PeerEngine.KnownMember known:e.allKnownMembers(g.id)){
+        String id=known.id;
         boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();
-        String status=id.equals(e.id)?" (you)":verified?" · Verified":" · Verify in People";
+        String status=id.equals(e.id)?" (you)":id.equals(g.owner)?" · Admin":verified?" · Verified":" · Verify in People";
         LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        row.addView(label(e.displayName(id)+status+(left.contains(id)?" · Left":""),15),new LinearLayout.LayoutParams(0,-2,1));
-        if(isOwner&&left.contains(id)){
+        row.addView(label(e.displayName(id)+status+(known.active?"":" · Left"),15),new LinearLayout.LayoutParams(0,-2,1));
+        if(isOwner&&!known.active){
           Button reinvite=button("Re-invite");final String memberId=id;final PeerEngine.Group group=g;
-          reinvite.setOnClickListener(v->{try{e.reinviteMember(group.id,memberId);Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show();}catch(Exception error){problem(error);}});
+          reinvite.setOnClickListener(v->{reinvite.setEnabled(false);new Thread(()->{try{e.reinviteMember(group.id,memberId);ui.post(()->Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show());}catch(Exception error){ui.post(()->{problem(error);reinvite.setEnabled(true);});}}).start();});
           row.addView(reinvite);
         }
         list.addView(row);

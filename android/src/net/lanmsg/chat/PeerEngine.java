@@ -103,24 +103,45 @@ public final class PeerEngine implements Closeable {
     String[] h=lines.get(0).split("\t",-1);if(h.length!=3||(!h[0].equals("LMSTORE2")&&!h[0].equals("LMSTORE3")&&!h[0].equals("LMSTORE4"))||!uuid(h[1]))throw new IOException("Invalid storage");
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
     HashSet<String> loadedForgotten=new HashSet<>();HashMap<String,String> loadedPendingLeaves=new HashMap<>();
+    LinkedHashMap<String,HashSet<String>> loadedDeparted=new LinkedHashMap<>();LinkedHashMap<String,HashMap<String,Integer>> loadedAcked=new LinkedHashMap<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
-      else if(a[0].equals("G")&&(a.length==6||a.length==7))loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),a[5],a.length==7?a[6]:""));
+      else if(a[0].equals("G")&&a.length==7){
+        // Pre-M1 shape (this session's now-superseded forget-notice release): G,Id,Owner,Name,Members,Acknowledged,Left.
+        // A departed member sat in both Members and Left at once; migrate once to the new disjoint
+        // model. If Left was non-empty this is a real membership change other active members don't
+        // know about yet (Left was owner-only, never propagated before this feature), so it gets
+        // version 1 and a MEMBERSUPDATE broadcast; an empty Left is a pure no-op and stays at 0.
+        ArrayList<String> oldLeft=new ArrayList<>();for(String x:a[6].split(",",-1))if(!x.isEmpty())oldLeft.add(x);
+        ArrayList<String> newMembers=new ArrayList<>();for(String x:a[4].split(","))if(!oldLeft.contains(x))newMembers.add(x);
+        loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),newMembers.toArray(new String[0]),oldLeft.isEmpty()?0:1));
+        if(!oldLeft.isEmpty()){HashSet<String> set=loadedDeparted.get(a[1]);if(set==null){set=new HashSet<>();loadedDeparted.put(a[1],set);}set.addAll(oldLeft);}
+      }
+      else if(a[0].equals("G")&&a.length==6){
+        int v=-1;try{v=Integer.parseInt(a[5]);}catch(NumberFormatException ignored){}
+        loadedGroups.put(a[1],new Group(a[1],a[2],dec(a[3]),a[4].split(","),Math.max(v,0))); // v<0: ancient pre-Left shape; Acknowledged (a[5]) discarded
+      }
       else if(a[0].equals("H")&&a.length==2)loadedHidden.add(a[1]);
       else if(a[0].equals("F")&&a.length==2)loadedForgotten.add(a[1]);
       else if(a[0].equals("L")&&a.length==3)loadedPendingLeaves.put(a[1],a[2]);
+      else if(a[0].equals("D")&&a.length==3){HashSet<String> set=loadedDeparted.get(a[1]);if(set==null){set=new HashSet<>();loadedDeparted.put(a[1],set);}set.add(a[2]);}
+      else if(a[0].equals("V")&&a.length==4){HashMap<String,Integer> m=loadedAcked.get(a[1]);if(m==null){m=new HashMap<>();loadedAcked.put(a[1],m);}m.put(a[2],Integer.parseInt(a[3]));}
       else throw new IOException("Invalid storage row");}
     groups.clear();groups.putAll(loadedGroups);hidden.clear();hidden.addAll(loadedHidden);
     forgotten.clear();forgotten.addAll(loadedForgotten);pendingLeaves.clear();pendingLeaves.putAll(loadedPendingLeaves);
+    departedHistory.clear();departedHistory.putAll(loadedDeparted);memberAcked.clear();memberAcked.putAll(loadedAcked);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
   }
   synchronized void save()throws IOException {
     StringBuilder text=new StringBuilder("LMSTORE4\t"+id+"\t"+enc(name)+"\n");
     for(Peer p:peers.values())text.append("P\t").append(p.id).append('\t').append(enc(p.name)).append('\t').append(p.host).append('\t').append(p.port).append('\t').append(p.fingerprint).append('\t').append(p.verified).append('\t').append(p.publicKey).append('\t').append(p.sentAvatarHash).append('\t').append(p.receivedAvatarHash).append('\n');
     for(Message m:messages)text.append("M\t").append(m.id).append('\t').append(m.from).append('\t').append(m.to).append('\t').append(m.time).append('\t').append(enc(m.text)).append('\t').append(m.status).append("\t1\t").append(m.groupId).append('\t').append(enc(m.fileName)).append('\t').append(m.fileSize).append('\t').append(m.fileHash).append('\t').append(m.signature).append('\t').append(m.ttlEligible?"1":"0").append('\n');
-    for(Group g:groups.values())text.append("G\t").append(g.id).append('\t').append(g.owner).append('\t').append(enc(g.name)).append('\t').append(String.join(",",g.members)).append('\t').append(g.acknowledged).append('\t').append(g.left).append('\n');for(String key:hidden)text.append("H\t").append(key).append('\n');
+    for(Group g:groups.values())text.append("G\t").append(g.id).append('\t').append(g.owner).append('\t').append(enc(g.name)).append('\t').append(String.join(",",g.members)).append('\t').append(g.membersVersion).append('\n');
+    for(String key:hidden)text.append("H\t").append(key).append('\n');
     for(String pid:forgotten)text.append("F\t").append(pid).append('\n');for(Map.Entry<String,String> kv:pendingLeaves.entrySet())text.append("L\t").append(kv.getKey()).append('\t').append(kv.getValue()).append('\n');
+    for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())for(String mid:kv.getValue())text.append("D\t").append(kv.getKey()).append('\t').append(mid).append('\n');
+    for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())for(Map.Entry<String,Integer> mv:kv.getValue().entrySet())text.append("V\t").append(kv.getKey()).append('\t').append(mv.getKey()).append('\t').append(mv.getValue()).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -183,7 +204,9 @@ public final class PeerEngine implements Closeable {
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHSTREAM")){ResumableTransfer.serve(this,s,m,h[2],fingerprint);return;}
-    if(m.length==6&&m[0].equals("LM4")&&m[1].equals("GROUP")){GroupSync.acceptGroup(this,m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
+    if(!simulateLegacyBuild&&m.length==2&&m[0].equals("LM4")&&m[1].equals("CAPS")){write(s,"LM4\tCAPS\t1");return;}
+    if((m.length==6||m.length==7)&&m[0].equals("LM4")&&m[1].equals("GROUP")){GroupSync.acceptGroup(this,m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
+    if(!simulateLegacyBuild&&m.length==5&&m[0].equals("LM4")&&m[1].equals("MEMBERSUPDATE")){GroupSync.handleMembersUpdate(this,m,h[2],fingerprint);write(s,"LM4\tMEMBERSUPDATEACK\t"+m[2]+"\t"+m[3]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ2")&&uuid(m[2])){GroupSync.handleSync(this,s,m[2],m[3],h[2]);notifyChanged();return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){AvatarSync.handleAvatar(this,s,m[2],m[3],m[4]);notifyChanged();return;}
@@ -246,11 +269,22 @@ public final class PeerEngine implements Closeable {
   void startDelivery(Peer p){if(!running||!sending.add(p.id))return;try{outgoing.execute(()->{long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&observed!=queueEpoch.get());}finally{sending.remove(p.id);if(running&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
-    for(Group g:GroupSync.groups(this))if(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&!Arrays.asList(g.acknowledged.split(",")).contains(p.id)&&!Arrays.asList(g.left.split(",",-1)).contains(p.id))try(Socket s=connect(p.host,p.port)){
-      String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))return;
-      write(s,"LM4\tGROUP\t"+g.id+"\t"+g.owner+"\t"+enc(g.name)+"\t"+String.join(",",g.members));if(!read(s).equals("LM4\tGROUPACK\t"+g.id)||!trusted(p.id,fingerprint))return;
-      synchronized(this){Group current=groups.get(g.id);String old=current.acknowledged;current.acknowledged=old.isEmpty()?p.id:old+","+p.id;try{save();}catch(IOException e){current.acknowledged=old;throw e;}}
-    }catch(Exception e){return;}
+    for(Group g:GroupSync.groups(this)){
+      int acked;synchronized(this){HashMap<String,Integer> m=memberAcked.get(g.id);acked=m!=null&&m.containsKey(p.id)?m.get(p.id):-1;}
+      if(!(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&acked<g.membersVersion))continue;
+      try(Socket s=connect(p.host,p.port)){
+        String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))return;
+        int sentVersion=g.membersVersion;boolean neverAcked=acked<0;
+        if(neverAcked){
+          String wire="LM4\tGROUP\t"+g.id+"\t"+g.owner+"\t"+enc(g.name)+"\t"+String.join(",",g.members)+(sentVersion>0?"\t"+sentVersion:"");
+          write(s,wire);if(!read(s).equals("LM4\tGROUPACK\t"+g.id)||!trusted(p.id,fingerprint))return;
+        }else{
+          write(s,"LM4\tMEMBERSUPDATE\t"+g.id+"\t"+sentVersion+"\t"+String.join(",",g.members));
+          if(!read(s).equals("LM4\tMEMBERSUPDATEACK\t"+g.id+"\t"+sentVersion)||!trusted(p.id,fingerprint))return;
+        }
+        synchronized(this){HashMap<String,Integer> m=memberAcked.get(g.id);if(m==null){m=new HashMap<>();memberAcked.put(g.id,m);}Integer old=m.get(p.id);m.put(p.id,sentVersion);try{save();}catch(IOException e){if(old!=null)m.put(p.id,old);else m.remove(p.id);throw e;}}
+      }catch(Exception e){return;}
+    }
     ArrayList<Message> queued=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(p.id)&&m.status.equals("Queued"))queued.add(m);}
     for(Message m:queued)try(Socket s=connect(p.host,p.port)){String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey((SSLSocket)s));if(!read(s).equals("LM4\tREADY")||!trusted(p.id,fingerprint))return;
       boolean exists;synchronized(this){exists=messages.contains(m);}if(!exists)continue;
@@ -380,13 +414,19 @@ public final class PeerEngine implements Closeable {
   }
   // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
   static long transferTimeoutNanos(int size){return TimeUnit.SECONDS.toNanos(Math.max(60,30+size/1_000_000));}
-  // left holds member ids the owner has been told (via LEAVE) have departed — distinct from
-  // acknowledged, so deliver's invite-resend loop stops for them until the owner re-invites.
-  // Membership itself (members) never changes; it stays exactly as created.
+  // Members is the live, active roster — it shrinks when someone leaves and grows when the owner
+  // adds someone, propagated to every active member via MEMBERSUPDATE. membersVersion is a plain
+  // monotonic counter, bumped by exactly 1 on every such change; a receiving device only ever
+  // adopts a strictly greater version.
   public static final class Group {
-    public final String id,owner,name;public final String[] members;String acknowledged,left;
-    Group(String i,String o,String n,String[] m,String ack){this(i,o,n,m,ack,"");}
-    Group(String i,String o,String n,String[] m,String ack,String left){id=i;owner=o;name=n;members=m.clone();acknowledged=ack;this.left=left;}
+    public final String id,owner,name;public String[] members;public int membersVersion;
+    Group(String i,String o,String n,String[] m,int v){id=i;owner=o;name=n;members=m.clone();membersVersion=v;}
+  }
+  // A member id paired with whether they're currently active (in a group's live members) or only
+  // in its departed history — see PeerEngine.allKnownMembers.
+  public static final class KnownMember {
+    public final String id;public final boolean active;
+    KnownMember(String i,boolean a){id=i;active=a;}
   }
   final LinkedHashMap<String,Group> groups=new LinkedHashMap<>();
   final HashSet<String> hidden=new HashSet<>();
@@ -394,12 +434,24 @@ public final class PeerEngine implements Closeable {
   // id we still owe a LEAVE notice to (captured before the local group record is dropped).
   final HashSet<String> forgotten=new HashSet<>();
   final HashMap<String,String> pendingLeaves=new HashMap<>();
+  // Owner-only bookkeeping, never sent over the wire: ids who used to be a member of a group,
+  // kept purely so the Members dialog can show them and offer Re-invite. Disjoint from the live
+  // members above (a departed id is removed from members, not merely flagged here).
+  final LinkedHashMap<String,HashSet<String>> departedHistory=new LinkedHashMap<>();
+  // Owner-only: per group, the last membersVersion each active member has acked. Drives deliver's
+  // broadcast/retry loop.
+  final LinkedHashMap<String,HashMap<String,Integer>> memberAcked=new LinkedHashMap<>();
+  // Test-only: makes this engine behave as if it predates group-membership changes entirely —
+  // refuses CAPS and MEMBERSUPDATE while HELLO and ordinary messaging behave normally.
+  public volatile boolean simulateLegacyBuild=false;
   // Fired when a contact remotely revokes our verification of them, because we previously
   // deleted them and they've told us so (the FORGET notice). Carries their peer id.
   public volatile java.util.function.Consumer<String> forgottenCallback=id->{};
   public List<Group> groups(){return GroupSync.groups(this);}
   public String displayName(String target){return GroupSync.displayName(this,target);}
   public String createGroup(String name,List<String> members)throws IOException {return GroupSync.createGroup(this,name,members);}
+  public List<KnownMember> allKnownMembers(String groupId){return GroupSync.allKnownMembers(this,groupId);}
+  public void addMember(String groupId,String memberId)throws IOException {GroupSync.addMember(this,groupId,memberId);}
   boolean allowedGroup(String group,String sender){return GroupSync.allowedGroup(this,group,sender);}
   public void queueFile(String conversation,String name,byte[] data)throws IOException {queueFile(conversation,"",name,data);}
   public void queueFile(String conversation,String caption,String name,byte[] data)throws IOException {
@@ -471,12 +523,15 @@ public final class PeerEngine implements Closeable {
     ArrayList<Message> old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
     LinkedHashMap<String,Peer> oldPeers=new LinkedHashMap<>(peers);LinkedHashMap<String,Group> oldGroups=new LinkedHashMap<>(groups);
     HashSet<String> oldForgotten=new HashSet<>(forgotten);HashMap<String,String> oldPendingLeaves=new HashMap<>(pendingLeaves);
+    LinkedHashMap<String,HashSet<String>> oldDeparted=new LinkedHashMap<>();for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())oldDeparted.put(kv.getKey(),new HashSet<>(kv.getValue()));
+    LinkedHashMap<String,HashMap<String,Integer>> oldAcked=new LinkedHashMap<>();for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())oldAcked.put(kv.getKey(),new HashMap<>(kv.getValue()));
     ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
-    messages.clear();groups.clear();hidden.clear();
+    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();
     forgotten.addAll(oldPeers.keySet());
     peers.clear();
     try{save();}catch(IOException e){
       messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);
+      departedHistory.putAll(oldDeparted);memberAcked.putAll(oldAcked);
       forgotten.clear();forgotten.addAll(oldForgotten);pendingLeaves.clear();pendingLeaves.putAll(oldPendingLeaves);
       throw e;
     }
@@ -488,16 +543,12 @@ public final class PeerEngine implements Closeable {
     notifyChanged();queueEpoch.incrementAndGet();flush();
   }
   static void deleteRecursively(File dir){File[] children=dir.listFiles();if(children!=null)for(File child:children){if(child.isDirectory())deleteRecursively(child);else child.delete();}dir.delete();}
-  // Owner-only: brings a departed member back by clearing their acknowledged/left flags, so the
-  // next deliver cycle treats them as not-yet-invited and resends the GROUP invite normally.
-  public synchronized void reinviteMember(String groupId,String memberId)throws IOException {
-    Group g=groups.get(groupId);if(g==null||!g.owner.equals(id))throw new IOException("Only the group owner can re-invite a member.");
-    String oldAck=g.acknowledged,oldLeft=g.left;
-    ArrayList<String> ack=new ArrayList<>();for(String x:g.acknowledged.split(",",-1))if(!x.isEmpty()&&!x.equals(memberId))ack.add(x);
-    ArrayList<String> left=new ArrayList<>();for(String x:g.left.split(",",-1))if(!x.isEmpty()&&!x.equals(memberId))left.add(x);
-    g.acknowledged=String.join(",",ack);g.left=String.join(",",left);
-    try{save();}catch(IOException e){g.acknowledged=oldAck;g.left=oldLeft;throw e;}
-    notifyChanged();queueEpoch.incrementAndGet();flush();
+  // Owner-only: brings a departed member back. Same underlying action as addMember — a fresh
+  // capability check, live, every time — just triggered from the Members dialog instead of an
+  // incoming join request.
+  public void reinviteMember(String groupId,String memberId)throws IOException {
+    synchronized(this){Group g=groups.get(groupId);if(g==null||!g.owner.equals(id))throw new IOException("Only the group owner can re-invite a member.");}
+    addMember(groupId,memberId);
   }
   public static String safeFileName(String name){String[] parts=name.replace('\\','/').split("/",-1);name=parts[parts.length-1];StringBuilder b=new StringBuilder();for(char c:name.toCharArray())if(c>=32&&"<>:\"/\\|?*".indexOf(c)<0)b.append(c);name=b.toString().trim().replaceAll("^\\.+|\\.+$","");return name.isEmpty()?"attachment":name.substring(0,Math.min(120,name.length()));}
   File attachmentPath(Message m)throws IOException {return AttachmentStore.attachmentPath(this,m);}
