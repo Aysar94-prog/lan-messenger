@@ -73,6 +73,9 @@ public class PeerHarness {
    if(a[0].equals("DELETECONV"))e.deleteConversation(a[1]);
    if(a[0].equals("DELETEALL"))e.deleteAllData();
    if(a[0].equals("USAGE"))System.out.println("USAGE\t"+e.uploadPolicy.sentToday());
+   if(a[0].equals("VERIFIED")){boolean trusted=false;for(PeerEngine.Peer p:e.peers())if(p.id.equals(a[1]))trusted=p.trusted();System.out.println("VERIFIED\t"+trusted);}
+   if(a[0].equals("REINVITE"))e.reinviteMember(a[1],a[2]);
+   if(a[0].equals("LEFT")){boolean left=false;for(PeerEngine.Group g:e.groups())if(g.id.equals(a[1]))for(String x:g.left.split(",",-1))if(x.equals(a[2]))left=true;System.out.println("LEFT\t"+left);}
    if(a[0].equals("READ"))e.markRead(a[1]);
    if(a[0].equals("UNREAD"))System.out.println("UNREAD\t"+e.unread(a[1]));
    if(a[0].equals("SETAVATAR"))e.setAvatar(Base64.getDecoder().decode(a[1]));

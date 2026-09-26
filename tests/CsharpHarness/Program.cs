@@ -14,6 +14,9 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="CLEAR")engine.ClearConversation(a[1]);
  if(a[0]=="DELETECONV")engine.DeleteConversation(a[1]);
  if(a[0]=="DELETEALL")engine.DeleteAllData();
+ if(a[0]=="VERIFIED")Console.WriteLine("VERIFIED\t"+engine.Peers.Any(p=>p.Id==a[1]&&p.Trusted).ToString().ToLowerInvariant());
+ if(a[0]=="REINVITE")engine.ReinviteMember(a[1],a[2]);
+ if(a[0]=="LEFT")Console.WriteLine("LEFT\t"+engine.Groups.Any(g=>g.Id==a[1]&&g.Left.Split(',',StringSplitOptions.RemoveEmptyEntries).Contains(a[2])).ToString().ToLowerInvariant());
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
  if(a[0]=="SETAVATAR")engine.SetAvatar(Convert.FromBase64String(a[1]));
