@@ -32,6 +32,14 @@ public sealed partial class PeerEngine
     // tests/CsharpHarness and tests/PeerHarness.java to simulate a not-yet-updated peer without a
     // real legacy binary.
     public bool SimulateLegacyBuild;
+    // Owner-only: per group, requesters asking to join. Null value = currently Pending (shown in
+    // the owner's queue); a timestamp = Ignored at that moment, kept only to enforce the 1-hour
+    // cooldown before the same person can request again — never shown once ignored.
+    readonly Dictionary<string,Dictionary<string,long?>> joinRequests=[];
+    // Requester-only: ownerId -> group ids still awaiting a JOINREQUESTACK. Persisted so a restart
+    // before the ack arrives doesn't silently drop the intent — mirrors forgotten/pendingLeaves.
+    readonly Dictionary<string,HashSet<string>> pendingJoinRequests=[];
+    const long JoinRequestCooldownMs=3600_000;
     public Group[] Groups {get{lock(gate)return groups.Values.Select(g=>g with{Members=g.Members.ToArray()}).ToArray();}}
     // Union of the live roster and the departed-history record, for the Members dialog — a departed
     // id no longer appears in Groups[].Members, so callers that want to show (and Re-invite) them
@@ -66,6 +74,92 @@ public sealed partial class PeerEngine
             set.Add(memberId);
             try{Save();}catch{groups[groupId]=g;if(!hadHistory)set.Remove(memberId);throw;}
         }
+    }
+    // Requester side: sends a request to join a group, given its id and a verified contact who
+    // owns it. Delivery is guaranteed the same way FORGET/LEAVE are — retried until acked — with
+    // no user-visible "pending" state: if accepted, the group simply appears like any invite does.
+    public void RequestJoin(string ownerId,string groupId)
+    {
+        lock(gate){
+            if(!Uuid(groupId))throw new IOException("Enter a valid group ID.");
+            if(!peers.TryGetValue(ownerId,out var p)||!p.Trusted)throw new IOException("Choose a verified contact.");
+            if(groups.ContainsKey(groupId))throw new IOException("You're already part of this group.");
+            if(!pendingJoinRequests.TryGetValue(ownerId,out var set))pendingJoinRequests[ownerId]=set=[];
+            if(!set.Add(groupId))return; // already requested; no-op
+            try{Save();}catch{set.Remove(groupId);throw;}
+        }
+        Notify();WakeDelivery();
+    }
+    // Owner side: records an incoming join request. Verified contact required to even record it;
+    // a repeat request while already Pending is a no-op; a request from someone recently Ignored is
+    // silently swallowed until the 1-hour cooldown passes, without refreshing that cooldown.
+    void HandleJoinRequest(string groupId,string requesterId,string fingerprint)
+    {
+        lock(gate){
+            if(!Trusted(requesterId,fingerprint))return;
+            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id)return;
+            if(!joinRequests.TryGetValue(groupId,out var reqs))joinRequests[groupId]=reqs=[];
+            if(reqs.TryGetValue(requesterId,out var existing)){
+                if(existing is null)return; // already pending
+                if(Now-existing.Value<JoinRequestCooldownMs)return; // ignored recently; cooldown still active
+            }
+            var had=reqs.TryGetValue(requesterId,out var oldValue);
+            reqs[requesterId]=null;
+            try{Save();}catch{if(had)reqs[requesterId]=oldValue;else reqs.Remove(requesterId);throw;}
+        }
+    }
+    // Owner-only: currently pending (not ignored) requesters for a group, for the request-queue UI.
+    public string[] PendingJoinRequests(string groupId)
+    {
+        lock(gate)return joinRequests.TryGetValue(groupId,out var reqs)?reqs.Where(kv=>kv.Value is null).Select(kv=>kv.Key).ToArray():[];
+    }
+    void ClearJoinRequestLocked(string groupId,string requesterId)
+    {
+        if(!joinRequests.TryGetValue(groupId,out var reqs))return;
+        var had=reqs.TryGetValue(requesterId,out var old);
+        reqs.Remove(requesterId);
+        try{Save();}catch{if(had)reqs[requesterId]=old;throw;}
+    }
+    // Test-only: backdates an Ignored request's timestamp so tests can exercise "the 1-hour
+    // cooldown has elapsed" without a real wall-clock wait.
+    public void DebugBackdateIgnoredJoinRequest(string groupId,string requesterId,long epochMillis)
+    {
+        lock(gate){
+            if(!joinRequests.TryGetValue(groupId,out var reqs)||!reqs.ContainsKey(requesterId))throw new IOException("No such request.");
+            var old=reqs[requesterId];reqs[requesterId]=epochMillis;
+            try{Save();}catch{reqs[requesterId]=old;throw;}
+        }
+    }
+    // Owner-only: disappears from the queue, silently — no notice to the requester, no visible
+    // "ignored" record anywhere. The timestamp kept internally only enforces the cooldown above.
+    public void IgnoreJoinRequest(string groupId,string requesterId)
+    {
+        lock(gate){
+            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id)throw new IOException("Only the group owner can ignore a request.");
+            if(!joinRequests.TryGetValue(groupId,out var reqs)||!reqs.ContainsKey(requesterId))return;
+            var old=reqs[requesterId];
+            reqs[requesterId]=Now;
+            try{Save();}catch{reqs[requesterId]=old;throw;}
+        }
+        Notify();
+    }
+    // Owner-only: re-validated at the moment of the decision, not from when the request was first
+    // sent. Not already a member, or no longer a verified contact — cleared, nothing recoverable
+    // without a fresh request. Group full, or an existing member's live capability check fails —
+    // AddMember itself throws and the request is deliberately left Pending (recoverable later).
+    public async Task AcceptJoinRequest(string groupId,string requesterId)
+    {
+        lock(gate){
+            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id)throw new IOException("Only the group owner can accept a request.");
+            if(!joinRequests.TryGetValue(groupId,out var reqs)||!reqs.TryGetValue(requesterId,out var v)||v is not null)throw new IOException("This request is no longer pending.");
+            if(!g.Members.Contains(requesterId)&&(!peers.TryGetValue(requesterId,out var p)||!p.Trusted)){
+                ClearJoinRequestLocked(groupId,requesterId);
+                throw new IOException("This person is no longer a verified contact.");
+            }
+        }
+        await AddMember(groupId,requesterId); // throws (Pending kept) for a full group or a failed live capability check
+        lock(gate)ClearJoinRequestLocked(groupId,requesterId);
+        Notify();
     }
     void AcceptGroup(string[] a,string sender,string fingerprint)
     {
@@ -142,7 +236,13 @@ public sealed partial class PeerEngine
             // make Deliver() think they already have a live copy to merely update.
             int? oldAck=memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(memberId,out var v)?v:null;
             m?.Remove(memberId);
-            try{Save();}catch{groups[groupId]=g;if(oldAck is int restore)m![memberId]=restore;throw;}
+            // A direct invite/Re-invite landing while a join request from the same person is still
+            // pending must collapse into one add with no leftover queue entry — regardless of which
+            // path actually added them, not just AcceptJoinRequest's own.
+            long? oldRequestValue=joinRequests.TryGetValue(groupId,out var reqs)&&reqs.TryGetValue(memberId,out var rv)?rv:null;
+            bool hadRequest=reqs?.ContainsKey(memberId)??false;
+            reqs?.Remove(memberId);
+            try{Save();}catch{groups[groupId]=g;if(oldAck is int restore)m![memberId]=restore;if(hadRequest)reqs![memberId]=oldRequestValue;throw;}
         }
         Notify();WakeDelivery();
     }
@@ -228,8 +328,10 @@ public sealed partial class PeerEngine
             var oldForgotten=forgotten.ToArray();var oldPendingLeaves=new Dictionary<string,string>(pendingLeaves);
             var oldDeparted=departedHistory.ToDictionary(kv=>kv.Key,kv=>new HashSet<string>(kv.Value));
             var oldAcked=memberAcked.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,int>(kv.Value));
+            var oldJoinRequests=joinRequests.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,long?>(kv.Value));
+            var oldPendingJoinRequests=pendingJoinRequests.ToDictionary(kv=>kv.Key,kv=>new HashSet<string>(kv.Value));
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();joinRequests.Clear();pendingJoinRequests.Clear();
             foreach(var id in oldPeers.Keys)forgotten.Add(id);
             peers.Clear();
             try{Save();}
@@ -237,6 +339,7 @@ public sealed partial class PeerEngine
                 messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);
                 foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;
                 foreach(var kv in oldDeparted)departedHistory[kv.Key]=kv.Value;foreach(var kv in oldAcked)memberAcked[kv.Key]=kv.Value;
+                foreach(var kv in oldJoinRequests)joinRequests[kv.Key]=kv.Value;foreach(var kv in oldPendingJoinRequests)pendingJoinRequests[kv.Key]=kv.Value;
                 forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
                 throw;
             }

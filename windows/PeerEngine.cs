@@ -146,6 +146,7 @@ public sealed partial class PeerEngine : IDisposable
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="AVATAR"&&a[2]==h[2]){await HandleAvatar(tls,a[2],a[3],a[4]);Notify();return;}
         if(a.Length==3&&a[0]=="LM4"&&a[1]=="FORGET"&&a[2]==h[2]){Revoke(h[2]);try{Forgotten?.Invoke(h[2]);}catch{}await Write(tls,"LM4\tFORGETACK");Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="LEAVE"&&Uuid(a[2])&&a[3]==h[2]){HandleLeave(a[2],h[2]);await Write(tls,"LM4\tLEAVEACK\t"+a[2]);Notify();return;}
+        if(a.Length==3&&a[0]=="LM4"&&a[1]=="JOINREQUEST"&&Uuid(a[2])){HandleJoinRequest(a[2],h[2],fingerprint);await Write(tls,"LM4\tJOINREQUESTACK\t"+a[2]);Notify();return;}
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="FETCHDIRECT"){await ServeDirect(tls,client,a,h[2]);return;}
         if(a.Length==6&&a[0]=="LM4"&&a[1]=="FETCH"){await ServeDownload(tls,a,h[2]);return;}
         if((a.Length!=8&&a.Length!=12&&a.Length!=13)||a[0]!="LM4"||(a[1]!="MSG"&&a[1]!="OFFER")||!Uuid(a[2])||a[3]!=h[2]||a[4]!=Id)return;
@@ -296,6 +297,17 @@ public sealed partial class PeerEngine : IDisposable
             if(await Read(tls)=="LM4\tREADY"){
                 await Write(tls,$"LM4\tLEAVE\t{groupId}\t{Id}");
                 if(await Read(tls)==$"LM4\tLEAVEACK\t{groupId}"){lock(gate){pendingLeaves.Remove(groupId);try{Save();}catch{pendingLeaves[groupId]=peer.Id;throw;}}}
+            }
+        }catch{return;}
+        string[] requestedGroupIds;lock(gate)requestedGroupIds=pendingJoinRequests.TryGetValue(peer.Id,out var reqSet)?reqSet.ToArray():[];
+        foreach(var groupId in requestedGroupIds)
+        try{
+            using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);
+            var fp=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fp))return;
+            await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;
+            if(await Read(tls)=="LM4\tREADY"){
+                await Write(tls,$"LM4\tJOINREQUEST\t{groupId}");
+                if(await Read(tls)==$"LM4\tJOINREQUESTACK\t{groupId}"){lock(gate){if(pendingJoinRequests.TryGetValue(peer.Id,out var set)&&set.Remove(groupId)){if(set.Count==0)pendingJoinRequests.Remove(peer.Id);try{Save();}catch{if(!pendingJoinRequests.TryGetValue(peer.Id,out var s2))pendingJoinRequests[peer.Id]=s2=[];s2.Add(groupId);throw;}}}}
             }
         }catch{return;}
     }
