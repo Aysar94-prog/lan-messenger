@@ -104,7 +104,6 @@ public final class PeerEngine implements Closeable {
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
     HashSet<String> loadedForgotten=new HashSet<>();HashMap<String,String> loadedPendingLeaves=new HashMap<>();
     LinkedHashMap<String,HashSet<String>> loadedDeparted=new LinkedHashMap<>();LinkedHashMap<String,HashMap<String,Integer>> loadedAcked=new LinkedHashMap<>();
-    LinkedHashMap<String,HashMap<String,Long>> loadedJoinRequests=new LinkedHashMap<>();LinkedHashMap<String,HashSet<String>> loadedPendingJoinRequests=new LinkedHashMap<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
@@ -128,13 +127,11 @@ public final class PeerEngine implements Closeable {
       else if(a[0].equals("L")&&a.length==3)loadedPendingLeaves.put(a[1],a[2]);
       else if(a[0].equals("D")&&a.length==3){HashSet<String> set=loadedDeparted.get(a[1]);if(set==null){set=new HashSet<>();loadedDeparted.put(a[1],set);}set.add(a[2]);}
       else if(a[0].equals("V")&&a.length==4){HashMap<String,Integer> m=loadedAcked.get(a[1]);if(m==null){m=new HashMap<>();loadedAcked.put(a[1],m);}m.put(a[2],Integer.parseInt(a[3]));}
-      else if(a[0].equals("J")&&a.length==4){HashMap<String,Long> reqs=loadedJoinRequests.get(a[1]);if(reqs==null){reqs=new HashMap<>();loadedJoinRequests.put(a[1],reqs);}reqs.put(a[2],a[3].isEmpty()?null:Long.parseLong(a[3]));}
-      else if(a[0].equals("Q")&&a.length==3){HashSet<String> set=loadedPendingJoinRequests.get(a[1]);if(set==null){set=new HashSet<>();loadedPendingJoinRequests.put(a[1],set);}set.add(a[2]);}
+      else if(a[0].equals("J")||a[0].equals("Q")){} // Removed join-request feature; tolerate old rows already on disk instead of failing to load.
       else throw new IOException("Invalid storage row");}
     groups.clear();groups.putAll(loadedGroups);hidden.clear();hidden.addAll(loadedHidden);
     forgotten.clear();forgotten.addAll(loadedForgotten);pendingLeaves.clear();pendingLeaves.putAll(loadedPendingLeaves);
     departedHistory.clear();departedHistory.putAll(loadedDeparted);memberAcked.clear();memberAcked.putAll(loadedAcked);
-    joinRequests.clear();joinRequests.putAll(loadedJoinRequests);pendingJoinRequests.clear();pendingJoinRequests.putAll(loadedPendingJoinRequests);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
   }
   synchronized void save()throws IOException {
@@ -146,8 +143,6 @@ public final class PeerEngine implements Closeable {
     for(String pid:forgotten)text.append("F\t").append(pid).append('\n');for(Map.Entry<String,String> kv:pendingLeaves.entrySet())text.append("L\t").append(kv.getKey()).append('\t').append(kv.getValue()).append('\n');
     for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())for(String mid:kv.getValue())text.append("D\t").append(kv.getKey()).append('\t').append(mid).append('\n');
     for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())for(Map.Entry<String,Integer> mv:kv.getValue().entrySet())text.append("V\t").append(kv.getKey()).append('\t').append(mv.getKey()).append('\t').append(mv.getValue()).append('\n');
-    for(Map.Entry<String,HashMap<String,Long>> kv:joinRequests.entrySet())for(Map.Entry<String,Long> rv:kv.getValue().entrySet())text.append("J\t").append(kv.getKey()).append('\t').append(rv.getKey()).append('\t').append(rv.getValue()==null?"":rv.getValue().toString()).append('\n');
-    for(Map.Entry<String,HashSet<String>> kv:pendingJoinRequests.entrySet())for(String gid:kv.getValue())text.append("Q\t").append(kv.getKey()).append('\t').append(gid).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -218,7 +213,6 @@ public final class PeerEngine implements Closeable {
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){AvatarSync.handleAvatar(this,s,m[2],m[3],m[4]);notifyChanged();return;}
     if(m.length==3&&m[0].equals("LM4")&&m[1].equals("FORGET")&&m[2].equals(h[2])){revoke(h[2]);try{forgottenCallback.accept(h[2]);}catch(Exception ignored){}write(s,"LM4\tFORGETACK");notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("LEAVE")&&uuid(m[2])&&m[3].equals(h[2])){GroupSync.handleLeave(this,m[2],h[2]);write(s,"LM4\tLEAVEACK\t"+m[2]);notifyChanged();return;}
-    if(m.length==3&&m[0].equals("LM4")&&m[1].equals("JOINREQUEST")&&uuid(m[2])){GroupSync.handleJoinRequest(this,m[2],h[2],fingerprint);write(s,"LM4\tJOINREQUESTACK\t"+m[2]);notifyChanged();return;}
     if(m.length==6&&m[0].equals("LM4")&&m[1].equals("FETCH")){TransferManager.serveDownload(this,s,m,h[2]);return;}
     if((m.length!=8&&m.length!=12&&m.length!=13)||!m[0].equals("LM4")||(!m[1].equals("MSG")&&!m[1].equals("OFFER"))||!uuid(m[2])||!m[3].equals(h[2])||!m[4].equals(id))return;
     long at=Long.parseLong(m[6]);if(at<0||at>253402300799999L)return;
@@ -359,16 +353,6 @@ public final class PeerEngine implements Closeable {
         if(read(s).equals("LM4\tLEAVEACK\t"+groupId)){synchronized(this){pendingLeaves.remove(groupId);try{save();}catch(IOException e){pendingLeaves.put(groupId,p.id);throw e;}}}
       }
     }catch(Exception e){return;}
-    ArrayList<String> requestedGroupIds=new ArrayList<>();synchronized(this){HashSet<String> reqSet=pendingJoinRequests.get(p.id);if(reqSet!=null)requestedGroupIds.addAll(reqSet);}
-    for(String groupId:requestedGroupIds)
-    try(Socket s=connect(p.host,p.port)){
-      String fp=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fp))return;
-      write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;
-      if(read(s).equals("LM4\tREADY")){
-        write(s,"LM4\tJOINREQUEST\t"+groupId);
-        if(read(s).equals("LM4\tJOINREQUESTACK\t"+groupId)){synchronized(this){HashSet<String> set=pendingJoinRequests.get(p.id);if(set!=null&&set.remove(groupId)){if(set.isEmpty())pendingJoinRequests.remove(p.id);try{save();}catch(IOException e){HashSet<String> s2=pendingJoinRequests.get(p.id);if(s2==null){s2=new HashSet<>();pendingJoinRequests.put(p.id,s2);}s2.add(groupId);throw e;}}}}
-      }
-    }catch(Exception e){return;}
   }
 
 
@@ -461,13 +445,6 @@ public final class PeerEngine implements Closeable {
   // Test-only: makes this engine behave as if it predates group-membership changes entirely —
   // refuses CAPS and MEMBERSUPDATE while HELLO and ordinary messaging behave normally.
   public volatile boolean simulateLegacyBuild=false;
-  // Owner-only: per group, requesters asking to join. Null value = currently Pending (shown in the
-  // owner's queue); a timestamp = Ignored at that moment, kept only to enforce the 1-hour cooldown
-  // before the same person can request again — never shown once ignored.
-  final LinkedHashMap<String,HashMap<String,Long>> joinRequests=new LinkedHashMap<>();
-  // Requester-only: ownerId -> group ids still awaiting a JOINREQUESTACK. Persisted so a restart
-  // before the ack arrives doesn't silently drop the intent — mirrors forgotten/pendingLeaves.
-  final LinkedHashMap<String,HashSet<String>> pendingJoinRequests=new LinkedHashMap<>();
   // Fired when a contact remotely revokes our verification of them, because we previously
   // deleted them and they've told us so (the FORGET notice). Carries their peer id.
   public volatile java.util.function.Consumer<String> forgottenCallback=id->{};
@@ -476,14 +453,9 @@ public final class PeerEngine implements Closeable {
   public String createGroup(String name,List<String> members)throws IOException {return GroupSync.createGroup(this,name,members);}
   public List<KnownMember> allKnownMembers(String groupId){return GroupSync.allKnownMembers(this,groupId);}
   public void addMember(String groupId,String memberId)throws IOException {GroupSync.addMember(this,groupId,memberId);}
-  public void requestJoin(String ownerId,String groupId)throws IOException {GroupSync.requestJoin(this,ownerId,groupId);}
-  public List<String> pendingJoinRequests(String groupId){return GroupSync.pendingJoinRequests(this,groupId);}
-  public void acceptJoinRequest(String groupId,String requesterId)throws IOException {GroupSync.acceptJoinRequest(this,groupId,requesterId);}
-  public void ignoreJoinRequest(String groupId,String requesterId)throws IOException {GroupSync.ignoreJoinRequest(this,groupId,requesterId);}
   // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
   // screen's sync-status display -- -1 if never (they're not yet caught up to anything).
   public synchronized int memberAckedVersion(String groupId,String peerId){HashMap<String,Integer> m=memberAcked.get(groupId);return m!=null&&m.containsKey(peerId)?m.get(peerId):-1;}
-  public void debugBackdateIgnoredJoinRequest(String groupId,String requesterId,long epochMillis)throws IOException {GroupSync.debugBackdateIgnoredJoinRequest(this,groupId,requesterId,epochMillis);}
   boolean allowedGroup(String group,String sender){return GroupSync.allowedGroup(this,group,sender);}
   public void queueFile(String conversation,String name,byte[] data)throws IOException {queueFile(conversation,"",name,data);}
   public void queueFile(String conversation,String caption,String name,byte[] data)throws IOException {
@@ -557,16 +529,13 @@ public final class PeerEngine implements Closeable {
     HashSet<String> oldForgotten=new HashSet<>(forgotten);HashMap<String,String> oldPendingLeaves=new HashMap<>(pendingLeaves);
     LinkedHashMap<String,HashSet<String>> oldDeparted=new LinkedHashMap<>();for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())oldDeparted.put(kv.getKey(),new HashSet<>(kv.getValue()));
     LinkedHashMap<String,HashMap<String,Integer>> oldAcked=new LinkedHashMap<>();for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())oldAcked.put(kv.getKey(),new HashMap<>(kv.getValue()));
-    LinkedHashMap<String,HashMap<String,Long>> oldJoinRequests=new LinkedHashMap<>();for(Map.Entry<String,HashMap<String,Long>> kv:joinRequests.entrySet())oldJoinRequests.put(kv.getKey(),new HashMap<>(kv.getValue()));
-    LinkedHashMap<String,HashSet<String>> oldPendingJoinRequests=new LinkedHashMap<>();for(Map.Entry<String,HashSet<String>> kv:pendingJoinRequests.entrySet())oldPendingJoinRequests.put(kv.getKey(),new HashSet<>(kv.getValue()));
     ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
-    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();joinRequests.clear();pendingJoinRequests.clear();
+    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();
     forgotten.addAll(oldPeers.keySet());
     peers.clear();
     try{save();}catch(IOException e){
       messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);
       departedHistory.putAll(oldDeparted);memberAcked.putAll(oldAcked);
-      joinRequests.putAll(oldJoinRequests);pendingJoinRequests.putAll(oldPendingJoinRequests);
       forgotten.clear();forgotten.addAll(oldForgotten);pendingLeaves.clear();pendingLeaves.putAll(oldPendingLeaves);
       throw e;
     }

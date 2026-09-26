@@ -10,7 +10,6 @@ public sealed partial class PeerEngine
         var loadedPeers=new Dictionary<string,Peer>();var loadedMessages=new List<Message>();var loadedGroups=new Dictionary<string,Group>();var loadedHidden=new HashSet<string>();
         var loadedForgotten=new HashSet<string>();var loadedPendingLeaves=new Dictionary<string,string>();
         var loadedDeparted=new Dictionary<string,HashSet<string>>();var loadedAcked=new Dictionary<string,Dictionary<string,int>>();
-        var loadedJoinRequests=new Dictionary<string,Dictionary<string,long?>>();var loadedPendingJoinRequests=new Dictionary<string,HashSet<string>>();
         foreach(var line in lines.Skip(1).SkipLast(1)){var a=line.Split('\t');
             if((a.Length==5||a.Length==7||a.Length==8||a.Length==10)&&a[0]=="P")loadedPeers[a[1]]=new(a[1],Dec(a[2]),a[3],int.Parse(a[4]),0,a.Length>=7?a[5]:"",a.Length>=7?a[6]:"",a.Length>=8?a[7]:"",a.Length==10?a[8]:"",a.Length==10?a[9]:"");
             else if((a.Length==8||a.Length==12||a.Length==14)&&a[0]=="M")loadedMessages.Add(new(a[1],a[2],a[3],Dec(a[5]),long.Parse(a[4]),a[6],a.Length>=12?a[8]:"",a.Length>=12?Dec(a[9]):"",a.Length>=12?long.Parse(a[10]):0,a.Length>=12?a[11]:"",a.Length==14?a[12]:"",a.Length==14&&a[13]=="1"));
@@ -33,15 +32,12 @@ public sealed partial class PeerEngine
             else if(a.Length==3&&a[0]=="L")loadedPendingLeaves[a[1]]=a[2];
             else if(a.Length==3&&a[0]=="D"){if(!loadedDeparted.TryGetValue(a[1],out var set))loadedDeparted[a[1]]=set=[];set.Add(a[2]);}
             else if(a.Length==4&&a[0]=="V"){if(!loadedAcked.TryGetValue(a[1],out var m))loadedAcked[a[1]]=m=[];m[a[2]]=int.Parse(a[3]);}
-            else if(a.Length==4&&a[0]=="J"){if(!loadedJoinRequests.TryGetValue(a[1],out var reqs))loadedJoinRequests[a[1]]=reqs=[];reqs[a[2]]=a[3].Length>0?long.Parse(a[3]):null;}
-            else if(a.Length==3&&a[0]=="Q"){if(!loadedPendingJoinRequests.TryGetValue(a[1],out var set))loadedPendingJoinRequests[a[1]]=set=[];set.Add(a[2]);}
+            else if(a[0]=="J"||a[0]=="Q"){} // Removed join-request feature; tolerate old rows already on disk instead of failing to load.
             else throw new IOException("Invalid storage row");}
         groups.Clear();foreach(var g in loadedGroups)groups[g.Key]=g.Value;hidden.Clear();hidden.UnionWith(loadedHidden);
         forgotten.Clear();forgotten.UnionWith(loadedForgotten);pendingLeaves.Clear();foreach(var kv in loadedPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
         departedHistory.Clear();foreach(var kv in loadedDeparted)departedHistory[kv.Key]=kv.Value;
         memberAcked.Clear();foreach(var kv in loadedAcked)memberAcked[kv.Key]=kv.Value;
-        joinRequests.Clear();foreach(var kv in loadedJoinRequests)joinRequests[kv.Key]=kv.Value;
-        pendingJoinRequests.Clear();foreach(var kv in loadedPendingJoinRequests)pendingJoinRequests[kv.Key]=kv.Value;
         Id=h[1];Name=Dec(h[2]);peers.Clear();foreach(var pair in loadedPeers)peers[pair.Key]=pair.Value;messages.Clear();messages.AddRange(loadedMessages);
     }
     void Save()
@@ -53,8 +49,6 @@ public sealed partial class PeerEngine
         foreach(var key in hidden)text.Append($"H\t{key}\n");foreach(var id in forgotten)text.Append($"F\t{id}\n");foreach(var kv in pendingLeaves)text.Append($"L\t{kv.Key}\t{kv.Value}\n");
         foreach(var kv in departedHistory)foreach(var id in kv.Value)text.Append($"D\t{kv.Key}\t{id}\n");
         foreach(var kv in memberAcked)foreach(var mv in kv.Value)text.Append($"V\t{kv.Key}\t{mv.Key}\t{mv.Value}\n");
-        foreach(var kv in joinRequests)foreach(var rv in kv.Value)text.Append($"J\t{kv.Key}\t{rv.Key}\t{(rv.Value.HasValue?rv.Value.Value.ToString():"")}\n");
-        foreach(var kv in pendingJoinRequests)foreach(var gid in kv.Value)text.Append($"Q\t{kv.Key}\t{gid}\n");
         text.Append("END\n");
         using(var stream=new FileStream(file+".tmp",FileMode.Create,FileAccess.Write,FileShare.None)){stream.Write(StorageMagic);stream.Write(protector.Protect(Encoding.UTF8.GetBytes(text.ToString())));stream.Flush(true);}
         if(File.Exists(file))File.Move(file,file+".bak",true);

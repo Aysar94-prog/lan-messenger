@@ -128,6 +128,63 @@ try:
         assert left(owner,gid4,departed),f'{label}: departed member must still show in history after migration'
         assert not left(owner,gid4,mid),f'{label}: an always-active member must not show as departed'
     print('PASS: migrating an old overlapping Members/Left group produces a real, disjoint membership change',flush=True)
+
+    # 8) The 16-member cap (owner included) is enforced against the live active roster, exactly like
+    #    CreateGroup's own floor/ceiling — tested here directly against AddMember (via REINVITE, the
+    #    same direct-add primitive scenario 1 already used for a brand-new member), independent of
+    #    the join-request layer this used to be exercised through.
+    # 17 simultaneous real processes doing active discovery/connection churn on loopback can hit
+    # transient timeouts under load that have nothing to do with correctness -- retry tolerantly.
+    def pair_retry(x,y,attempts=10):
+        for i in range(attempts):
+            try:
+                pair(x,y);return
+            except AssertionError as e:
+                if i==attempts-1:raise
+                time.sleep(2)
+    def command_retry(p,line,attempts=10):
+        for i in range(attempts):
+            try:
+                return p.command(line)
+            except AssertionError as e:
+                if i==attempts-1:raise
+                time.sleep(2)
+    def wait_for_long(predicate,label,timeout=120):
+        end=time.monotonic()+timeout
+        while time.monotonic()<end:
+            if predicate():print('PASS:',label,flush=True);return
+            time.sleep(.3)
+        raise AssertionError(label)
+    def roster(p,gid):
+        rows=p.command('ROSTER\t'+gid)
+        assert len(rows)==1 and rows[0][0]=='ROSTER',rows
+        return set(rows[0][2].split(','))
+
+    owner=Peer('cs','FullOwner','127.0.0.150')
+    members=[]
+    for i in range(15):
+        members.append(Peer('cs','FullMember'+str(i),'127.0.0.'+str(151+i)))
+        time.sleep(0.2) # stagger startup so 16 TLS listeners don't all come up in one burst
+    replacement=Peer('cs','FullReplacement','127.0.0.170')
+    for m in members: pair_retry(owner,m)
+    pair_retry(owner,replacement)
+    fgid=owner.command('GROUP\t'+b64s('Full group')+'\t'+','.join(m.id for m in members))[0][1]
+    wait_for_long(lambda:all(fgid in groups(m) for m in members),'All 15 initial members receive the full-size group')
+    try:
+        owner.command('REINVITE\t'+fgid+'\t'+replacement.id)
+        raise AssertionError('expected adding a 17th member to a 16-member group to be refused')
+    except AssertionError as e:
+        assert 'ERROR' in str(e),e
+    print('PASS: a full 16-member group refuses to grow further',flush=True)
+    departing=members[0];remaining=members[1:]
+    departing.command('DELETECONV\t'+fgid)
+    wait_for_long(lambda:roster(owner,fgid)=={owner.id}|{m.id for m in remaining},'Owner sees the departure free a slot')
+    command_retry(owner,'REINVITE\t'+fgid+'\t'+replacement.id)
+    wait_for_long(lambda:fgid in groups(replacement),'The replacement joins once room exists')
+    expected_roster={owner.id}|{m.id for m in remaining}|{replacement.id}
+    for m in remaining:
+        wait_for_long(lambda m=m:roster(m,fgid)==expected_roster,'Every remaining original member converges to the corrected roster')
+    print('PASS: the 16-member cap is enforced against the live roster and a freed slot admits a new member',flush=True)
 finally:
     for p in processes:
         if p.poll() is None:p.kill()

@@ -41,9 +41,9 @@ public class MainActivity extends Activity {
     @Override protected int sizeOf(String key,Bitmap bitmap){return bitmap.getByteCount();}
   };
   boolean loadingEarlier;
-  // People-screen side menu: Profile, About, and the persisted offline-row filter. stage is the
-  // single full-screen FrameLayout the overlay is added to; menuOverlay is null while it is closed.
-  FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline;
+  // People-screen side menu: Profile, About, and the persisted offline-row/group-row filters. stage
+  // is the single full-screen FrameLayout the overlay is added to; menuOverlay is null while closed.
+  FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline; boolean hideGroups;
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
     // the read instead of flashing unfiltered rows and then hiding them. Reading preferences
     // touches disk, so it stays off the UI thread; the service start above is deliberately first
     // so background connection work begins immediately, as before.
-    new Thread(()->{final boolean value=PeopleListView.readShowOffline(this);ui.post(()->{if(isDestroyed())return;showOffline=value;showPeople();});},"lan-ui-preference").start();
+    new Thread(()->{final boolean offlineValue=PeopleListView.readShowOffline(this);final boolean hideGroupsValue=PeopleListView.readHideGroups(this);ui.post(()->{if(isDestroyed())return;showOffline=offlineValue;hideGroups=hideGroupsValue;showPeople();});},"lan-ui-preference").start();
     if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
   void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class));}catch(Exception e){MessengerService.problem="Could not start. Open the app and try again.";}}
   // The header is built by each screen (showPeople/showChat) and inserted at chrome index 0, so a
@@ -86,7 +86,7 @@ public class MainActivity extends Activity {
     else{avatarWrap.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);avatarWrap.addView(t,new FrameLayout.LayoutParams(-1,-1));}
     avatarWrap.setOnClickListener(v->changeAvatar());
     // Profile and About moved into the side menu to keep this row to the per-conversation actions.
-    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());Button requestJoin=button("Request to join");tools.addView(requestJoin);requestJoin.setOnClickListener(v->requestJoinGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
+    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
     refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
     root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay saved when hidden.\nOnly devices using LAN Messenger appear.",14));render();
   }
@@ -163,20 +163,24 @@ public class MainActivity extends Activity {
       // Most recently active conversation first, like a typical chat app — groups and contacts mixed
       // together by last message time, not name/online order. {lastActivity, isGroup, id, group-or-peer}
       List<Object[]> convos=new ArrayList<>();
-      for(PeerEngine.Group g:e.groups()){long last=0;for(PeerEngine.Message m:e.messages(g.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.TRUE,g.id,g});}
+      // Presentation-time filter only, same shape as the offline-peer filter below: skipped while
+      // building the visible list, but the engine keeps the group, its messages, unread count and
+      // queued sends untouched, and an incoming deep link or an already-open chat still reaches it.
+      if(!hideGroups)for(PeerEngine.Group g:e.groups()){long last=0;for(PeerEngine.Message m:e.messages(g.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.TRUE,g.id,g});}
       // Presentation-time filter only. An offline direct peer is skipped while building the visible
       // list, but the engine keeps the peer, its messages, unread count and queued sends untouched,
       // and an incoming deep link or an already-open chat still reaches it. Group rows are never
-      // filtered, so a group whose members are all offline stays reachable.
+      // filtered by this one, so a group whose members are all offline stays reachable.
       for(PeerEngine.Peer p:people){if(!showOffline&&!p.online())continue;long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
       convos.sort((x,y)->Long.compare((Long)y[0],(Long)x[0]));
-      // The preference is part of the signature because it also decides the empty-state hint, which
-      // is a rendered row of its own and would otherwise survive a toggle with the wrong wording.
-      StringBuilder signature=new StringBuilder(showOffline?"offline-shown:":"offline-hidden:");for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
+      // The preferences are part of the signature because they also decide the empty-state hint,
+      // which is a rendered row of its own and would otherwise survive a toggle with the wrong wording.
+      StringBuilder signature=new StringBuilder(showOffline?"offline-shown:":"offline-hidden:").append(hideGroups?"groups-hidden:":"groups-shown:");for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
       if(signature.toString().equals(lastSignature)&&body.getChildCount()>0)return;lastSignature=signature.toString();body.removeAllViews();
       if(convos.isEmpty()){
         if(people.isEmpty()&&e.groups().isEmpty())body.addView(label("No contacts yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi. No host computer is needed.\n\nIf your router blocks discovery, use Add by IP.",17));
-        else body.addView(label(showOffline?"No conversations yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi, or use Add by IP.":"No conversations to show.\n\nEvery contact is offline right now and hidden from this list.\n\nOpen the menu and turn on Show offline users to see them again.",17));
+        else if(hideGroups&&!e.groups().isEmpty()&&(showOffline||online>0))body.addView(label("No conversations to show.\n\nGroups are hidden from this list. Open the menu and turn off Hide groups to see them again.",17));
+        else body.addView(label(showOffline?"No conversations yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi, or use Add by IP.":"No conversations to show.\n\nEvery contact is offline right now and hidden from this list, and groups may be hidden too.\n\nOpen the menu to turn on Show offline users or turn off Hide groups.",17));
       }
       for(Object[] c:convos){
         if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(g.id,g.name,true);return true;});}
@@ -238,10 +242,12 @@ public class MainActivity extends Activity {
     menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else showMembers();return true;});menu.show();}
   void clearChat(){final PeerEngine e=MessengerService.engine;final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
   void confirmDeleteConversation(String id,String name,boolean isGroup){
-    new AlertDialog.Builder(this).setTitle("Delete conversation?")
-      .setMessage("Delete \""+name+"\" entirely? This removes the conversation and its attachments"+(isGroup?"":", and revokes verification")+". "+(isGroup?"You'd need a new invitation to rejoin.":"Seeing this device again on the network starts from an unverified state.")+" Other devices keep their own copies.")
+    new AlertDialog.Builder(this).setTitle(isGroup?"Leave group?":"Delete conversation?")
+      .setMessage(isGroup
+        ?"Leave \""+name+"\"? You'll need a new invitation to rejoin. Other members keep the group and their own copies."
+        :"Delete \""+name+"\" entirely? This removes the conversation and its attachments, and revokes verification. Seeing this device again on the network starts from an unverified state. Other devices keep their own copies.")
       .setNegativeButton("Cancel",null)
-      .setPositiveButton("Delete",(d,w)->{PeerEngine e=MessengerService.engine;if(e==null)return;try{e.deleteConversation(id);drafts.remove(id);if(id.equals(selected)){selected=null;showPeople();}else{lastSignature="";render();}}catch(Exception error){problem(error);}})
+      .setPositiveButton(isGroup?"Leave":"Delete",(d,w)->{PeerEngine e=MessengerService.engine;if(e==null)return;try{e.deleteConversation(id);drafts.remove(id);if(id.equals(selected)){selected=null;showPeople();}else{lastSignature="";render();}}catch(Exception error){problem(error);}})
       .show();
   }
   void confirmDeleteAllData(){
@@ -257,24 +263,6 @@ public class MainActivity extends Activity {
       boolean isOwner=g.owner.equals(e.id);
       LinearLayout list=column();list.setPadding(dp(4),dp(4),dp(4),dp(4));
       list.addView(label("Every pair must verify each other to exchange group messages.",13));
-      final AlertDialog[] dialogRef=new AlertDialog[1];
-      if(isOwner){
-        List<String> pending=e.pendingJoinRequests(g.id);
-        if(!pending.isEmpty()){
-          list.addView(label("Join requests",14));
-          for(String requesterId:pending){
-            final String rid=requesterId;final PeerEngine.Group group=g;
-            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            row.addView(label(e.displayName(rid),15),new LinearLayout.LayoutParams(0,-2,1));
-            Button accept=button("Accept");
-            accept.setOnClickListener(v->{accept.setEnabled(false);new Thread(()->{try{e.acceptJoinRequest(group.id,rid);ui.post(()->{if(dialogRef[0]!=null)dialogRef[0].dismiss();});}catch(Exception error){ui.post(()->{problem(error);accept.setEnabled(true);});}}).start();});
-            Button ignore=button("Ignore");
-            ignore.setOnClickListener(v->{try{e.ignoreJoinRequest(group.id,rid);}catch(Exception error){problem(error);}if(dialogRef[0]!=null)dialogRef[0].dismiss();});
-            row.addView(accept);row.addView(ignore);
-            list.addView(row);
-          }
-        }
-      }
       for(PeerEngine.KnownMember known:e.allKnownMembers(g.id)){
         String id=known.id;
         boolean verified=false;for(PeerEngine.Peer person:e.peers())if(person.id.equals(id))verified=person.trusted();
@@ -292,28 +280,10 @@ public class MainActivity extends Activity {
         list.addView(row);
       }
       ScrollView scroller=new ScrollView(this);scroller.addView(list);
-      AlertDialog dialog=new AlertDialog.Builder(this).setTitle(g.name+" · Members").setView(scroller).setPositiveButton("Close",null).create();
-      dialogRef[0]=dialog;dialog.show();
+      new AlertDialog.Builder(this).setTitle(g.name+" · Members").setView(scroller).setPositiveButton("Close",null).show();
       return;
     }
     Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();
-  }
-  void requestJoinGroup(){
-    PeerEngine e=MessengerService.engine;if(e==null)return;
-    final ArrayList<PeerEngine.Peer> owners=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())owners.add(p);
-    if(owners.isEmpty()){Toast.makeText(this,"Verify at least one contact first — you request to join through the group's owner.",Toast.LENGTH_LONG).show();return;}
-    String[] names=new String[owners.size()];for(int i=0;i<names.length;i++)names[i]=owners.get(i).name+" · "+owners.get(i).id.substring(0,6);
-    LinearLayout list=column();list.setPadding(dp(20),dp(10),dp(20),dp(0));
-    list.addView(label("Choose the group owner (must already be a verified contact) and paste the group ID they shared with you.",13));
-    Spinner owner=new Spinner(this);owner.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));list.addView(owner);
-    final EditText groupId=input("Group ID",64);list.addView(groupId);
-    AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Request to join a group").setView(list).setNegativeButton("Cancel",null).setPositiveButton("Send request",null).create();
-    dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
-      String gid=groupId.getText().toString().trim();
-      if(gid.isEmpty()){Toast.makeText(this,"Enter the group ID.",Toast.LENGTH_SHORT).show();return;}
-      try{e.requestJoin(owners.get(owner.getSelectedItemPosition()).id,gid);dialog.dismiss();}catch(Exception error){problem(error);}
-    }));
-    dialog.show();
   }
   void createGroup(){final PeerEngine e=MessengerService.engine;if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
     final EditText name=input("Group name",50);final boolean[] checked=new boolean[peers.size()];String[] names=new String[peers.size()];for(int i=0;i<names.length;i++)names[i]=peers.get(i).name+" · "+peers.get(i).id.substring(0,6);

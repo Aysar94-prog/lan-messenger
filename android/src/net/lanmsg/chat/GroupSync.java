@@ -129,102 +129,10 @@ final class GroupSync {
       // stale acked-version from before they left must not make deliver() think they already have a
       // live copy to merely update.
       HashMap<String,Integer> m=e.memberAcked.get(groupId);Integer oldAck=m!=null?m.remove(memberId):null;
-      // A direct invite/Re-invite landing while a join request from the same person is still
-      // pending must collapse into one add with no leftover queue entry — regardless of which
-      // path actually added them, not just acceptJoinRequest's own.
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);boolean hadRequest=reqs!=null&&reqs.containsKey(memberId);Long oldRequestValue=reqs!=null?reqs.get(memberId):null;
-      if(reqs!=null)reqs.remove(memberId);
       g.members=newMembers;g.membersVersion=oldVersion+1;
-      try{e.save();}catch(IOException ex){g.members=oldMembers;g.membersVersion=oldVersion;if(oldAck!=null){if(m==null){m=new HashMap<>();e.memberAcked.put(groupId,m);}m.put(memberId,oldAck);}if(hadRequest)reqs.put(memberId,oldRequestValue);throw ex;}
+      try{e.save();}catch(IOException ex){g.members=oldMembers;g.membersVersion=oldVersion;if(oldAck!=null){if(m==null){m=new HashMap<>();e.memberAcked.put(groupId,m);}m.put(memberId,oldAck);}throw ex;}
     }
     e.notifyChanged();e.queueEpoch.incrementAndGet();e.flush();
-  }
-  static final long JOIN_REQUEST_COOLDOWN_MS=3600_000L;
-  // Requester side: sends a request to join a group, given its id and a verified contact who owns
-  // it. Delivery is guaranteed the same way FORGET/LEAVE are -- retried until acked -- with no
-  // user-visible "pending" state: if accepted, the group simply appears like any invite does.
-  static void requestJoin(PeerEngine e,String ownerId,String groupId)throws IOException {
-    synchronized(e){
-      if(!PeerEngine.uuid(groupId))throw new IOException("Enter a valid group ID.");
-      PeerEngine.Peer p=e.peers.get(ownerId);if(p==null||!p.trusted())throw new IOException("Choose a verified contact.");
-      if(e.groups.containsKey(groupId))throw new IOException("You're already part of this group.");
-      HashSet<String> set=e.pendingJoinRequests.get(ownerId);if(set==null){set=new HashSet<>();e.pendingJoinRequests.put(ownerId,set);}
-      if(!set.add(groupId))return; // already requested; no-op
-      try{e.save();}catch(IOException ex){set.remove(groupId);throw ex;}
-    }
-    e.notifyChanged();e.queueEpoch.incrementAndGet();e.flush();
-  }
-  // Owner side: records an incoming join request. Verified contact required to even record it; a
-  // repeat request while already Pending is a no-op; a request from someone recently Ignored is
-  // silently swallowed until the 1-hour cooldown passes, without refreshing that cooldown.
-  static void handleJoinRequest(PeerEngine e,String groupId,String requesterId,String fingerprint)throws IOException {
-    synchronized(e){
-      if(!e.trusted(requesterId,fingerprint))return;
-      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))return;
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);if(reqs==null){reqs=new HashMap<>();e.joinRequests.put(groupId,reqs);}
-      if(reqs.containsKey(requesterId)){
-        Long existing=reqs.get(requesterId);
-        if(existing==null)return; // already pending
-        if(System.currentTimeMillis()-existing<JOIN_REQUEST_COOLDOWN_MS)return; // cooldown still active
-      }
-      boolean had=reqs.containsKey(requesterId);Long oldValue=reqs.get(requesterId);
-      reqs.put(requesterId,null);
-      try{e.save();}catch(IOException ex){if(had)reqs.put(requesterId,oldValue);else reqs.remove(requesterId);throw ex;}
-    }
-  }
-  // Owner-only: currently pending (not ignored) requesters for a group, for the request-queue UI.
-  static List<String> pendingJoinRequests(PeerEngine e,String groupId){
-    synchronized(e){
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);ArrayList<String> result=new ArrayList<>();
-      if(reqs!=null)for(Map.Entry<String,Long> kv:reqs.entrySet())if(kv.getValue()==null)result.add(kv.getKey());
-      return result;
-    }
-  }
-  static void clearJoinRequestLocked(PeerEngine e,String groupId,String requesterId)throws IOException {
-    HashMap<String,Long> reqs=e.joinRequests.get(groupId);if(reqs==null)return;
-    boolean had=reqs.containsKey(requesterId);Long old=reqs.get(requesterId);
-    reqs.remove(requesterId);
-    try{e.save();}catch(IOException ex){if(had)reqs.put(requesterId,old);throw ex;}
-  }
-  // Test-only: backdates an Ignored request's timestamp so tests can exercise "the 1-hour cooldown
-  // has elapsed" without a real wall-clock wait.
-  static void debugBackdateIgnoredJoinRequest(PeerEngine e,String groupId,String requesterId,long epochMillis)throws IOException {
-    synchronized(e){
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);if(reqs==null||!reqs.containsKey(requesterId))throw new IOException("No such request.");
-      Long old=reqs.get(requesterId);reqs.put(requesterId,epochMillis);
-      try{e.save();}catch(IOException ex){reqs.put(requesterId,old);throw ex;}
-    }
-  }
-  // Owner-only: disappears from the queue, silently -- no notice to the requester, no visible
-  // "ignored" record anywhere. The timestamp kept internally only enforces the cooldown above.
-  static void ignoreJoinRequest(PeerEngine e,String groupId,String requesterId)throws IOException {
-    synchronized(e){
-      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can ignore a request.");
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);if(reqs==null||!reqs.containsKey(requesterId))return;
-      Long old=reqs.get(requesterId);
-      reqs.put(requesterId,System.currentTimeMillis());
-      try{e.save();}catch(IOException ex){reqs.put(requesterId,old);throw ex;}
-    }
-    e.notifyChanged();
-  }
-  // Owner-only: re-validated at the moment of the decision, not from when the request was first
-  // sent. Not already a member, or no longer a verified contact -- cleared, nothing recoverable
-  // without a fresh request. Group full, or an existing member's live capability check fails --
-  // addMember itself throws and the request is deliberately left Pending (recoverable later).
-  static void acceptJoinRequest(PeerEngine e,String groupId,String requesterId)throws IOException {
-    synchronized(e){
-      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can accept a request.");
-      HashMap<String,Long> reqs=e.joinRequests.get(groupId);
-      if(reqs==null||!reqs.containsKey(requesterId)||reqs.get(requesterId)!=null)throw new IOException("This request is no longer pending.");
-      boolean isMember=false;for(String m:g.members)if(m.equals(requesterId)){isMember=true;break;}
-      if(!isMember){
-        PeerEngine.Peer p=e.peers.get(requesterId);
-        if(p==null||!p.trusted()){clearJoinRequestLocked(e,groupId,requesterId);throw new IOException("This person is no longer a verified contact.");}
-      }
-    }
-    addMember(e,groupId,requesterId); // throws (Pending kept) for a full group or a failed live capability check
-    synchronized(e){clearJoinRequestLocked(e,groupId,requesterId);}
-    e.notifyChanged();
   }
   static void handleSync(PeerEngine e,SSLSocket s,String group,String knownIdsCsv,String peerId){
     HashSet<String> known=new HashSet<>();if(!knownIdsCsv.isEmpty())known.addAll(Arrays.asList(knownIdsCsv.split(",",-1)));

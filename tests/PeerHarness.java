@@ -78,11 +78,6 @@ public class PeerHarness {
    if(a[0].equals("LEFT")){boolean left=false;for(PeerEngine.KnownMember m:e.allKnownMembers(a[1]))if(m.id.equals(a[2])&&!m.active)left=true;System.out.println("LEFT\t"+left);}
    if(a[0].equals("ROSTER"))for(PeerEngine.Group g:e.groups())if(g.id.equals(a[1]))System.out.println("ROSTER\t"+g.membersVersion+"\t"+String.join(",",g.members));
    if(a[0].equals("LEGACY"))e.simulateLegacyBuild=a[1].equals("true");
-   if(a[0].equals("REQUESTJOIN"))e.requestJoin(a[1],a[2]);
-   if(a[0].equals("PENDINGREQUESTS"))System.out.println("PENDINGREQUESTS\t"+String.join(",",e.pendingJoinRequests(a[1])));
-   if(a[0].equals("ACCEPTREQUEST"))e.acceptJoinRequest(a[1],a[2]);
-   if(a[0].equals("IGNOREREQUEST"))e.ignoreJoinRequest(a[1],a[2]);
-   if(a[0].equals("BACKDATEIGNORE"))e.debugBackdateIgnoredJoinRequest(a[1],a[2],Long.parseLong(a[3]));
    if(a[0].equals("READ"))e.markRead(a[1]);
    if(a[0].equals("UNREAD"))System.out.println("UNREAD\t"+e.unread(a[1]));
    if(a[0].equals("SETAVATAR"))e.setAvatar(Base64.getDecoder().decode(a[1]));

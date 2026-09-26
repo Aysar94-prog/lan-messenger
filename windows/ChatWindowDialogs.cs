@@ -8,13 +8,17 @@ sealed partial class ChatWindow
     void DeleteConversationConfirm()
     {
         if(contacts.SelectedItem is not ContactItem item)return;
-        if(MessageBox.Show(this,$"Delete \"{item.Name}\" entirely? This removes the conversation and its attachments, and revokes verification. Seeing this device again on the network starts from an unverified state. Other devices keep their own copies.","Delete conversation",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+        var title=item.Group?"Leave group":"Delete conversation";
+        var message=item.Group
+            ?$"Leave \"{item.Name}\"? You'll need a new invitation to rejoin. Other members keep the group and their own copies."
+            :$"Delete \"{item.Name}\" entirely? This removes the conversation and its attachments, and revokes verification. Seeing this device again on the network starts from an unverified state. Other devices keep their own copies.";
+        if(MessageBox.Show(this,message,title,MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         try{
             engine.DeleteConversation(item.Id);
             chatViews.Remove(item.Id);thumbnails.RemoveConversation(item.Id);drafts.Remove(item.Id);
             if(selected==item.Id){selected=null;feed.Controls.Clear();cards.Clear();statusLabels.Clear();feedConversation="";composer.Clear();ClearPendingAttachment();}
             lastFeed="";lastContacts="";Render();
-        }catch(Exception e){MessageBox.Show(this,e.Message,"Could not delete conversation");}
+        }catch(Exception e){MessageBox.Show(this,e.Message,item.Group?"Could not leave group":"Could not delete conversation");}
     }
     void DeleteAllDataConfirm()
     {
@@ -30,23 +34,9 @@ sealed partial class ChatWindow
     {
         var g=engine.Groups.FirstOrDefault(g=>g.Id==selected);if(g==null)return;
         var known=engine.AllKnownMembers(g.Id);bool isOwner=g.Owner==engine.Id;
-        var pending=isOwner?engine.PendingJoinRequests(g.Id):[];
-        using var dialog=new Form{Text=g.Name+" · Members",Size=new Size(460,Math.Min(680,180+known.Length*44+pending.Length*40)),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        using var dialog=new Form{Text=g.Name+" · Members",Size=new Size(460,Math.Min(640,140+known.Length*44)),StartPosition=FormStartPosition.CenterParent,Font=Font};
         var layout=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18),FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};
         layout.Controls.Add(MessageLabel("Every pair must verify each other to exchange group messages.",10,Color.SlateGray,400));
-        if(pending.Length>0){
-            layout.Controls.Add(MessageLabel("Join requests",11,HeaderDark,400));
-            foreach(var id in pending){
-                var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,Margin=new Padding(0,2,0,4)};
-                row.Controls.Add(MessageLabel(engine.DisplayName(id),11,Ink,150));
-                var accept=new Button{Text="Accept",AutoSize=true};
-                accept.Click+=async(_,_)=>{accept.Enabled=false;try{await engine.AcceptJoinRequest(g.Id,id);dialog.Close();}catch(Exception e){MessageBox.Show(dialog,e.Message,"Could not accept request");}finally{if(!accept.IsDisposed)accept.Enabled=true;}};
-                var ignore=new Button{Text="Ignore",AutoSize=true};
-                ignore.Click+=(_,_)=>{engine.IgnoreJoinRequest(g.Id,id);dialog.Close();};
-                row.Controls.Add(accept);row.Controls.Add(ignore);
-                layout.Controls.Add(row);
-            }
-        }
         foreach(var (id,active) in known){
             var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,Margin=new Padding(0,4,0,4)};
             var status=id==engine.Id?" (you)":id==g.Owner?" · Admin":engine.Peers.Any(p=>p.Id==id&&p.Trusted)?" · Verified":" · Verify in People";
@@ -63,24 +53,6 @@ sealed partial class ChatWindow
         }
         var close=new Button{Text="Close",AutoSize=true};close.Click+=(_,_)=>dialog.Close();StyleButtons(layout);layout.Controls.Add(close);
         dialog.Controls.Add(layout);dialog.ShowDialog(this);
-    }
-    void RequestJoinGroup()
-    {
-        var owners=engine.Peers.Where(p=>p.Trusted).ToArray();if(owners.Length==0){MessageBox.Show(this,"Verify at least one contact first — you request to join through the group's owner.","Request to join a group");return;}
-        using var dialog=new Form{Text="Request to join a group",Size=new Size(440,270),StartPosition=FormStartPosition.CenterParent,Font=Font};
-        var layout=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18),FlowDirection=FlowDirection.TopDown,WrapContents=false};
-        layout.Controls.Add(MessageLabel("Choose the group owner (must already be a verified contact) and paste the group ID they shared with you.",10,Color.SlateGray,390));
-        var owner=new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList,Width=390};foreach(var p in owners)owner.Items.Add(p.Name+" · "+p.Id[..6]);
-        var groupId=new TextBox{Width=390,PlaceholderText="Group ID"};
-        var request=new Button{Text="Send request",AutoSize=true};
-        layout.Controls.Add(owner);layout.Controls.Add(groupId);layout.Controls.Add(request);dialog.Controls.Add(layout);
-        request.Click+=(_,_)=>{
-            if(owner.SelectedIndex<0){MessageBox.Show(dialog,"Choose the group owner.","Request to join a group");return;}
-            if(string.IsNullOrWhiteSpace(groupId.Text)){MessageBox.Show(dialog,"Enter the group ID.","Request to join a group");return;}
-            try{engine.RequestJoin(owners[owner.SelectedIndex].Id,groupId.Text.Trim());dialog.Close();}
-            catch(Exception e){MessageBox.Show(dialog,e.Message,"Could not send request");}
-        };
-        dialog.ShowDialog(this);
     }
     void CreateGroup()
     {

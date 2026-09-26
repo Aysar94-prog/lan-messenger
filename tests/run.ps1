@@ -44,8 +44,6 @@ try {
   Check-Result
   python tests/group_migration_broadcast.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
-  python tests/join_requests.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
-  Check-Result
   dotnet build tests/WindowsUi/WindowsUi.csproj -c Release --configfile NuGet.Config -o "$TestRoot\ui"
   Check-Result
   dotnet "$TestRoot\ui\WindowsUi.dll" "$TestRoot\ui-results"
