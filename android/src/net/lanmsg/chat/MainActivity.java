@@ -237,9 +237,11 @@ public class MainActivity extends Activity {
     }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
   }
 
-  void chatMenu(View anchor){if(selected==null)return;PeerEngine e=MessengerService.engine;boolean isPeer=false;if(e!=null)for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))isPeer=true;
-    PopupMenu menu=new PopupMenu(this,anchor);if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");
-    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else showMembers();return true;});menu.show();}
+  void chatMenu(View anchor){if(selected==null)return;PeerEngine e=MessengerService.engine;boolean isPeer=false;PeerEngine.Group group=null;
+    if(e!=null){for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))isPeer=true;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;}
+    final PeerEngine.Group selectedGroup=group;
+    PopupMenu menu=new PopupMenu(this,anchor);if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");if(selectedGroup!=null)menu.getMenu().add("Leave group");
+    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);else showMembers();return true;});menu.show();}
   void clearChat(){final PeerEngine e=MessengerService.engine;final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
   void confirmDeleteConversation(String id,String name,boolean isGroup){
     new AlertDialog.Builder(this).setTitle(isGroup?"Leave group?":"Delete conversation?")

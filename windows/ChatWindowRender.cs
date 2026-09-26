@@ -27,7 +27,7 @@ sealed partial class ChatWindow
             foreach(var p in peers)try{var raw=engine.PeerAvatar(p.Id);if(raw!=null){var img=TryImageThumbnail(raw,72,72);if(img!=null)avatarCache[p.Id]=img;}}catch{}
         }
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
-        verify.Enabled=peer!=null;members.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
+        verify.Enabled=peer!=null;members.Enabled=group!=null;leaveGroup.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
         heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members":$"{peer!.Name} · {(peer.Online?"Online":"Offline")}";
         var items=engine.Messages(selected!);
