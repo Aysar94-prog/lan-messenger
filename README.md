@@ -1,8 +1,10 @@
-# LAN Messenger — Android 0.8.7 / Windows 0.8.11
+# LAN Messenger — Android 0.8.12 / Windows 0.8.12
 
-Windows 0.8.11 adds a way to remove a conversation entirely: right-click a contact or group in the list and choose Delete conversation. This clears its history and attachments and, for a contact, revokes verification and forgets the device — seeing it again on the network starts from an unverified state, same as a brand-new contact. A group is simply left; other members are unaffected. A new "Delete app data" toolbar button wipes every conversation, contact, group and downloaded file on the device, keeping only your identity, display name and profile picture. Both actions ask for confirmation first and cannot be undone. The same feature exists in Android's source tree (long-press a conversation; "Delete app data" is in the side menu) but has not been packaged as a new Android release.
+Windows and Android now share one version number, starting with this release: **0.8.12** (Android versionCode 22). This is a numbering convention going forward, not a claim that every release changes both platforms equally — see [PROJECT_STATUS.md](PROJECT_STATUS.md) for the actual per-feature comparison.
 
-An unreleased addition on top of 0.8.11, mirrored in Android's source tree and likewise not yet packaged, closes two gaps in the above: deleting a contact now also notifies them — their own verification of you is automatically revoked and they see an on-device notice — delivered whenever they're next reachable. Deleting a group is still a leave, but the group's owner can now see who has departed and bring them back into the same group with one "Re-invite" action from the Members dialog.
+0.8.12 closes two gaps in the Delete conversation feature below, on both platforms: deleting a contact now also notifies them — their own verification of you is automatically revoked and they see an on-device notice — delivered whenever they're next reachable. Deleting a group is still a leave, but the group's owner can now see who has departed and bring them back into the same group with one "Re-invite" action from the Members dialog. This release also packages, for Android, everything that had accumulated unreleased in its source tree since 0.8.7: the people-screen side menu, the `Show offline users` filter, and Delete conversation / Delete app data (mirroring Windows).
+
+Delete conversation (introduced for Windows in 0.8.11, now packaged for Android too): right-click (Windows) or long-press (Android) a contact or group in the list and choose Delete conversation. This clears its history and attachments and, for a contact, revokes verification and forgets the device — seeing it again on the network starts from an unverified state, same as a brand-new contact. A group is simply left; other members are unaffected. A "Delete app data" action (Windows toolbar button; Android side menu) wipes every conversation, contact, group and downloaded file on the device, keeping only your identity, display name and profile picture. Both actions ask for confirmation first and cannot be undone.
 
 Windows 0.8.10 fixes two pagination UI regressions: new messages grow short chats up to the initial ten, and an empty chat shows its hint once after redraws or switches.
 
@@ -37,7 +39,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install LanMessenger-0.8.7.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install the current LanMessenger-0.8.12.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -62,11 +64,11 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-0.8.7.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
+Android: install LanMessenger-0.8.12.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data.
 
-Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.11.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
+Windows: Exit through the tray menu, extract LanMessenger-Windows-0.8.12.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
-Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.11 and Android 0.8.7 interoperate. Do not downgrade.
+Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 0.8.12 and Android 0.8.12 interoperate, and remain wire-compatible with the prior 0.8.11/0.8.7 pair. Do not downgrade.
 
 ## Pair, chat and groups
 

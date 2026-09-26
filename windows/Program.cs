@@ -31,7 +31,7 @@ sealed partial class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="0.8.11";
+    public const string AppVersion="0.8.12";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
