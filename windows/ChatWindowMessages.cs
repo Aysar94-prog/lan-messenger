@@ -31,7 +31,11 @@ sealed partial class ChatWindow
         var card=new MessageBubble{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.Width-width-60):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
         card.Controls.Add(SenderRow(mine,message.From,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));
         if(message.FileName.Length==0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
-        else if(!mine&&VoiceMarker.TryParse(message.FileName,out _)&&AddVoiceCard(card,message,width))
+        // "Normal" is assumed here since the UI cannot see actual store type before a fetch
+        // attempt (see PLAN-VOICE-MESSAGES-WINDOWS.md's W06 note); the id-match half of
+        // Classify still correctly routes a mismatched marker straight to the ordinary
+        // attachment branch below, matching marker-mismatched in the shared fixture manifest.
+        else if(!mine&&VoiceMarker.Classify(message.FileName,"Normal",message.Id)==VoiceMarkerClassification.Candidate&&AddVoiceCard(card,message,width))
         {
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }
