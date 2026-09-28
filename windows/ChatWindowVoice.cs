@@ -115,12 +115,11 @@ sealed partial class ChatWindow
         lastVoicePanel="";RenderVoicePanel();
     }
 
-    void PreviewVoiceDraftClicked(string draftId)
-    {
-        // Playback (waveOut inline player, seven-step seeking) is W08 — not built yet. The
-        // draft itself is unaffected by this being unavailable: still Sendable/Deletable.
-        MessageBox.Show(this,"Voice message playback is not implemented yet.","Preview");
-    }
+    // Playback (waveOut inline player, seven-step seeking) is W08 — not built yet. Shared stub
+    // for both the own-draft Preview button (ChatWindowVoice.cs) and a received Playable
+    // message's Play button (ChatWindowVoiceCard.cs); neither the draft nor the received
+    // message is affected by playback being unavailable — both stay fully usable otherwise.
+    void ShowVoicePlaybackNotImplemented()=>MessageBox.Show(this,"Voice message playback is not implemented yet.","Preview");
 
     // Rebuilds attachmentDraft's contents for the recording/pending-draft state. A pending
     // file attachment (pendingAttachmentPath) always takes priority, matching how it already
@@ -144,7 +143,7 @@ sealed partial class ChatWindow
             var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
             var durationLabel=MessageLabel($"Voice message · {FormatElapsed(TimeSpan.FromMilliseconds(draft.DurationMs))}"+(engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages"),10,Ink,220,true);
             row.Controls.Add(durationLabel);
-            var previewBtn=new Button{Text="Preview",AutoSize=true};previewBtn.Click+=(_,_)=>PreviewVoiceDraftClicked(draft.Id);row.Controls.Add(previewBtn);
+            var previewBtn=new Button{Text="Preview",AutoSize=true};previewBtn.Click+=(_,_)=>ShowVoicePlaybackNotImplemented();row.Controls.Add(previewBtn);
             var deleteBtn=new Button{Text="Delete",AutoSize=true};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);row.Controls.Add(deleteBtn);
             if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);row.Controls.Add(sendBtn);}
             StyleButtons(row);
