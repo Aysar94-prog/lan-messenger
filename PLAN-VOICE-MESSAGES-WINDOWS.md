@@ -33,7 +33,7 @@ action needed on those two.
 | W08 | `waveOut` inline player, 7-step seeking, Save/Export | **Code written, uncompiled** | `windows/VoicePlayer.cs` (new file): mirrors `VoiceRecorder.cs`'s safety construction exactly (serialized native control, rooted callback delegate, unmanaged buffers, minimal-work native callback, idempotent Stop/Dispose). Reuses `VoiceSeek.Resolve` (W01) for the seek math; adds epoch-tagging (`WAVEHDR.dwUser`) so a stale `MM_WOM_DONE` callback for a buffer written before the last Seek/Stop is detected and discarded rather than corrupting the new position. The whole decrypted WAV lives in one bounded (≤9.6 MB) managed `byte[]` for the player's lifetime — no plaintext playback file is ever written to disk. `windows/ChatWindowVoicePlayback.cs` (new file) is the shared controller enforcing exactly one active player app-wide (contract Decision 6): starting playback for a different key always stops whatever was playing. Wired into both the own-draft row (`ChatWindowVoice.cs`, replacing the old stub) and the received-message Playable card (`ChatWindowVoiceCard.cs`, replacing its stub too) — both now have real Play/Pause and seek buttons; `VoiceDrafts.cs` gained a small public `ReadVoiceDraftWav(draftId)` wrapper so the UI can preview a draft without exposing its private on-disk encoding. **Deliberate scope simplification**: seek is exposed as fixed ±10 s buttons, not a drag scrubber — still exercises the real seven-step `VoiceSeek` procedure end to end, just without scrubber drag/click event-handling risk in a session that can't visually verify it. |
 | W09 | Accessibility | **Code written, uncompiled** | Added `AccessibleName` to every interactive voice control (record/stop, play/pause, ±10s seek, delete, send, retrieve, save, and the "open/download/resume/pause" fallback on an Invalid card) across `Program.cs`, `ChatWindowVoice.cs`, `ChatWindowVoiceCard.cs`, and `AccessibleRole.StatusBar` (plus a live-updated `AccessibleName`) on the state-conveying labels (recording clock, playback position, Candidate/Fetching/Unavailable text). Most of W09's other requirements were already structurally satisfied by earlier tasks rather than needing new code, verified explicitly rather than assumed: **keyboard accessibility** — every voice control is a stock `Button`, inherently Tab/Enter-operable, no custom controls were introduced; **focus order** — controls are added to their `FlowLayoutPanel`s in the same order they read visually, so default WinForms tab order already matches; **non-color errors** — every state (Invalid, Unavailable, device failure) is conveyed via text, color is only ever supplementary; **notification privacy** — grepped every `ShowNotification` call site and confirmed the existing generic "New encrypted message" text (shared by all message types, not voice-specific) never reveals content, so no code needed to change. **Accepted limitation**: WinForms has no simple public API for live-region screen-reader announcements (the `AccessibleName` updates on tick/refresh keep the *current* value correct for a user who navigates to that control, but won't proactively interrupt to announce it changing) — implementing that would need a custom `AccessibleObject` subclass, judged out of proportion to the rest of this pass. The ±10s seek buttons (chosen in W08 as a scope simplification over a drag scrubber) turned out to double as an accessibility win: a button is more reliably screen-reader-operable than a `TrackBar` would have been. |
 | W10 | Persistence/regression + architecture-boundary + canonical-fixture checks | **Done** | Build unblocked (see banner above). Ran the full `tests/run.ps1` regression suite; found one pre-existing, reproducible failure in `tests/group_membership.py` (committed 2026-09-26, before this session — group-capability/legacy-version gating logic, unrelated to Voice Messages, confirmed reproducible even in a fully isolated copy of the test build with zero resource contention, so it is not a Voice Messages regression). Architecture-boundary + canonical-fixture-source checks written as new `tests/voice_architecture_check.py` (WT06, see below) — all 3 sub-checks pass. |
-| W11 | Update `windows/STATUS.md` + `PROJECT_STATUS.md` comparison entry | Not started | Must merge, not replace — A11 (Android) touches the same comparison entry; see plan finding R3-01. |
+| W11 | Update `windows/STATUS.md` + `PROJECT_STATUS.md` comparison entry | **Done** | Added a new "Voice Messages implemented in source" section to `windows/STATUS.md` (summary, build/WT01/WT06 results, the pre-existing `group_membership.py` finding, handoff pointers) and a new Feature-comparison row + paragraph to `PROJECT_STATUS.md`, explicitly marked **platform-local only; interoperability not yet verified**, and phrased so Android's own A11 update (not yet landed — checked `android/STATUS.md`, no Voice Messages entry there yet) can add its own state without conflicting — satisfies the "merge, not replace" requirement (R3-01) since there was nothing to merge with yet. |
 | WT01-WT06 | Automated tests | WT01 **run, PASS=38 FAIL=0 SKIP=30**; WT06 **written and passing**; WT02-WT05 not started | `tests/CsharpHarness/VoiceMessagesCheck.cs` runs the real `VoicePcmAssembler`/`VoiceWav`/`VoiceSeek`/`VoiceMarker` production classes against `tests/voice_messages/vectors/manifest.json` — now actually executed (build unblocked), all green, including the 2 previously-flagged fixture discrepancies (now resolved on the fixture side, presumably by the Android-phase agent's concurrent edits). New `tests/voice_architecture_check.py` (WT06): (1) confirms `windows/VoiceMessages.cs` has no `using` directives and no forbidden WinForms/PeerEngine/attachment-store/LM4/device-API references, (2) confirms no platform-local copy of the shared fixture/contract files exists under `windows/`, (3) confirms `tests/run.ps1` invokes `--voice-check` against the canonical `tests/voice_messages/vectors/` path, not a redirected copy. Wired into `tests/run.ps1` right after the WT01 step. WT02-WT05 (fake-audio-input lifecycle faults, scheduler/dedup, one-player-enforcement/export) not started — real test-writing work, not blocked by anything, next candidates if continuing. |
 | Manual acceptance | Not started | Requires physical Windows hardware/devices; cannot be performed by an agent. |
 
@@ -90,36 +90,24 @@ raising with whoever owns the I01-I04 contract before WT01/AT01 are written agai
 
 ## Resume point
 
-Currently just past **W09**, plus **WT01's real test code** (see above — written, wired into
-`tests/run.ps1`, never run). W01-W09 all code written; W01's core algorithms have real
-(Python-proxy) verification; nothing has compiled in this C# project even once this session.
+**W01-W11 all done.** WT01 and WT06 written and passing. Remaining before Windows Phase 2's
+exit gate (per plan-v003): **WT02-WT05** (fake-audio-input lifecycle faults; direct/group
+queueing + scheduler/dedup coverage; one-player-enforcement/export/bounded-memory/notification-
+privacy coverage) and **Windows manual acceptance** (needs physical hardware, cannot be done by
+an agent). `windows/STATUS.md` and `PROJECT_STATUS.md` are updated (W11).
 
-**The dotnet build sandbox restriction was investigated once more and confirmed still closed,
-including one new finding worth recording**: the `Glob` tool CAN enumerate files under
-`C:\Program Files\dotnet\packs\...` that the PowerShell tool's `Get-ChildItem` cannot see —
-different tools evidently have different sandbox visibility in this session. This was
-deliberately NOT pursued into a workaround (e.g., repackaging those files into a NuGet feed
-dotnet.exe-via-PowerShell could see) because the earlier `dangerouslyDisableSandbox` denial for
-this exact path was explicit that reaching the same outcome through a different tool counts as
-the same denied action. Worth knowing about, not worth acting on without the user's explicit
-sign-off.
+Next action if continuing: WT02 first (mirrors WT01's shape — a `CsharpHarness` mode or a new
+Python harness command exercising `VoiceRecorder`/lifecycle edges with fake input), then WT03-
+WT05. None of these are blocked on anything anymore now that the build works.
 
-Next action: **W10** (persistence/regression verification + architecture-boundary and
-canonical-fixture checks) — this task fundamentally REQUIRES the dotnet build; there is no
-further blind-code value to add there or in W11 without it. Whoever resumes this should
-prioritize getting `dotnet build windows/LanMessenger.csproj -c Debug --configfile
-NuGet.Config` working, then run `tests/run.ps1` and specifically look at the new
-`--voice-check` step's output (expected to show the 2 known flagged fixture discrepancies,
-not a fresh regression) before writing anything past this point.
+Known non-blocking issue, confirmed unrelated to Voice Messages: `tests/group_membership.py`
+fails reproducibly (even fully isolated from the concurrently-running Android-phase agent) with
+`AddMember`'s live `QueryCapability` call returning 0 under the heaviest 16-17-real-process
+scenario — the same class of environmental network-timeout contention already documented in
+`windows/STATUS.md`'s 2.0.0-era entry, predating this session and this feature. Left untouched;
+out of scope for Voice Messages.
 
-Strong recommendation for whoever resumes this: before going further into W04+, stop and
-wire a small test entry point (likely a new `tests/CsharpHarness` command, mirroring the
-existing `OWNER`/`TRANSFEROWNER` pattern) that at minimum runs `VoicePcmAssembler`/
-`VoiceWav`/`VoiceSeek`/`VoiceMarker` (W01) against every `tests/voice_messages/vectors/
-manifest.json` vector (WT01's actual required coverage), and get an actual `dotnet build`
-to succeed at all. W03 (`VoiceRecorder.cs`, native P/Invoke) is the highest-risk file written
-so far — real Win32 interop, zero verification — and should be sanity-checked before more
-code is built on top of it blind. Coordination note: `tests/voice_messages/check_contract.py`
-and `manifest.json` are being actively edited by the Android-phase agent (confirmed twice by
-`git status` during this session) — do not touch those files without re-checking `git status`
-first and re-reading them fresh; they were correctly left alone throughout this session.
+Coordination note: `tests/voice_messages/check_contract.py`, `manifest.json`,
+`generate_wav_cases.py` and `wav_cases.bin` were under active concurrent edit by the
+Android-phase agent throughout this session (confirmed repeatedly via `git status`) and were
+correctly never touched. Re-check `git status` before touching them if resuming.
