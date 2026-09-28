@@ -8,7 +8,7 @@ import javax.net.ssl.SSLSocket;
 /** Group membership, invitations and the SYNCREQ2/META relay that lets members catch up on history. */
 final class GroupSync {
   private GroupSync(){}
-  static List<PeerEngine.Group> groups(PeerEngine e){synchronized(e){ArrayList<PeerEngine.Group> result=new ArrayList<>();for(PeerEngine.Group g:e.groups.values())result.add(new PeerEngine.Group(g.id,g.owner,g.name,g.members,g.membersVersion));return result;}}
+  static List<PeerEngine.Group> groups(PeerEngine e){synchronized(e){ArrayList<PeerEngine.Group> result=new ArrayList<>();for(PeerEngine.Group g:e.groups.values())result.add(new PeerEngine.Group(g.id,g.owner,g.name,g.members,g.membersVersion,g.everTransferredOwnership));return result;}}
   static String displayName(PeerEngine e,String target){synchronized(e){return target.equals(e.id)?e.name:e.groups.containsKey(target)?e.groups.get(target).name:e.peers.containsKey(target)?e.peers.get(target).name:"Device "+target.substring(0,Math.min(8,target.length()));}}
   // Union of the live roster and the departed-history record, for the Members dialog — a departed
   // id no longer appears in a Group's members, so callers that want to show (and Re-invite) them
@@ -37,7 +37,10 @@ final class GroupSync {
   // deliver's broadcast loop picks up every remaining active member automatically.
   static void handleLeave(PeerEngine e,String groupId,String memberId)throws IOException{
     synchronized(e){
-      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))return;
+      // Normally only the current owner accepts a LEAVE; while a handoff I started is still pending,
+      // I also still accept one from anyone who hasn't caught up to it yet -- otherwise their
+      // departure would be silently dropped (see PLAN-GROUP-OWNERSHIP-TRANSFER.md).
+      PeerEngine.Group g=e.groups.get(groupId);if(g==null||(!g.owner.equals(e.id)&&!e.pendingOwnershipHandoff.contains(groupId)))return;
       boolean isMember=false;for(String m:g.members)if(m.equals(memberId)){isMember=true;break;}
       if(!isMember)return;
       String[] oldMembers=g.members;int oldVersion=g.membersVersion;
@@ -74,6 +77,11 @@ final class GroupSync {
     if(!PeerEngine.uuid(a[2]))throw new IOException("Invalid membership update");
     int version;try{version=Integer.parseInt(a[3]);}catch(NumberFormatException ex){throw new IOException("Invalid membership update");}
     String[] members=a[4].split(",",-1);
+    // 6th field (owner) is new (ownership transfer); a 5-field frame from a pre-transfer build means
+    // the owner hasn't changed. The sender is still authorized by matching the OLD (pre-adoption)
+    // owner below, exactly once, for this specific update -- adopting it moves this receiver's own
+    // record of who the owner is to whatever the frame says.
+    String newOwner=a.length==6&&PeerEngine.uuid(a[5])?a[5]:null;
     synchronized(e){
       PeerEngine.Group old=e.groups.get(a[2]);if(old==null)return;
       if(!old.owner.equals(sender)||!e.trusted(sender,fingerprint))return;
@@ -81,9 +89,11 @@ final class GroupSync {
       List<String> ids=Arrays.asList(members);
       if(ids.size()>16||new HashSet<>(ids).size()!=ids.size()||!ids.contains(e.id)||!ids.contains(sender))return;
       for(String m:members)if(!PeerEngine.uuid(m))return;
-      String[] oldMembers=old.members;int oldVersion=old.membersVersion;
+      if(newOwner!=null&&!ids.contains(newOwner))return;
+      String[] oldMembers=old.members;int oldVersion=old.membersVersion;String oldOwner=old.owner;boolean oldTransferred=old.everTransferredOwnership;
       old.members=members.clone();old.membersVersion=version;
-      try{e.save();}catch(IOException ex){old.members=oldMembers;old.membersVersion=oldVersion;throw ex;}
+      if(newOwner!=null){old.owner=newOwner;old.everTransferredOwnership=true;}
+      try{e.save();}catch(IOException ex){old.members=oldMembers;old.membersVersion=oldVersion;old.owner=oldOwner;old.everTransferredOwnership=oldTransferred;throw ex;}
     }
   }
   // Queries a peer live, every time — a past success is never trusted as durable proof, since the
@@ -105,18 +115,23 @@ final class GroupSync {
   // up in members — every current active member, plus whoever's being added — answers a fresh CAPS
   // query, at this exact moment, confirming support. Never gates an incoming LEAVE.
   static void addMember(PeerEngine e,String groupId,String memberId)throws IOException {
-    ArrayList<String> toCheck=new ArrayList<>();
+    ArrayList<String> toCheck=new ArrayList<>();boolean needV2;
     synchronized(e){
       PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can add a member.");
       for(String m:g.members)if(m.equals(memberId))return;
       if(g.members.length>=16)throw new IOException("This group already has 16 members.");
       for(String m:g.members)toCheck.add(m);toCheck.add(memberId);
+      // Once a group has ever changed owners, its MEMBERSUPDATE wire shape has permanently shifted
+      // to carry the owner field -- anyone touched by a later growth must support that too, not just
+      // the original (lower) bar ordinary growth alone requires.
+      needV2=g.everTransferredOwnership;
     }
     for(String candidate:toCheck){
       if(candidate.equals(e.id))continue;
       PeerEngine.Peer p;synchronized(e){p=e.peers.get(candidate);}
       if(p==null)throw new IOException("Every member must already be a verified contact.");
-      if(queryCapability(e,p)<1)throw new IOException("Can't change this group's membership: "+p.name+" hasn't updated to a version that supports it.");
+      int v=queryCapability(e,p);
+      if(v<1||(needV2&&v<2))throw new IOException("Can't change this group's membership: "+p.name+" hasn't updated to a version that supports it.");
     }
     synchronized(e){
       PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can add a member.");
@@ -133,6 +148,54 @@ final class GroupSync {
       try{e.save();}catch(IOException ex){g.members=oldMembers;g.membersVersion=oldVersion;if(oldAck!=null){if(m==null){m=new HashMap<>();e.memberAcked.put(groupId,m);}m.put(memberId,oldAck);}throw ex;}
     }
     e.notifyChanged();e.queueEpoch.incrementAndGet();e.flush();
+  }
+  // Owner-only: hands off ownership to another current active member. Requires everyone (not just
+  // the incoming owner) to answer a fresh, live CAPS>=2 query -- once transferred, every member needs
+  // to understand the owner-carrying MEMBERSUPDATE form to keep converging, not just the incoming
+  // owner. Also requires nobody still awaiting their very first invite: the GROUP frame requires its
+  // claimed owner to equal whoever is actually connecting, so there is no way to deliver a first-time
+  // invite "on behalf of" a different owner during a pending handoff.
+  // This device's own local record of who owns the group flips immediately (everyone else adopts
+  // this the normal way), but it stays the delivery/leave-acceptance authority for this one group --
+  // via pendingOwnershipHandoff -- until every other active member has caught up; only then does its
+  // own departure (queuing LEAVE to the new owner, same as any other leave) actually happen. See
+  // PLAN-GROUP-OWNERSHIP-TRANSFER.md.
+  static void transferOwnership(PeerEngine e,String groupId,String newOwnerId)throws IOException {
+    ArrayList<String> toCheck=new ArrayList<>();
+    synchronized(e){
+      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can transfer ownership.");
+      if(newOwnerId.equals(e.id)||Arrays.stream(g.members).noneMatch(newOwnerId::equals))throw new IOException("Choose another current member of the group.");
+      for(String m:g.members)if(!m.equals(e.id)&&e.memberAckedVersion(groupId,m)<0)throw new IOException("Wait for every member to finish joining before transferring ownership.");
+      for(String m:g.members)toCheck.add(m);
+    }
+    for(String candidate:toCheck){
+      if(candidate.equals(e.id))continue;
+      PeerEngine.Peer p;synchronized(e){p=e.peers.get(candidate);}
+      if(p==null)throw new IOException("Every member must already be a verified contact.");
+      if(queryCapability(e,p)<2)throw new IOException("Can't transfer ownership: "+p.name+" hasn't updated to a version that supports it.");
+    }
+    synchronized(e){
+      PeerEngine.Group g=e.groups.get(groupId);if(g==null||!g.owner.equals(e.id))throw new IOException("Only the group owner can transfer ownership.");
+      if(Arrays.stream(g.members).noneMatch(newOwnerId::equals))throw new IOException("Choose another current member of the group.");
+      String oldOwner=g.owner;int oldVersion=g.membersVersion;boolean oldTransferred=g.everTransferredOwnership;
+      boolean hadPending=e.pendingOwnershipHandoff.add(groupId);
+      g.owner=newOwnerId;g.membersVersion=oldVersion+1;g.everTransferredOwnership=true;
+      try{e.save();}catch(IOException ex){g.owner=oldOwner;g.membersVersion=oldVersion;g.everTransferredOwnership=oldTransferred;if(hadPending)e.pendingOwnershipHandoff.remove(groupId);throw ex;}
+    }
+    e.notifyChanged();e.queueEpoch.incrementAndGet();e.flush();
+  }
+  // Called after recording a member's ack for a group that might be mid ownership-handoff --
+  // completes this device's own deferred departure once every other current active member has
+  // caught up.
+  static void checkOwnershipHandoffConvergence(PeerEngine e,String groupId)throws IOException {
+    boolean converged;
+    synchronized(e){
+      if(!e.pendingOwnershipHandoff.contains(groupId))return;
+      PeerEngine.Group g=e.groups.get(groupId);if(g==null)return;
+      converged=true;for(String m:g.members)if(!m.equals(e.id)&&e.memberAckedVersion(groupId,m)<g.membersVersion){converged=false;break;}
+      if(converged){boolean had=e.pendingOwnershipHandoff.remove(groupId);try{e.save();}catch(IOException ex){if(had)e.pendingOwnershipHandoff.add(groupId);throw ex;}}
+    }
+    if(converged)e.deleteConversation(groupId);
   }
   static void handleSync(PeerEngine e,SSLSocket s,String group,String knownIdsCsv,String peerId){
     HashSet<String> known=new HashSet<>();if(!knownIdsCsv.isEmpty())known.addAll(Arrays.asList(knownIdsCsv.split(",",-1)));

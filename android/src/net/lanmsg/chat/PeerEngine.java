@@ -38,10 +38,15 @@ public final class PeerEngine implements Closeable {
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
   final LinkedHashMap<String,Peer> peers=new LinkedHashMap<>();
   final ArrayList<Message> messages=new ArrayList<>();
-  final ExecutorService connections=new ThreadPoolExecutor(8,16,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(32),new ThreadPoolExecutor.AbortPolicy());
-  final ExecutorService outgoing=Executors.newFixedThreadPool(4);
-  final ScheduledExecutorService timer=Executors.newScheduledThreadPool(2);
-  final Set<String> sending=ConcurrentHashMap.newKeySet();
+  ExecutorService connections, outgoing;
+  ScheduledExecutorService timer;
+  final ConcurrentHashMap<String,Long> sending=new ConcurrentHashMap<>();
+  final Set<Socket> activeSockets=ConcurrentHashMap.newKeySet();
+  final Set<ServerSocket> temporaryListeners=ConcurrentHashMap.newKeySet();
+  volatile long generation;
+  final ThreadLocal<Long> workerSession=new ThreadLocal<>();
+  volatile boolean closed;
+  public volatile String networkState="Offline";
   ServerSocket listener; DatagramSocket discovery;
   public String id,name; public volatile String error=""; public volatile boolean running;
   public volatile Runnable changed=()->{};
@@ -104,6 +109,7 @@ public final class PeerEngine implements Closeable {
     LinkedHashMap<String,Peer> loadedPeers=new LinkedHashMap<>();ArrayList<Message> loadedMessages=new ArrayList<>();LinkedHashMap<String,Group> loadedGroups=new LinkedHashMap<>();HashSet<String> loadedHidden=new HashSet<>();
     HashSet<String> loadedForgotten=new HashSet<>();HashMap<String,String> loadedPendingLeaves=new HashMap<>();
     LinkedHashMap<String,HashSet<String>> loadedDeparted=new LinkedHashMap<>();LinkedHashMap<String,HashMap<String,Integer>> loadedAcked=new LinkedHashMap<>();
+    HashSet<String> loadedEverTransferred=new HashSet<>();HashSet<String> loadedPendingHandoff=new HashSet<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
@@ -127,11 +133,15 @@ public final class PeerEngine implements Closeable {
       else if(a[0].equals("L")&&a.length==3)loadedPendingLeaves.put(a[1],a[2]);
       else if(a[0].equals("D")&&a.length==3){HashSet<String> set=loadedDeparted.get(a[1]);if(set==null){set=new HashSet<>();loadedDeparted.put(a[1],set);}set.add(a[2]);}
       else if(a[0].equals("V")&&a.length==4){HashMap<String,Integer> m=loadedAcked.get(a[1]);if(m==null){m=new HashMap<>();loadedAcked.put(a[1],m);}m.put(a[2],Integer.parseInt(a[3]));}
+      else if(a[0].equals("T")&&a.length==2)loadedEverTransferred.add(a[1]);
+      else if(a[0].equals("O")&&a.length==2)loadedPendingHandoff.add(a[1]);
       else if(a[0].equals("J")||a[0].equals("Q")){} // Removed join-request feature; tolerate old rows already on disk instead of failing to load.
       else throw new IOException("Invalid storage row");}
-    groups.clear();groups.putAll(loadedGroups);hidden.clear();hidden.addAll(loadedHidden);
+    groups.clear();for(Map.Entry<String,Group> kv:loadedGroups.entrySet()){if(loadedEverTransferred.contains(kv.getKey()))kv.getValue().everTransferredOwnership=true;groups.put(kv.getKey(),kv.getValue());}
+    hidden.clear();hidden.addAll(loadedHidden);
     forgotten.clear();forgotten.addAll(loadedForgotten);pendingLeaves.clear();pendingLeaves.putAll(loadedPendingLeaves);
     departedHistory.clear();departedHistory.putAll(loadedDeparted);memberAcked.clear();memberAcked.putAll(loadedAcked);
+    pendingOwnershipHandoff.clear();pendingOwnershipHandoff.addAll(loadedPendingHandoff);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
   }
   synchronized void save()throws IOException {
@@ -143,6 +153,8 @@ public final class PeerEngine implements Closeable {
     for(String pid:forgotten)text.append("F\t").append(pid).append('\n');for(Map.Entry<String,String> kv:pendingLeaves.entrySet())text.append("L\t").append(kv.getKey()).append('\t').append(kv.getValue()).append('\n');
     for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())for(String mid:kv.getValue())text.append("D\t").append(kv.getKey()).append('\t').append(mid).append('\n');
     for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())for(Map.Entry<String,Integer> mv:kv.getValue().entrySet())text.append("V\t").append(kv.getKey()).append('\t').append(mv.getKey()).append('\t').append(mv.getValue()).append('\n');
+    for(Group g:groups.values())if(g.everTransferredOwnership)text.append("T\t").append(g.id).append('\n');
+    for(String groupId:pendingOwnershipHandoff)text.append("O\t").append(groupId).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -150,21 +162,29 @@ public final class PeerEngine implements Closeable {
   }
   public void start()throws IOException {start("0.0.0.0",MESSAGE_PORT,DISCOVERY_PORT);}
   public synchronized void start(String bindAddress,int tcpPort,int udpPort)throws IOException {
+    if(closed)throw new IOException("Engine is closed.");
+    if(running)return;
+    networkState="Starting";
     bind=bindAddress;discoveryPort=udpPort;
     try {
       listener=identity.context.getServerSocketFactory().createServerSocket();((SSLServerSocket)listener).setNeedClientAuth(true);((SSLServerSocket)listener).setEnabledProtocols(new String[]{"TLSv1.2"});((SSLServerSocket)listener).setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});listener.setReuseAddress(true);listener.bind(new InetSocketAddress(bind,tcpPort));port=listener.getLocalPort();
       discovery=new DatagramSocket(null);discovery.setReuseAddress(true);discovery.setBroadcast(true);discovery.bind(new InetSocketAddress(bind,udpPort));running=true;
-    }catch(IOException e){if(listener!=null)listener.close();if(discovery!=null)discovery.close();throw e;}
-    Thread accept=new Thread(()->{while(running)try{Socket s=listener.accept();try{connections.execute(()->receive(s));}catch(RejectedExecutionException e){s.close();}}catch(IOException e){if(running)error="Incoming connections unavailable.";}},"lan-incoming");accept.setDaemon(true);accept.start();
-    Thread discover=new Thread(()->{while(running)try{byte[] b=new byte[1024];DatagramPacket p=new DatagramPacket(b,b.length);discovery.receive(p);String line=new String(p.getData(),0,p.getLength(),StandardCharsets.UTF_8).trim();String[] a=line.split("\t",-1);if(validHello(a)&&!a[2].equals(id)){boolean fresh; synchronized(this){Peer old=peers.get(a[2]);fresh=old==null||!old.online();}remember(a[2],dec(a[3]),p.getAddress().getHostAddress(),Integer.parseInt(a[4]));if(fresh)announceTo(p.getAddress(),p.getPort());}}catch(Exception e){if(running&&!(e instanceof SocketException))error="Discovery packet ignored.";}},"lan-discovery");discover.setDaemon(true);discover.start();
-    timer.scheduleWithFixedDelay(()->{try{purgeExpired();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
-    timer.scheduleWithFixedDelay(()->{try{announce();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
-    timer.scheduleWithFixedDelay(()->{try{flush();}catch(Exception ignored){}},1,2,TimeUnit.SECONDS);
+    }catch(IOException e){if(listener!=null)listener.close();if(discovery!=null)discovery.close();listener=null;discovery=null;networkState="Offline";throw e;}
+    generation++;
+    connections=new ThreadPoolExecutor(8,16,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(32),new ThreadPoolExecutor.AbortPolicy());
+    outgoing=Executors.newFixedThreadPool(4);timer=Executors.newScheduledThreadPool(2);
+    networkState="Online";
+    final ServerSocket server=listener;final DatagramSocket udp=discovery;final long session=generation;
+    Thread accept=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{Socket s=server.accept();try{track(s);connections.execute(()->{workerSession.set(session);receive(s);});}catch(RejectedExecutionException e){activeSockets.remove(s);s.close();}}catch(IOException e){if(running&&session==generation)error="Incoming connections unavailable.";}},"lan-incoming");accept.setDaemon(true);accept.start();
+    Thread discover=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{byte[] b=new byte[1024];DatagramPacket p=new DatagramPacket(b,b.length);udp.receive(p);if(!running||session!=generation)break;String line=new String(p.getData(),0,p.getLength(),StandardCharsets.UTF_8).trim();String[] a=line.split("\t",-1);if(validHello(a)&&!a[2].equals(id)){boolean fresh; synchronized(this){Peer old=peers.get(a[2]);fresh=old==null||!old.online();}remember(a[2],dec(a[3]),p.getAddress().getHostAddress(),Integer.parseInt(a[4]));if(fresh)announceTo(p.getAddress(),p.getPort());}}catch(Exception e){if(running&&session==generation&&!(e instanceof SocketException))error="Discovery packet ignored.";}},"lan-discovery");discover.setDaemon(true);discover.start();
+    timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{purgeExpired();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
+    timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{announce();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
+    timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{flush();}catch(Exception ignored){}},1,2,TimeUnit.SECONDS);
     notifyChanged();
   }
   synchronized String hello(){return "LM4\tHELLO\t"+id+"\t"+enc(name)+"\t"+port;}
   boolean validHello(String[] a){try{return a.length==5&&a[0].equals("LM4")&&a[1].equals("HELLO")&&uuid(a[2])&&!dec(a[3]).trim().isEmpty()&&dec(a[3]).length()<=30&&Integer.parseInt(a[4])>0&&Integer.parseInt(a[4])<=65535;}catch(Exception e){return false;}}
-  void announceTo(InetAddress address,int targetPort)throws IOException {byte[] b=hello().getBytes(StandardCharsets.UTF_8);discovery.send(new DatagramPacket(b,b.length,address,targetPort));}
+  void announceTo(InetAddress address,int targetPort)throws IOException {if(!running||workerSession.get()!=null&&workerSession.get()!=generation)throw new IOException("Network is offline.");byte[] b=hello().getBytes(StandardCharsets.UTF_8);discovery.send(new DatagramPacket(b,b.length,address,targetPort));}
   public void announce()throws IOException {
     if(!running)return;
     if(bind.equals("0.0.0.0")){
@@ -186,7 +206,9 @@ public final class PeerEngine implements Closeable {
     int targetPort=a.length==2?Integer.parseInt(a[1]):MESSAGE_PORT;
     try(Socket s=connect(a[0],targetPort)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))throw new IOException("No other LAN Messenger device at this address.");remember(h[2],dec(h[3]),a[0],Integer.parseInt(h[4]));try{recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){throw new IOException(e);}}
   }
-  Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();return s;}catch(IOException e){s.close();throw e;}}
+  Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();if(!running)throw new IOException("Network is offline.");return s;}catch(IOException e){activeSockets.remove(s);s.close();throw e;}}
+  synchronized void track(Socket s)throws IOException {if(!running||workerSession.get()!=null&&workerSession.get()!=generation){s.close();throw new IOException("Network is offline.");}activeSockets.removeIf(Socket::isClosed);activeSockets.add(s);}
+  synchronized void track(ServerSocket s)throws IOException {if(!running){s.close();throw new IOException("Network is offline.");}temporaryListeners.add(s);}
   static String read(Socket s)throws IOException {ByteArrayOutputStream b=new ByteArrayOutputStream();int c;InputStream in=s.getInputStream();while((c=in.read())!=-1){if(c==10)return new String(b.toByteArray(),StandardCharsets.UTF_8);if(b.size()>=16384)throw new IOException("Frame too large");b.write(c);}throw new EOFException();}
   static void write(Socket s,String line)throws IOException {OutputStream out=new NetworkTimeoutOutputStream(s);out.write((line+"\n").getBytes(StandardCharsets.UTF_8));out.flush();}
   public synchronized String pairingCode(String peerId)throws IOException {
@@ -205,9 +227,9 @@ public final class PeerEngine implements Closeable {
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHSTREAM")){ResumableTransfer.serve(this,s,m,h[2],fingerprint);return;}
-    if(!simulateLegacyBuild&&m.length==2&&m[0].equals("LM4")&&m[1].equals("CAPS")){write(s,"LM4\tCAPS\t1");return;}
+    if(!simulateLegacyBuild&&m.length==2&&m[0].equals("LM4")&&m[1].equals("CAPS")){write(s,"LM4\tCAPS\t2");return;}
     if((m.length==6||m.length==7)&&m[0].equals("LM4")&&m[1].equals("GROUP")){GroupSync.acceptGroup(this,m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}
-    if(!simulateLegacyBuild&&m.length==5&&m[0].equals("LM4")&&m[1].equals("MEMBERSUPDATE")){GroupSync.handleMembersUpdate(this,m,h[2],fingerprint);write(s,"LM4\tMEMBERSUPDATEACK\t"+m[2]+"\t"+m[3]);notifyChanged();return;}
+    if(!simulateLegacyBuild&&(m.length==5||m.length==6)&&m[0].equals("LM4")&&m[1].equals("MEMBERSUPDATE")){GroupSync.handleMembersUpdate(this,m,h[2],fingerprint);write(s,"LM4\tMEMBERSUPDATEACK\t"+m[2]+"\t"+m[3]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SEEN")&&uuid(m[2])&&m[3].equals(h[2])){markSeen(m[2],h[2]);write(s,"LM4\tSEENACK\t"+m[2]);notifyChanged();return;}
     if(m.length==4&&m[0].equals("LM4")&&m[1].equals("SYNCREQ2")&&uuid(m[2])){GroupSync.handleSync(this,s,m[2],m[3],h[2]);notifyChanged();return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("AVATAR")&&m[2].equals(h[2])){AvatarSync.handleAvatar(this,s,m[2],m[3],m[4]);notifyChanged();return;}
@@ -242,7 +264,7 @@ public final class PeerEngine implements Closeable {
 
     if(incoming!=null)try{received.accept(incoming);}catch(Exception ignored){}
     write(s,"LM4\tACK\t"+m[2]+"\t"+id);notifyChanged();
-  }catch(Exception ignored){}}
+  }catch(Exception ignored){}finally{activeSockets.remove(socket);}}
   synchronized void markSeen(String messageId,String readerId)throws IOException{Message row=null;for(Message x:messages)if(x.id.equals(messageId)&&x.from.equals(id)&&x.to.equals(readerId)&&!x.status.equals("Seen")){row=x;break;}if(row==null)return;String old=row.status;row.status="Seen";try{save();}catch(IOException e){row.status=old;throw e;}}
   static byte[] canonicalBytes(String msgId,String group,String sender,long time,String text,String fileName,long fileSize,String fileHash){
     return (msgId+"\t"+group+"\t"+sender+"\t"+time+"\t"+enc(text)+"\t"+enc(fileName)+"\t"+fileSize+"\t"+fileHash).getBytes(StandardCharsets.UTF_8);
@@ -267,12 +289,16 @@ public final class PeerEngine implements Closeable {
   public synchronized int unread(String conversation){int n=0;for(Message m:messages)if(m.to.equals(id)&&m.status.equals("Received")&&(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)))n++;return n;}
   final java.util.concurrent.atomic.AtomicLong queueEpoch=new java.util.concurrent.atomic.AtomicLong();
   void flush(){if(!running)return;TransferManager.queueImageDownloads(this);for(Peer p:peers())startDelivery(p);}
-  void startDelivery(Peer p){if(!running||!sending.add(p.id))return;try{outgoing.execute(()->{long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&observed!=queueEpoch.get());}finally{sending.remove(p.id);if(running&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id);}}
+  void startDelivery(Peer p){long session=generation;if(!running||workerSession.get()!=null&&workerSession.get()!=session||sending.putIfAbsent(p.id,session)!=null)return;try{outgoing.execute(()->{workerSession.set(session);long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&session==generation&&observed!=queueEpoch.get());}finally{sending.remove(p.id,session);if(running&&session==generation&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id,session);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
     for(Group g:GroupSync.groups(this)){
       int acked;synchronized(this){HashMap<String,Integer> m=memberAcked.get(g.id);acked=m!=null&&m.containsKey(p.id)?m.get(p.id):-1;}
-      if(!(g.owner.equals(id)&&Arrays.asList(g.members).contains(p.id)&&acked<g.membersVersion))continue;
+      // Normally only the current owner broadcasts; while a handoff I started is still pending, I
+      // also keep pushing this group's (already-decided) snapshot even though g.owner now correctly
+      // says someone else -- see PLAN-GROUP-OWNERSHIP-TRANSFER.md for why the new owner can't take
+      // over delivery to a still-lagging member instead.
+      if(!((g.owner.equals(id)||pendingOwnershipHandoff(g.id))&&Arrays.asList(g.members).contains(p.id)&&acked<g.membersVersion))continue;
       try(Socket s=connect(p.host,p.port)){
         String fingerprint=SecureIdentity.remote((SSLSocket)s);if(!trusted(p.id,fingerprint))return;write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id)||!read(s).equals("LM4\tREADY"))return;
         int sentVersion=g.membersVersion;boolean neverAcked=acked<0;
@@ -280,10 +306,12 @@ public final class PeerEngine implements Closeable {
           String wire="LM4\tGROUP\t"+g.id+"\t"+g.owner+"\t"+enc(g.name)+"\t"+String.join(",",g.members)+(sentVersion>0?"\t"+sentVersion:"");
           write(s,wire);if(!read(s).equals("LM4\tGROUPACK\t"+g.id)||!trusted(p.id,fingerprint))return;
         }else{
-          write(s,"LM4\tMEMBERSUPDATE\t"+g.id+"\t"+sentVersion+"\t"+String.join(",",g.members));
+          String ownerField=g.everTransferredOwnership?"\t"+g.owner:"";
+          write(s,"LM4\tMEMBERSUPDATE\t"+g.id+"\t"+sentVersion+"\t"+String.join(",",g.members)+ownerField);
           if(!read(s).equals("LM4\tMEMBERSUPDATEACK\t"+g.id+"\t"+sentVersion)||!trusted(p.id,fingerprint))return;
         }
         synchronized(this){HashMap<String,Integer> m=memberAcked.get(g.id);if(m==null){m=new HashMap<>();memberAcked.put(g.id,m);}Integer old=m.get(p.id);m.put(p.id,sentVersion);try{save();}catch(IOException e){if(old!=null)m.put(p.id,old);else m.remove(p.id);throw e;}}
+        GroupSync.checkOwnershipHandoffConvergence(this,g.id);
       }catch(Exception e){return;}
     }
     ArrayList<Message> queued=new ArrayList<>();synchronized(this){for(Message m:messages)if(m.to.equals(p.id)&&m.status.equals("Queued"))queued.add(m);}
@@ -420,8 +448,14 @@ public final class PeerEngine implements Closeable {
   // monotonic counter, bumped by exactly 1 on every such change; a receiving device only ever
   // adopts a strictly greater version.
   public static final class Group {
-    public final String id,owner,name;public String[] members;public int membersVersion;
-    Group(String i,String o,String n,String[] m,int v){id=i;owner=o;name=n;members=m.clone();membersVersion=v;}
+    public final String id,name;public String owner;public String[] members;public int membersVersion;
+    // Stays false for a group whose owner has never changed since creation — exactly like
+    // membersVersion==0, it keeps the wire shape (5-field MEMBERSUPDATE) unchanged for such a group so
+    // an unrelated, not-yet-updated device is genuinely unaffected. Once true, permanently: every
+    // future update for this group sends the 6-field (owner-carrying) form.
+    public boolean everTransferredOwnership;
+    Group(String i,String o,String n,String[] m,int v){this(i,o,n,m,v,false);}
+    Group(String i,String o,String n,String[] m,int v,boolean t){id=i;owner=o;name=n;members=m.clone();membersVersion=v;everTransferredOwnership=t;}
   }
   // A member id paired with whether they're currently active (in a group's live members) or only
   // in its departed history — see PeerEngine.allKnownMembers.
@@ -442,6 +476,14 @@ public final class PeerEngine implements Closeable {
   // Owner-only: per group, the last membersVersion each active member has acked. Drives deliver's
   // broadcast/retry loop.
   final LinkedHashMap<String,HashMap<String,Integer>> memberAcked=new LinkedHashMap<>();
+  // Groups where I've handed off ownership and am waiting for every other active member to catch up
+  // before my own departure completes — I stay the delivery/leave-acceptance authority for exactly
+  // this one group until then, even though Group.owner already (correctly) says someone else. See
+  // PLAN-GROUP-OWNERSHIP-TRANSFER.md for why this can't be handed off to the new owner instead.
+  final HashSet<String> pendingOwnershipHandoff=new HashSet<>();
+  // True while my own departure from this group is deferred, waiting for every other active member
+  // to catch up to a completed ownership handoff — the UI should show this instead of a normal chat.
+  public synchronized boolean pendingOwnershipHandoff(String groupId){return pendingOwnershipHandoff.contains(groupId);}
   // Test-only: makes this engine behave as if it predates group-membership changes entirely —
   // refuses CAPS and MEMBERSUPDATE while HELLO and ordinary messaging behave normally.
   public volatile boolean simulateLegacyBuild=false;
@@ -453,6 +495,7 @@ public final class PeerEngine implements Closeable {
   public String createGroup(String name,List<String> members)throws IOException {return GroupSync.createGroup(this,name,members);}
   public List<KnownMember> allKnownMembers(String groupId){return GroupSync.allKnownMembers(this,groupId);}
   public void addMember(String groupId,String memberId)throws IOException {GroupSync.addMember(this,groupId,memberId);}
+  public void transferOwnership(String groupId,String newOwnerId)throws IOException {GroupSync.transferOwnership(this,groupId,newOwnerId);}
   // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
   // screen's sync-status display -- -1 if never (they're not yet caught up to anything).
   public synchronized int memberAckedVersion(String groupId,String peerId){HashMap<String,Integer> m=memberAcked.get(groupId);return m!=null&&m.containsKey(peerId)?m.get(peerId):-1;}
@@ -529,13 +572,14 @@ public final class PeerEngine implements Closeable {
     HashSet<String> oldForgotten=new HashSet<>(forgotten);HashMap<String,String> oldPendingLeaves=new HashMap<>(pendingLeaves);
     LinkedHashMap<String,HashSet<String>> oldDeparted=new LinkedHashMap<>();for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())oldDeparted.put(kv.getKey(),new HashSet<>(kv.getValue()));
     LinkedHashMap<String,HashMap<String,Integer>> oldAcked=new LinkedHashMap<>();for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())oldAcked.put(kv.getKey(),new HashMap<>(kv.getValue()));
+    HashSet<String> oldPendingHandoff=new HashSet<>(pendingOwnershipHandoff);
     ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
-    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();
+    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();pendingOwnershipHandoff.clear();
     forgotten.addAll(oldPeers.keySet());
     peers.clear();
     try{save();}catch(IOException e){
       messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);
-      departedHistory.putAll(oldDeparted);memberAcked.putAll(oldAcked);
+      departedHistory.putAll(oldDeparted);memberAcked.putAll(oldAcked);pendingOwnershipHandoff.addAll(oldPendingHandoff);
       forgotten.clear();forgotten.addAll(oldForgotten);pendingLeaves.clear();pendingLeaves.putAll(oldPendingLeaves);
       throw e;
     }
@@ -569,5 +613,21 @@ public final class PeerEngine implements Closeable {
   String storeAttachmentStreamAt(Message m,InputStream source,long totalBytes,BiConsumer<Long,Long> onProgress,File destination)throws IOException {return AttachmentStore.storeAttachmentStreamAt(this,m,source,totalBytes,onProgress,destination);}
 
   void notifyChanged(){try{changed.run();}catch(Exception ignored){}}
-  public synchronized void close(){running=false;for(Socket socket:downloadSockets.values())try{socket.close();}catch(IOException ignored){}try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}try{if(listener!=null)listener.close();}catch(IOException ignored){}if(discovery!=null)discovery.close();timer.shutdownNow();connections.shutdownNow();outgoing.shutdownNow();}
+  public synchronized void goOffline(){
+    if(!running)return;
+    networkState="Stopping";running=false;generation++;
+    try{if(listener!=null)listener.close();}catch(IOException ignored){}
+    if(discovery!=null)discovery.close();listener=null;discovery=null;
+    for(ServerSocket server:temporaryListeners)try{server.close();}catch(IOException ignored){}
+    temporaryListeners.clear();
+    for(Socket socket:activeSockets)try{socket.close();}catch(IOException ignored){}
+    activeSockets.clear();
+    for(Socket socket:downloadSockets.values())try{socket.close();}catch(IOException ignored){}
+    if(timer!=null)timer.shutdownNow();
+    if(connections!=null)connections.shutdownNow();
+    if(outgoing!=null)outgoing.shutdownNow();
+    sending.clear();
+    networkState="Offline";notifyChanged();
+  }
+  public synchronized void close(){goOffline();closed=true;try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}}
 }

@@ -6,27 +6,28 @@ import android.net.wifi.WifiManager;
 import android.os.*;
 
 public class MessengerService extends Service {
-  public static volatile PeerEngine engine;
-  public static volatile String problem="";
+  public volatile PeerEngine engine;
+  public volatile String problem="";
   WifiManager.MulticastLock multicast;
   volatile boolean stopping;
+  volatile String state="Offline";
+  boolean requestedOnline, foreground;
+  final IBinder binder=new LocalBinder();
+  public class LocalBinder extends Binder {MessengerService host(){return MessengerService.this;}}
   final Handler handler=new Handler(Looper.getMainLooper());
-  final Runnable update=new Runnable(){public void run(){if(engine!=null){getSystemService(NotificationManager.class).notify(1,notification());handler.postDelayed(this,5000);}}};
+  final Runnable update=new Runnable(){public void run(){if(foreground){getSystemService(NotificationManager.class).notify(1,notification());handler.postDelayed(this,5000);}}};
   Notification notification(){
     Intent open=new Intent(this,MainActivity.class);
     PendingIntent content=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-    PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,MessengerService.class).setAction("STOP"),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-    String text=engine==null?"Starting local messaging…":"Available on your network · "+engine.pending()+" queued";
+    PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,MessengerService.class).setAction("OFFLINE"),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+    String text=state+" · "+(engine==null?0:engine.pending())+" queued";
     return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle("LAN Messenger").setContentText(text).setContentIntent(content).setOngoing(true).addAction(new Notification.Action.Builder(null,"Go offline",stop).build()).build();
   }
   @Override public void onCreate(){super.onCreate();
     NotificationManager manager=getSystemService(NotificationManager.class);
     manager.createNotificationChannel(new NotificationChannel("connection","Local connection",NotificationManager.IMPORTANCE_LOW));
     manager.createNotificationChannel(new NotificationChannel("messages","Messages",NotificationManager.IMPORTANCE_DEFAULT));
-    startForeground(1,notification());problem="";
     new Thread(()->{try{
-      WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
-      if(wifi!=null){multicast=wifi.createMulticastLock("lan-messenger-discovery");multicast.setReferenceCounted(false);multicast.acquire();}
       PeerEngine peer=new PeerEngine(new java.io.File(getFilesDir(),"peer-data"),Build.MODEL,new AndroidProtector());
       peer.sourceOpener=reference->{java.io.InputStream input=getContentResolver().openInputStream(android.net.Uri.parse(reference));if(input==null)throw new java.io.IOException("Source is unavailable");return input;};
       peer.destinationOpener=reference->{
@@ -56,10 +57,59 @@ public class MessengerService extends Service {
         Notification n=new Notification.Builder(this,"messages").setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle(name).setContentText("Removed you as a contact. Verify again to keep chatting.").setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(open).setAutoCancel(true).build();
         manager.notify((peerId.hashCode()&0x7ffffffc)+3,n);
       };
-      synchronized(this){if(stopping){peer.close();return;}peer.start();engine=peer;}handler.post(update);
-    }catch(Exception e){problem="Could not start local messaging: "+e.getMessage();stopSelf();}},"lan-security-start").start();
+      synchronized(this){if(stopping){peer.close();return;}engine=peer;}
+      handler.post(()->{if(requestedOnline){state="Offline";transition(true);}});
+    }catch(Exception e){problem="Could not load local messaging: "+e.getMessage();state="Offline";handler.post(this::stopStartedOffline);}},"lan-security-start").start();
   }
-  @Override public int onStartCommand(Intent intent,int flags,int startId){if(intent!=null&&"STOP".equals(intent.getAction())){stopSelf();return START_NOT_STICKY;}return START_STICKY;}
-  @Override public IBinder onBind(Intent intent){return null;}
-  @Override public synchronized void onDestroy(){stopping=true;handler.removeCallbacksAndMessages(null);PeerEngine peer=engine;engine=null;if(peer!=null)peer.close();if(multicast!=null&&multicast.isHeld())multicast.release();stopForeground(true);super.onDestroy();}
+  // An OS kill does not automatically restart networking. Activity startup reads the saved
+  // preference and issues an explicit Online request; an Offline Activity only binds locally.
+  @Override public int onStartCommand(Intent intent,int flags,int startId){transition(intent==null?getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).getBoolean("default_online",true):!"OFFLINE".equals(intent.getAction()));return START_NOT_STICKY;}
+  @Override public IBinder onBind(Intent intent){return binder;}
+  @Override public boolean onUnbind(Intent intent){if(!"Online".equals(state))stopSelf();return true;}
+  // All requests (notification and Activity) meet here; engine creation remains in onCreate only.
+  synchronized void transition(boolean online){
+    requestedOnline=online;
+    getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).edit().putBoolean("default_online",online).apply();
+    if(online){
+      // Socket teardown can take time while a transfer is active. If an Online request arrives
+      // during that teardown, remember it and let the Offline worker restart cleanly afterwards.
+      if("Stopping".equals(state)){
+        if(!foreground){startForeground(1,notification());foreground=true;handler.post(update);}
+        return;
+      }
+      if(engine==null)state="Starting";
+      if(!foreground){startForeground(1,notification());foreground=true;handler.post(update);}
+      if(engine==null)return;
+      if("Online".equals(state)||"Starting".equals(state))return;
+      state="Starting";problem="";
+      new Thread(()->{try{
+        WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
+        synchronized(this){if(!requestedOnline||stopping)return;if(wifi!=null){multicast=wifi.createMulticastLock("lan-messenger-discovery");multicast.setReferenceCounted(false);multicast.acquire();}engine.start();state="Online";}
+      }catch(Exception error){synchronized(this){problem="Could not bind: "+error.getMessage();state="Offline";releaseMulticast();stopStartedOffline();}}},"lan-network-start").start();
+    }else{
+      if("Stopping".equals(state))return;
+      state="Stopping";
+      // Never tear down live transfers on Android's main thread. Closing sockets wakes the
+      // transfer workers and may briefly wait for their synchronized cleanup.
+      new Thread(()->{
+        PeerEngine peer;
+        synchronized(this){peer=engine;}
+        try{if(peer!=null)peer.goOffline();}
+        catch(Exception error){synchronized(this){problem="Could not stop networking cleanly: "+error.getMessage();}}
+        synchronized(this){
+          releaseMulticast();state="Offline";
+          if(requestedOnline&&!stopping){transition(true);return;}
+          stopStartedOffline(); // A bound Activity keeps local data available while Offline.
+        }
+      },"lan-network-stop").start();
+    }
+  }
+  // Clear the started-service lifetime after any actual-Offline failure. A bound Activity keeps
+  // this instance available for local data and Retry online; after unbind Android may destroy it.
+  void stopStartedOffline(){
+    if(foreground){foreground=false;handler.removeCallbacks(update);stopForeground(true);getSystemService(NotificationManager.class).cancel(1);}
+    stopSelf();
+  }
+  void releaseMulticast(){if(multicast!=null&&multicast.isHeld())multicast.release();multicast=null;}
+  @Override public synchronized void onDestroy(){stopping=true;handler.removeCallbacksAndMessages(null);PeerEngine peer=engine;engine=null;if(peer!=null)peer.close();releaseMulticast();if(foreground)stopForeground(true);super.onDestroy();}
 }

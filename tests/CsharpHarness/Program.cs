@@ -3,7 +3,17 @@ using System.Text;
 try {
 using var engine=new PeerEngine(args[0],args[1],new TestProtector(args[0]));int notifications=0;engine.Received+=m=>Interlocked.Increment(ref notifications);engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));Console.WriteLine("READY\t"+engine.Id);
 string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
- if(a[0]=="STOP")break;
+  if(a[0]=="STOP")break;
+  if(a[0]=="OFFLINE")engine.GoOffline();
+  if(a[0]=="ONLINE")engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));
+  if(a[0]=="RAPID"){
+    await Task.WhenAll(Enumerable.Range(0,4).Select(_=>Task.Run(()=>{
+      for(int i=0;i<4;i++){engine.GoOffline();engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));}
+    })));
+  }
+  if(a[0]=="NETWORK")Console.WriteLine("NETWORK\t"+engine.NetworkState);
+  if(a[0]=="REFRESH")await engine.Announce();
+  if(a[0]=="DISPOSE")engine.Dispose();
  if(a[0]=="ADD")await engine.AddAddress(a[1]);
  if(a[0]=="ERROR")Console.WriteLine("DIAGNOSTIC\t"+engine.LastConnectionError.Replace("\n"," ").Replace("\r"," "));
  if(a[0]=="CODE")Console.WriteLine("CODE\t"+engine.PairingCode(a[1]));
@@ -18,6 +28,9 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="REINVITE")await engine.ReinviteMember(a[1],a[2]);
  if(a[0]=="LEFT")Console.WriteLine("LEFT\t"+engine.AllKnownMembers(a[1]).Any(m=>m.Id==a[2]&&!m.Active).ToString().ToLowerInvariant());
  if(a[0]=="ROSTER")foreach(var g in engine.Groups.Where(g=>g.Id==a[1]))Console.WriteLine($"ROSTER\t{g.MembersVersion}\t{string.Join(",",g.Members)}");
+ if(a[0]=="OWNER")foreach(var g in engine.Groups.Where(g=>g.Id==a[1]))Console.WriteLine($"OWNER\t{g.Owner}");
+ if(a[0]=="TRANSFEROWNER")await engine.TransferOwnership(a[1],a[2]);
+ if(a[0]=="PENDINGHANDOFF")Console.WriteLine("PENDINGHANDOFF\t"+engine.PendingOwnershipHandoff(a[1]).ToString().ToLowerInvariant());
  if(a[0]=="LEGACY")engine.SimulateLegacyBuild=a[1]=="true";
  if(a[0]=="READ")engine.MarkRead(a[1]);
  if(a[0]=="UNREAD")Console.WriteLine("UNREAD\t"+engine.Unread(a[1]));
@@ -41,7 +54,7 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="STATE")foreach(var p in engine.Peers){Console.WriteLine($"P\t{p.Id}\t{p.Online}");foreach(var m in engine.Messages(p.Id))Console.WriteLine($"M\t{m.Id}\t{m.From}\t{m.To}\t{m.Status}\t{Convert.ToBase64String(Encoding.UTF8.GetBytes(m.Text))}");}
  if(a[0]=="STATE")foreach(var g in engine.Groups){Console.WriteLine($"G\t{g.Id}\t{Convert.ToBase64String(Encoding.UTF8.GetBytes(g.Name))}");foreach(var m in engine.Messages(g.Id))Print(m);}
  Console.WriteLine("END");
-}catch(Exception e){Console.WriteLine("ERROR\t"+e.Message);Console.WriteLine("END");}}
+ }catch(Exception e){Console.WriteLine("ERROR\t"+e.Message);Console.WriteLine("END");}}
 
 }catch(Exception error){Console.Error.WriteLine(error);Environment.ExitCode=1;}
 

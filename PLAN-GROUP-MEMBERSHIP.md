@@ -20,9 +20,13 @@ through several changes catches up in one step rather than replaying each one. A
 trusted as durable, since a device could have been downgraded, reinstalled, or restored from a backup
 since. Leaving a group is never gated by this.
 
-Ownership itself does not change: the owner is fixed at creation, never transfers, has no "leave" of
-their own, and there is no second admin. Ending a group entirely ("delete group") remains out of scope —
-a separate, undesigned future feature. (Leaving a group as a non-owner member is a separate, already
+**Update**: ownership was originally fixed forever (no transfer, no second admin) — that has since
+changed. The owner can now hand off to another current active member, and must do so before leaving a
+group that has other members in it (leaving an owner-only group is still a plain local delete, nothing to
+hand off). See [PLAN-GROUP-OWNERSHIP-TRANSFER.md](PLAN-GROUP-OWNERSHIP-TRANSFER.md) for that design —
+it's an addition on top of this foundation, not a replacement for anything here. There is still no second
+admin (exactly one owner at a time) and ending a group entirely ("delete group") remains out of scope — a
+separate, undesigned future feature. (Leaving a group as a non-owner member is a separate, already
 existing action, labeled "Leave group" in the UI, not "delete conversation".)
 
 ## Design

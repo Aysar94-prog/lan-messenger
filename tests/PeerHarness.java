@@ -24,7 +24,22 @@ public class PeerHarness {
   System.out.println("READY\t"+e.id);
   BufferedReader input=new BufferedReader(new InputStreamReader(System.in,StandardCharsets.UTF_8));String line;
   while((line=input.readLine())!=null){String[] a=line.split("\t",-1);try{
-   if(a[0].equals("STOP"))break;
+    if(a[0].equals("STOP"))break;
+    if(a[0].equals("OFFLINE"))e.goOffline();
+    if(a[0].equals("ONLINE"))e.start(args[2],Integer.parseInt(args[3]),Integer.parseInt(args[4]));
+    if(a[0].equals("RAPID")){
+      Thread[] togglers=new Thread[4];
+      java.util.concurrent.atomic.AtomicReference<IOException> transitionFailure=new java.util.concurrent.atomic.AtomicReference<>();
+      for(int i=0;i<togglers.length;i++){
+        togglers[i]=new Thread(()->{for(int j=0;j<4;j++)try{e.goOffline();e.start(args[2],Integer.parseInt(args[3]),Integer.parseInt(args[4]));}catch(IOException failure){transitionFailure.compareAndSet(null,failure);return;}});
+        togglers[i].start();
+      }
+      for(Thread toggler:togglers)toggler.join();
+      if(transitionFailure.get()!=null)throw transitionFailure.get();
+    }
+    if(a[0].equals("NETWORK"))System.out.println("NETWORK\t"+e.networkState);
+    if(a[0].equals("REFRESH"))e.announce();
+    if(a[0].equals("DISPOSE"))e.close();
    if(a[0].equals("TRACK")){progress.set(0);firstProgress.set(-1);regressions.set(0);drops.set(0);downloadError.set("");dropAt.set(0);pauseAt.set(0);clearAt.set(0);haltAt.set(0);}
    if(a[0].equals("DROPAT"))dropAt.set(Long.parseLong(a[1]));
    if(a[0].equals("PAUSEAT"))pauseAt.set(Long.parseLong(a[1]));
@@ -77,6 +92,9 @@ public class PeerHarness {
    if(a[0].equals("REINVITE"))e.reinviteMember(a[1],a[2]);
    if(a[0].equals("LEFT")){boolean left=false;for(PeerEngine.KnownMember m:e.allKnownMembers(a[1]))if(m.id.equals(a[2])&&!m.active)left=true;System.out.println("LEFT\t"+left);}
    if(a[0].equals("ROSTER"))for(PeerEngine.Group g:e.groups())if(g.id.equals(a[1]))System.out.println("ROSTER\t"+g.membersVersion+"\t"+String.join(",",g.members));
+   if(a[0].equals("OWNER"))for(PeerEngine.Group g:e.groups())if(g.id.equals(a[1]))System.out.println("OWNER\t"+g.owner);
+   if(a[0].equals("TRANSFEROWNER"))e.transferOwnership(a[1],a[2]);
+   if(a[0].equals("PENDINGHANDOFF"))System.out.println("PENDINGHANDOFF\t"+e.pendingOwnershipHandoff(a[1]));
    if(a[0].equals("LEGACY"))e.simulateLegacyBuild=a[1].equals("true");
    if(a[0].equals("READ"))e.markRead(a[1]);
    if(a[0].equals("UNREAD"))System.out.println("UNREAD\t"+e.unread(a[1]));

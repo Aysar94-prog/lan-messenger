@@ -104,7 +104,10 @@ final class TransferManager {
   }
   static void downloadAttachment(PeerEngine e,PeerEngine.Message m)throws IOException{
     if(m.from.equals(e.id)||hasAttachment(e,m))return;
+    long session=e.generation;
+    if(!e.running||e.workerSession.get()!=null&&e.workerSession.get()!=session)throw new IOException("Network is offline.");
     String key=m.from+"/"+m.id;if(e.downloads.putIfAbsent(key,true)!=null)return;
+    e.workerSession.set(session);
     try{
       downloadNote(e,m,"");
       if(ResumableTransfer.download(e,m,key))return;
@@ -149,6 +152,6 @@ final class TransferManager {
       try(FileOutputStream out=new FileOutputStream(new File(partsPath(e,m),"complete"))){out.write(hash.getBytes(StandardCharsets.US_ASCII));}
       e.notifyChanged();
     }catch(IOException failure){downloadNote(e,m,String.valueOf(failure.getMessage()));throw failure;}
-    finally{e.downloads.remove(key);e.downloadSockets.remove(key);e.lastReportedPercent.remove(m.id);e.notifyChanged();}
+    finally{e.downloads.remove(key);e.downloadSockets.remove(key);e.lastReportedPercent.remove(m.id);e.workerSession.remove();e.notifyChanged();}
   }
 }

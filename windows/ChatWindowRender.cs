@@ -14,11 +14,13 @@ sealed partial class ChatWindow
     {
         if(selected!=null&&Visible&&WindowState!=FormWindowState.Minimized)try{engine.MarkRead(selected);}catch{}
         var peers=engine.Peers;
-        status.Text=$"{(engine.Running?"Available on your network":"Offline")}  ·  {peers.Count(p=>p.Online)} online  ·  {engine.Pending} queued  ·  Your ID: {engine.Id[..8]}";
+        status.Text=$"{engine.NetworkState}{(connectionProblem.Length>0?" · "+connectionProblem+" · Retry online":"")}  ·  {(engine.Running?peers.Count(p=>p.Online):0)} online  ·  {engine.Pending} queued  ·  Your ID: {engine.Id[..8]}";
+        connection.Text=trayConnection.Text=requestedOnline?(engine.Running?"Go offline":"Retry online"):"Go online";
+        scan.Enabled=add.Enabled=engine.Running;
         var groups=engine.Groups;
         // Most recently active conversation first, like a typical chat app — not name/online order.
         long LastActivity(string conversation){var items=engine.Messages(conversation);return items.Length>0?items.Max(m=>m.Time):0;}
-        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members",true,engine.Unread(g.Id),LastActivity(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id),LastActivity(p.Id),p.Online))).OrderByDescending(e=>e.LastActivity).ThenBy(e=>e.Name).ToArray();
+        var entries=groups.Select(g=>new ContactItem(g.Id,g.Name,$"Group · {g.Members.Length} members"+(engine.PendingOwnershipHandoff(g.Id)?" · Leaving…":""),true,engine.Unread(g.Id),LastActivity(g.Id))).Concat(peers.Select(p=>new ContactItem(p.Id,p.Name,$"{(engine.Running&&p.Online?"Online":"Offline")} · {p.Security}",false,engine.Unread(p.Id),LastActivity(p.Id),engine.Running&&p.Online))).OrderByDescending(e=>e.LastActivity).ThenBy(e=>e.Name).ToArray();
         string signature=string.Join("|",entries.Select(p=>$"{p.Id}:{p.Name}:{p.Detail}:{p.Unread}:{p.LastActivity}"))+"|"+string.Join(",",peers.Select(p=>p.Id+":"+p.ReceivedAvatarHash));
         if(signature!=lastContacts){
             rendering=true;contacts.BeginUpdate();contacts.Items.Clear();contacts.Items.AddRange(entries);for(int i=0;i<contacts.Items.Count;i++)if(((ContactItem)contacts.Items[i]).Id==selected)contacts.SelectedIndex=i;contacts.EndUpdate();rendering=false;lastContacts=signature;
@@ -27,9 +29,10 @@ sealed partial class ChatWindow
             foreach(var p in peers)try{var raw=engine.PeerAvatar(p.Id);if(raw!=null){var img=TryImageThumbnail(raw,72,72);if(img!=null)avatarCache[p.Id]=img;}}catch{}
         }
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
-        verify.Enabled=peer!=null;members.Enabled=group!=null;leaveGroup.Enabled=group!=null;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
+        var leavingPending=group!=null&&engine.PendingOwnershipHandoff(group.Id);
+        verify.Enabled=peer!=null&&engine.Running;members.Enabled=group!=null;leaveGroup.Enabled=group!=null&&!leavingPending;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&!leavingPending&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy&&!leavingPending;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
-        heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members":$"{peer!.Name} · {(peer.Online?"Online":"Offline")}";
+        heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members"+(leavingPending?" · Leaving — waiting for members to catch up":""):$"{peer!.Name} · {(engine.Running&&peer.Online?"Online":"Offline")}";
         var items=engine.Messages(selected!);
         // Per-conversation view state: newest N rendered, scroll position, cached cards.
         if(!chatViews.TryGetValue(selected!,out var current)){current=new ChatViewState(selected!,Math.Min(InitialVisibleMessages,items.Length),0,feed.Width,TimestampMs(),true);chatViews[selected!]=current;}

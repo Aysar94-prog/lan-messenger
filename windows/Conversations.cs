@@ -12,7 +12,12 @@ public sealed partial class PeerEngine
     // adds someone, propagated to every active member via MEMBERSUPDATE (see PeerEngine.cs's
     // Deliver/Receive). MembersVersion is a plain monotonic counter, bumped by exactly 1 on every
     // such change; a receiving device only ever adopts a strictly greater version.
-    public sealed record Group(string Id,string Owner,string Name,string[] Members,int MembersVersion=0);
+    // EverTransferredOwnership stays false for a group whose owner has never changed since creation —
+    // exactly like MembersVersion==0, it keeps the wire shape (here, 5-field MEMBERSUPDATE) unchanged
+    // for such a group so an unrelated, not-yet-updated device is genuinely unaffected. Once true, every
+    // future update for this group sends the 6-field (owner-carrying) form, permanently — same one-way
+    // shift as GROUP's own 6-vs-7-field split once MembersVersion>=1.
+    public sealed record Group(string Id,string Owner,string Name,string[] Members,int MembersVersion=0,bool EverTransferredOwnership=false);
     readonly Dictionary<string,Group> groups=[];
     readonly HashSet<string> hidden=[];
     // Peer ids we've deleted and still owe a FORGET notice; groups we've left, keyed by the
@@ -32,7 +37,15 @@ public sealed partial class PeerEngine
     // tests/CsharpHarness and tests/PeerHarness.java to simulate a not-yet-updated peer without a
     // real legacy binary.
     public bool SimulateLegacyBuild;
+    // Groups where I've handed off ownership and am waiting for every other active member to catch up
+    // before my own departure completes — I stay the delivery/leave-acceptance authority for exactly
+    // this one group until then, even though Group.Owner already (correctly) says someone else. See
+    // PLAN-GROUP-OWNERSHIP-TRANSFER.md for why this can't be handed off to the new owner instead.
+    readonly HashSet<string> pendingOwnershipHandoff=[];
     public Group[] Groups {get{lock(gate)return groups.Values.Select(g=>g with{Members=g.Members.ToArray()}).ToArray();}}
+    // True while my own departure from this group is deferred, waiting for every other active member
+    // to catch up to a completed ownership handoff — the UI should show this instead of a normal chat.
+    public bool PendingOwnershipHandoff(string groupId){lock(gate)return pendingOwnershipHandoff.Contains(groupId);}
     // Union of the live roster and the departed-history record, for the Members dialog — a departed
     // id no longer appears in Groups[].Members, so callers that want to show (and Re-invite) them
     // need this instead.
@@ -59,7 +72,10 @@ public sealed partial class PeerEngine
     void HandleLeave(string groupId,string memberId)
     {
         lock(gate){
-            if(!groups.TryGetValue(groupId,out var g)||g.Owner!=Id||!g.Members.Contains(memberId))return;
+            // Normally only the current owner accepts a LEAVE; while a handoff I started is still
+            // pending, I also still accept one from anyone who hasn't caught up to it yet — otherwise
+            // their departure would be silently dropped (see PLAN-GROUP-OWNERSHIP-TRANSFER.md).
+            if(!groups.TryGetValue(groupId,out var g)||(g.Owner!=Id&&!pendingOwnershipHandoff.Contains(groupId))||!g.Members.Contains(memberId))return;
             var hadHistory=departedHistory.TryGetValue(groupId,out var set)&&set.Contains(memberId);
             groups[groupId]=g with{Members=g.Members.Where(x=>x!=memberId).ToArray(),MembersVersion=g.MembersVersion+1};
             if(!departedHistory.TryGetValue(groupId,out set))departedHistory[groupId]=set=[];
@@ -87,17 +103,24 @@ public sealed partial class PeerEngine
     {
         if(!Uuid(a[2])||!int.TryParse(a[3],out var version))throw new IOException("Invalid membership update");
         var members=a[4].Split(',');
+        // 6th field (owner) is new (ownership transfer); a 5-field frame from a pre-transfer build
+        // means the owner hasn't changed. Once accepted, this receiver's own record of who the owner
+        // is moves to whatever the frame says — the sender is still authorized by matching the OLD
+        // (pre-adoption) owner below, exactly once, for this specific update.
+        var newOwner=a.Length==6&&Uuid(a[5])?a[5]:null;
         lock(gate){
             if(!groups.TryGetValue(a[2],out var old))return;
             if(old.Owner!=sender||!Trusted(sender,fingerprint))return;
             if(version<=old.MembersVersion)return;
             if(members.Length>16||members.Distinct().Count()!=members.Length||members.Any(x=>!Uuid(x))||!members.Contains(Id)||!members.Contains(sender))return;
-            groups[a[2]]=old with{Members=members,MembersVersion=version};try{Save();}catch{groups[a[2]]=old;throw;}
+            if(newOwner!=null&&!members.Contains(newOwner))return;
+            groups[a[2]]=old with{Members=members,MembersVersion=version,Owner=newOwner??old.Owner,EverTransferredOwnership=old.EverTransferredOwnership||newOwner!=null};try{Save();}catch{groups[a[2]]=old;throw;}
         }
     }
+    int MemberAckedVersionLocked(string groupId,string peerId)=>memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(peerId,out var v)?v:-1;
     // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
     // dialog's sync-status display — -1 if never (they're not yet caught up to anything).
-    public int MemberAckedVersion(string groupId,string peerId){lock(gate)return memberAcked.TryGetValue(groupId,out var m)&&m.TryGetValue(peerId,out var v)?v:-1;}
+    public int MemberAckedVersion(string groupId,string peerId){lock(gate)return MemberAckedVersionLocked(groupId,peerId);}
     // Queries a peer live, every time — a past success is never trusted as durable proof, since the
     // same device could have been downgraded, reinstalled, or restored from a backup since. Returns
     // 0 (unsupported) for any failure: unreachable, connection error, or an invalid/missing reply —
@@ -121,17 +144,22 @@ public sealed partial class PeerEngine
     // in HandleLeave and can never be refused.
     public async Task AddMember(string groupId,string memberId)
     {
-        string[] toCheck;
+        string[] toCheck;bool needV2;
         lock(gate){
             var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can add a member.");
             if(g.Members.Contains(memberId))return;
             if(g.Members.Length>=16)throw new IOException("This group already has 16 members.");
             toCheck=[..g.Members,memberId];
+            // Once a group has ever changed owners, its MEMBERSUPDATE wire shape has permanently
+            // shifted to carry the owner field — anyone touched by a later growth must support that
+            // too, not just the original (lower) bar ordinary growth alone requires.
+            needV2=g.EverTransferredOwnership;
         }
         foreach(var id in toCheck.Where(x=>x!=Id)){
             Peer? p;lock(gate)p=peers.TryGetValue(id,out var found)?found:null;
             if(p is null)throw new IOException("Every member must already be a verified contact.");
-            if(await QueryCapability(p)<1)throw new IOException($"Can't change this group's membership: {p.Name} hasn't updated to a version that supports it.");
+            var v=await QueryCapability(p);
+            if(v<1||(needV2&&v<2))throw new IOException($"Can't change this group's membership: {p.Name} hasn't updated to a version that supports it.");
         }
         lock(gate){
             var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can add a member.");
@@ -230,8 +258,9 @@ public sealed partial class PeerEngine
             var oldForgotten=forgotten.ToArray();var oldPendingLeaves=new Dictionary<string,string>(pendingLeaves);
             var oldDeparted=departedHistory.ToDictionary(kv=>kv.Key,kv=>new HashSet<string>(kv.Value));
             var oldAcked=memberAcked.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,int>(kv.Value));
+            var oldPendingHandoff=new HashSet<string>(pendingOwnershipHandoff);
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();pendingOwnershipHandoff.Clear();
             foreach(var id in oldPeers.Keys)forgotten.Add(id);
             peers.Clear();
             try{Save();}
@@ -239,6 +268,7 @@ public sealed partial class PeerEngine
                 messages.AddRange(oldMessages);hidden.UnionWith(oldHidden);
                 foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;
                 foreach(var kv in oldDeparted)departedHistory[kv.Key]=kv.Value;foreach(var kv in oldAcked)memberAcked[kv.Key]=kv.Value;
+                pendingOwnershipHandoff.UnionWith(oldPendingHandoff);
                 forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
                 throw;
             }
@@ -258,6 +288,53 @@ public sealed partial class PeerEngine
     {
         lock(gate)if(groups[groupId].Owner!=Id)throw new IOException("Only the group owner can re-invite a member.");
         return AddMember(groupId,memberId);
+    }
+    // Owner-only: hands off ownership to another current active member. Requires everyone (not just
+    // the incoming owner) to answer a fresh, live CAPS>=2 query — once transferred, every member needs
+    // to understand the owner-carrying MEMBERSUPDATE form to keep converging, not just the incoming
+    // owner. Also requires nobody still awaiting their very first invite: the GROUP frame requires its
+    // claimed owner to equal whoever is actually connecting, so there is no way to deliver a first-time
+    // invite "on behalf of" a different owner during a pending handoff.
+    // My own local record of who owns the group flips immediately (everyone else adopts this the
+    // normal way), but I stay the delivery/leave-acceptance authority for this one group — via
+    // pendingOwnershipHandoff — until every other active member has caught up; only then does my own
+    // departure (queuing LEAVE to the new owner, same as any other leave) actually happen. See
+    // PLAN-GROUP-OWNERSHIP-TRANSFER.md.
+    public async Task TransferOwnership(string groupId,string newOwnerId)
+    {
+        string[] toCheck;
+        lock(gate){
+            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can transfer ownership.");
+            if(newOwnerId==Id||!g.Members.Contains(newOwnerId))throw new IOException("Choose another current member of the group.");
+            if(g.Members.Any(m=>m!=Id&&MemberAckedVersionLocked(groupId,m)<0))throw new IOException("Wait for every member to finish joining before transferring ownership.");
+            toCheck=g.Members;
+        }
+        foreach(var id in toCheck.Where(x=>x!=Id)){
+            Peer? p;lock(gate)p=peers.TryGetValue(id,out var found)?found:null;
+            if(p is null)throw new IOException("Every member must already be a verified contact.");
+            if(await QueryCapability(p)<2)throw new IOException($"Can't transfer ownership: {p.Name} hasn't updated to a version that supports it.");
+        }
+        lock(gate){
+            var g=groups[groupId];if(g.Owner!=Id)throw new IOException("Only the group owner can transfer ownership.");
+            if(!g.Members.Contains(newOwnerId))throw new IOException("Choose another current member of the group.");
+            var hadPending=pendingOwnershipHandoff.Add(groupId);
+            groups[groupId]=g with{Owner=newOwnerId,MembersVersion=g.MembersVersion+1,EverTransferredOwnership=true};
+            try{Save();}catch{groups[groupId]=g;if(hadPending)pendingOwnershipHandoff.Remove(groupId);throw;}
+        }
+        Notify();WakeDelivery();
+    }
+    // Called after recording a member's ack for a group that might be mid ownership-handoff —
+    // completes my own deferred departure once every other current active member has caught up.
+    void CheckOwnershipHandoffConvergence(string groupId)
+    {
+        bool converged;
+        lock(gate){
+            if(!pendingOwnershipHandoff.Contains(groupId))return;
+            if(!groups.TryGetValue(groupId,out var g))return;
+            converged=g.Members.Where(x=>x!=Id).All(m=>MemberAckedVersionLocked(groupId,m)>=g.MembersVersion);
+            if(converged){var had=pendingOwnershipHandoff.Remove(groupId);try{Save();}catch{if(had)pendingOwnershipHandoff.Add(groupId);throw;}}
+        }
+        if(converged)DeleteConversation(groupId);
     }
     public static string SafeFileName(string name)
     {

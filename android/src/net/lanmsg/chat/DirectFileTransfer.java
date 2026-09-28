@@ -25,12 +25,13 @@ final class DirectFileTransfer {
       }
       byte[] random=new byte[32];new SecureRandom().nextBytes(random);String token=PeerEngine.hex(random);
       try(ServerSocket listener=new ServerSocket()){
-        listener.bind(new InetSocketAddress(e.bind,0));listener.setSoTimeout(15000);
+        e.track(listener);listener.bind(new InetSocketAddress(e.bind,0));listener.setSoTimeout(15000);
         PeerEngine.write(control,header+"\tRAW\t"+listener.getLocalPort()+"\t"+token);
         long deadline=System.nanoTime()+15_000_000_000L;
         for(int attempt=0;attempt<4&&System.nanoTime()<deadline;attempt++){
           listener.setSoTimeout((int)Math.max(1,(deadline-System.nanoTime())/1_000_000));
           try(Socket raw=listener.accept()){
+            e.track(raw);
             raw.setSoTimeout(2000);raw.setTcpNoDelay(true);
             if(!raw.getInetAddress().equals(control.getInetAddress()))continue;
             String supplied;try{supplied=PeerEngine.read(raw);}catch(IOException invalid){continue;}
@@ -38,9 +39,9 @@ final class DirectFileTransfer {
             if(!e.retained(message)||!e.trusted(peerId,fingerprint))return;
             listener.close(); // Consume the one-use authorization before any payload is sent.
             PeerEngine.write(raw,"LM4\tRAWREADY");send(e,message,input,raw,offset,peerId,fingerprint);return;
-          }
+          }finally{e.activeSockets.removeIf(Socket::isClosed);}
         }
-      }
+      }finally{e.temporaryListeners.removeIf(ServerSocket::isClosed);}
     }finally{try{e.uploadPolicy.flush();}finally{e.fileSlots.release();}}
   }
   static void send(PeerEngine e,PeerEngine.Message m,InputStream input,Socket socket,long offset,String peer,String fingerprint)throws Exception {
@@ -52,7 +53,10 @@ final class DirectFileTransfer {
     }
   }
   static void download(PeerEngine e,PeerEngine.Message m,String reference)throws IOException {
+    long networkGeneration=e.generation;
+    if(!e.running||e.workerSession.get()!=null&&e.workerSession.get()!=networkGeneration)throw new IOException("Network is offline.");
     String key=m.from+"/"+m.id;if(e.downloads.putIfAbsent(key,true)!=null)return;
+    e.workerSession.set(networkGeneration);
     try{
       e.downloadNote(m,"");ResumableTransfer.active(e,m,key);
       DownloadDestination previous=DownloadDestination.get(e,m);
@@ -92,7 +96,7 @@ final class DirectFileTransfer {
                 if(fast){
                   int port;try{port=Integer.parseInt(header[6]);}catch(NumberFormatException invalid){throw new IOException("Invalid data port");}
                   if(port<1||port>65535||!header[7].matches("[0-9a-f]{64}"))throw new IOException("Invalid data authorization");
-                  raw=new Socket();e.downloadSockets.put(key,raw);ResumableTransfer.active(e,m,key);
+                   raw=new Socket();e.track(raw);e.downloadSockets.put(key,raw);ResumableTransfer.active(e,m,key);
                   raw.bind(new InetSocketAddress(e.bind,0));raw.connect(new InetSocketAddress(peer.host,port),3000);raw.setSoTimeout(PeerEngine.TRANSFER_READ_TIMEOUT_MS);raw.setTcpNoDelay(true);
                   PeerEngine.write(raw,"LM4\tTOKEN\t"+header[7]);if(!PeerEngine.read(raw).equals("LM4\tRAWREADY"))throw new IOException("Data authorization failed");payload=raw;
                 }
@@ -115,7 +119,7 @@ final class DirectFileTransfer {
         finish(e,m,key,file,reference,fast);
       }
     }catch(IOException failure){e.downloadNote(m,String.valueOf(failure.getMessage()));throw failure;}
-    finally{e.downloads.remove(key);e.downloadSockets.remove(key);e.lastReportedPercent.remove(m.id);e.notifyChanged();}
+    finally{e.downloads.remove(key);e.downloadSockets.remove(key);e.lastReportedPercent.remove(m.id);e.workerSession.remove();e.notifyChanged();}
   }
   static MessageDigest sha()throws IOException {try{return MessageDigest.getInstance("SHA-256");}catch(GeneralSecurityException failure){throw new IOException(failure);}}
   static void finish(PeerEngine e,PeerEngine.Message m,String key,DownloadDestination.FileHandle file,String reference,boolean fast)throws IOException {

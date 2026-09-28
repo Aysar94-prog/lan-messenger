@@ -98,6 +98,7 @@ public sealed partial class PeerEngine
     public async Task DownloadAttachmentAsync(Message m)
     {
         if(m.From==Id||HasAttachment(m))return;
+        if(!Running)throw new IOException("Network is offline.");
         var key=m.From+"/"+m.Id;using var cancel=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
         if(!downloads.TryAdd(key,cancel))return;
         try{

@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Net;
+using System.Net.Sockets;
 using LanMessenger;
 class Check
 {
@@ -236,6 +238,29 @@ class Check
     var hintCount=((Control)Field("feed")).Controls.Cast<Control>().Count(c=>c.Text=="A fresh start. Send a message or share a file.");
     if(hintCount!=1)throw new Exception("Empty-chat hint repeated "+hintCount+" times");
     Console.WriteLine("PASS: empty-chat hint remains single after redraw and chat switching");
+    ((Button)Field("connection")).PerformClick();
+    if(engine.Running||engine.NetworkState!="Offline"||((Button)Field("connection")).Text!="Go online"||((ToolStripMenuItem)Field("trayConnection")).Text!="Go online"||File.ReadAllText((string)Field("preferencePath")).Trim()!="Offline")throw new Exception("Offline UI control or preference failed");
+    Call("RestoreWindow",remote.Id);((TextBox)Field("composer")).Text="Queued while explicitly offline";await CallAsync("Send");
+     if(!engine.Messages(remote.Id).Any(m=>m.Text=="Queued while explicitly offline"&&m.Status=="Queued"))throw new Exception("Offline UI blocked queued message");
+     Console.WriteLine("PASS: toolbar and tray synchronize Offline, persist it, and keep local queued sends usable");
+     using(var occupiedPort=new TcpListener(IPAddress.Any,PeerEngine.MessagePort)){
+       occupiedPort.Start();
+       ((Button)Field("connection")).PerformClick();
+       if(engine.Running||engine.NetworkState!="Offline"||!(bool)Field("requestedOnline")||
+          !((Button)Field("connection")).Text.Equals("Retry online")||
+          ((ToolStripMenuItem)Field("trayConnection")).Text!="Retry online"||
+          string.IsNullOrEmpty((string)Field("connectionProblem"))||
+          !((Label)Field("status")).Text.Contains((string)Field("connectionProblem"))||
+          File.ReadAllText((string)Field("preferencePath")).Trim()!="Online")
+         throw new Exception("Bind failure lost Online intent, error, or retry action");
+       Console.WriteLine("PASS: occupied listener leaves preferred Online, actual Offline and bind error with synchronized Retry online controls");
+     }
+     ((Button)Field("connection")).PerformClick();
+     if(!engine.Running||engine.NetworkState!="Online"||!(bool)Field("requestedOnline")||
+        ((Button)Field("connection")).Text!="Go offline"||((ToolStripMenuItem)Field("trayConnection")).Text!="Go offline"||
+        File.ReadAllText((string)Field("preferencePath")).Trim()!="Online")
+       throw new Exception("Retry online did not bind after releasing the port");
+     Console.WriteLine("PASS: one Retry online click reconnects without changing preferred Online intent");
    }catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
    finally{type.GetField("exiting",BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(form,true);form.Close();if(engine.Running||trayVisible())Environment.ExitCode=1;Application.ExitThread();}
   bool trayVisible()=>((NotifyIcon)Field("tray")).Visible;

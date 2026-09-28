@@ -47,12 +47,12 @@ public sealed partial class PeerEngine
             string header=$"LM4\tDIRECT\t{m.Id}\t{offset}\t{m.FileSize-offset}";
             if(!IsFastAttachment(m)){await Write(tls,header+"\tTLS");await SendDirectPayload(m,source,tls,offset,peerId,tls.PeerFingerprint);return;}
             string token=Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-            var listener=new TcpListener(bind,0);listener.Start(1);
+            var listener=new TcpListener(bind,0);listener.Start(1);Track(listener);
             try{
                 using var deadline=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);deadline.CancelAfter(TimeSpan.FromSeconds(15));
                 await Write(tls,header+$"\tRAW\t{((IPEndPoint)listener.LocalEndpoint).Port}\t{token}");
                 for(int attempt=0;attempt<4;attempt++){
-                    using var raw=await listener.AcceptTcpClientAsync(deadline.Token);raw.NoDelay=true;
+                    using var raw=await listener.AcceptTcpClientAsync(deadline.Token);Track(raw);raw.NoDelay=true;
                     if(!((IPEndPoint)raw.Client.RemoteEndPoint!).Address.Equals(((IPEndPoint)control.Client.RemoteEndPoint!).Address))continue;
                     string supplied;try{supplied=await Read(raw.GetStream());}catch(IOException){continue;}catch(OperationCanceledException){continue;}
                     if(!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(supplied),Encoding.ASCII.GetBytes("LM4\tTOKEN\t"+token)))continue;
@@ -60,7 +60,7 @@ public sealed partial class PeerEngine
                     listener.Stop();await Write(raw.GetStream(),"LM4\tRAWREADY");
                     await SendDirectPayload(m,source,raw.GetStream(),offset,peerId,tls.PeerFingerprint);return;
                 }
-            }finally{listener.Stop();}
+            }finally{listener.Stop();Untrack(listener);}
         }finally{fileSlots.Release();}
     }
     async Task SendDirectPayload(Message m,Stream input,Stream output,long offset,string peer,string fingerprint){
@@ -73,6 +73,7 @@ public sealed partial class PeerEngine
     }
     public async Task DownloadToAsync(Message m,string destination)
     {
+        if(!Running)throw new IOException("Network is offline.");
         destination=Path.GetFullPath(destination);if(string.Equals(destination,SavedDestination(m),StringComparison.OrdinalIgnoreCase))return;
         using var cancel=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);string key=m.From+"/"+m.Id;
         if(!downloads.TryAdd(key,cancel))return;
@@ -108,6 +109,7 @@ public sealed partial class PeerEngine
                     fast=header[5]=="RAW";if(!(fast&&header.Length==8||header[5]=="TLS"&&header.Length==6))throw new IOException("Invalid transfer mode");
                     try{SetDestination(m,destination,false,fast);}catch(Exception error){throw new DestinationStorageException(error);}
                     using var raw=fast?new TcpClient(new IPEndPoint(bind,0)){NoDelay=true}:null;
+                    if(raw!=null)Track(raw);
                     using var abortRaw=cancel.Token.Register(()=>raw?.Dispose());Stream payload=tls;
                     if(fast){
                         if(!int.TryParse(header[6],out int port)||port<1||port>65535||!System.Text.RegularExpressions.Regex.IsMatch(header[7],"^[0-9a-f]{64}$"))throw new IOException("Invalid data authorization");

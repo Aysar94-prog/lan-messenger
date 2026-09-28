@@ -20,14 +20,23 @@ public sealed partial class PeerEngine : IDisposable
     static readonly byte[] StorageMagic=Encoding.ASCII.GetBytes("LMSEC3\n");
     readonly Dictionary<string,Peer> peers=[];
     readonly List<Message> messages=[];
-    readonly CancellationTokenSource stop=new();
-    readonly ConcurrentDictionary<string,byte> sending=new();
+    CancellationTokenSource stop=new();
+    readonly object networkGate=new();
+    readonly HashSet<TcpClient> activeClients=[];
+    readonly HashSet<TcpListener> temporaryListeners=[];
+    bool disposed;
+    readonly ConcurrentDictionary<string,long> sending=new();
+    long generation;
+    readonly AsyncLocal<long> workerSession=new();
     readonly SemaphoreSlim inbound=new(12);
     TcpListener? listener; UdpClient? udp;
     IPAddress bind=IPAddress.Any;int port=MessagePort,discoveryPort=DiscoveryPort;
     public string Id {get;private set;}="";
     public string Name {get;private set;}="";
-    public bool Running {get;private set;}
+    volatile bool running;
+    volatile string networkState="Offline";
+    public bool Running {get=>running;private set=>running=value;}
+    public string NetworkState {get=>networkState;private set=>networkState=value;}
     public string LastConnectionError {get;private set;}="";
     public event Action? Changed;
     public event Action<Message>? Received;
@@ -76,11 +85,33 @@ public sealed partial class PeerEngine : IDisposable
 
     public void Start(string bindAddress="0.0.0.0",int tcpPort=MessagePort,int udpPort=DiscoveryPort)
     {
-        if(Running)return;bind=IPAddress.Parse(bindAddress);discoveryPort=udpPort;
-        try{listener=new TcpListener(bind,tcpPort);listener.Start();port=((IPEndPoint)listener.LocalEndpoint).Port;udp=new UdpClient(AddressFamily.InterNetwork);udp.Client.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);udp.EnableBroadcast=true;udp.Client.Bind(new IPEndPoint(bind,udpPort));Running=true;}
-        catch{listener?.Stop();udp?.Dispose();throw;}
-        _=AcceptLoop();_=DiscoveryLoop();_=TimerLoop();Notify();
+        lock(networkGate){
+            if(disposed)throw new ObjectDisposedException(nameof(PeerEngine));
+            if(Running)return;
+            NetworkState="Starting";
+            try{bind=IPAddress.Parse(bindAddress);discoveryPort=udpPort;listener=new TcpListener(bind,tcpPort);listener.Start();port=((IPEndPoint)listener.LocalEndpoint).Port;udp=new UdpClient(AddressFamily.InterNetwork);udp.Client.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);udp.EnableBroadcast=true;udp.Client.Bind(new IPEndPoint(bind,udpPort));}
+            catch{listener?.Stop();udp?.Dispose();listener=null;udp=null;NetworkState="Offline";throw;}
+            stop=new CancellationTokenSource();generation++;Running=true;NetworkState="Online";
+            var token=stop.Token;var tcp=listener;var discovery=udp;
+            _=AcceptLoop(tcp!,token);_=DiscoveryLoop(discovery!,token);_=TimerLoop(token);
+        }
+        Notify();
     }
+    public void GoOffline()
+    {
+        lock(networkGate){
+            if(!Running)return;
+            NetworkState="Stopping";Running=false;stop.Cancel();listener?.Stop();udp?.Dispose();listener=null;udp=null;
+            foreach(var socket in activeClients)socket.Dispose();activeClients.Clear();
+            foreach(var temporary in temporaryListeners)temporary.Stop();temporaryListeners.Clear();
+            sending.Clear();NetworkState="Offline";
+        }
+        Notify();
+    }
+    void Track(TcpClient client){lock(networkGate){if(!Running){client.Dispose();throw new IOException("Network is offline.");}activeClients.RemoveWhere(c=>c.Client?.SafeHandle.IsClosed??true);activeClients.Add(client);}}
+    void Untrack(TcpClient client){lock(networkGate)activeClients.Remove(client);}
+    void Track(TcpListener temporary){lock(networkGate){if(!Running){temporary.Stop();throw new IOException("Network is offline.");}temporaryListeners.Add(temporary);}}
+    void Untrack(TcpListener temporary){lock(networkGate)temporaryListeners.Remove(temporary);}
     string Hello(){lock(gate)return $"LM4\tHELLO\t{Id}\t{Enc(Name)}\t{port}";}
     static bool ValidHello(string[] h){try{return h.Length==5&&h[0]=="LM4"&&h[1]=="HELLO"&&Uuid(h[2])&&Dec(h[3]).Trim().Length>0&&Dec(h[3]).Length<=30&&int.TryParse(h[4],out var p)&&p is >0 and <=65535;}catch{return false;}}
     public void Remember(string id,string name,string host,int peerPort)
@@ -88,26 +119,26 @@ public sealed partial class PeerEngine : IDisposable
         if(id==Id)return;lock(gate){peers.TryGetValue(id,out var old);var p=new Peer(id,CleanName(name),host,peerPort,Now,old?.Fingerprint??"",old?.Verified??"",old?.PublicKey??"",old?.SentAvatarHash??"",old?.ReceivedAvatarHash??"");peers[id]=p;
         if(old is null||old.Name!=p.Name||old.Host!=p.Host||old.Port!=p.Port)try{Save();}catch{if(old is null)peers.Remove(id);else peers[id]=old;throw;}}Notify();
     }
-    async Task AcceptLoop(){while(!stop.IsCancellationRequested)try{var client=await listener!.AcceptTcpClientAsync(stop.Token);client.NoDelay=true;if(!inbound.Wait(0)){client.Dispose();continue;}_=Task.Run(async()=>{try{await Receive(client);}finally{inbound.Release();}});}catch(Exception)when(stop.IsCancellationRequested){break;}catch{await Task.Delay(200);}}
-    async Task DiscoveryLoop()
+    async Task AcceptLoop(TcpListener tcp,CancellationToken token){workerSession.Value=generation;while(!token.IsCancellationRequested)try{var client=await tcp.AcceptTcpClientAsync(token);Track(client);client.NoDelay=true;if(!inbound.Wait(0)){Untrack(client);client.Dispose();continue;}_=Task.Run(async()=>{try{await Receive(client);}finally{Untrack(client);inbound.Release();}});}catch(Exception)when(token.IsCancellationRequested){break;}catch{try{await Task.Delay(200,token);}catch(OperationCanceledException){break;}}}
+    async Task DiscoveryLoop(UdpClient socket,CancellationToken token)
     {
-        while(!stop.IsCancellationRequested)try{var packet=await udp!.ReceiveAsync(stop.Token);if(packet.Buffer.Length>1024)continue;var h=Encoding.UTF8.GetString(packet.Buffer).Trim().Split('\t');if(!ValidHello(h)||h[2]==Id)continue;
+        workerSession.Value=generation;while(!token.IsCancellationRequested)try{var packet=await socket.ReceiveAsync(token);if(token.IsCancellationRequested||packet.Buffer.Length>1024)continue;var h=Encoding.UTF8.GetString(packet.Buffer).Trim().Split('\t');if(!ValidHello(h)||h[2]==Id)continue;
         bool fresh;lock(gate)fresh=!peers.TryGetValue(h[2],out var p)||!p.Online;
         Remember(h[2],Dec(h[3]),packet.RemoteEndPoint.Address.ToString(),int.Parse(h[4]));if(fresh)await AnnounceTo(packet.RemoteEndPoint);
-        }catch(Exception)when(stop.IsCancellationRequested){break;}catch{}
+        }catch(Exception)when(token.IsCancellationRequested){break;}catch{}
     }
-    async Task AnnounceTo(IPEndPoint target){var data=Encoding.UTF8.GetBytes(Hello());await udp!.SendAsync(data,target,stop.Token);}
+    async Task AnnounceTo(IPEndPoint target){UdpClient socket;CancellationToken token;lock(networkGate){if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)throw new IOException("Network is offline.");socket=udp!;token=stop.Token;}var data=Encoding.UTF8.GetBytes(Hello());await socket.SendAsync(data,target,token);}
     public async Task Announce()
     {
-        if(!Running)return;var targets=new HashSet<string>(Peers.Select(p=>p.Host));
+        if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)return;var targets=new HashSet<string>(Peers.Select(p=>p.Host));
         if(bind.Equals(IPAddress.Any)){targets.Add("255.255.255.255");foreach(var n in NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==OperationalStatus.Up))foreach(var a in n.GetIPProperties().UnicastAddresses.Where(a=>a.Address.AddressFamily==AddressFamily.InterNetwork)){var ip=a.Address.GetAddressBytes();var mask=a.IPv4Mask.GetAddressBytes();targets.Add(new IPAddress(ip.Zip(mask,(x,y)=>(byte)(x|~y)).ToArray()).ToString());}}
         foreach(var host in targets)try{await AnnounceTo(new IPEndPoint(IPAddress.Parse(host),discoveryPort));}catch{}
     }
     long queueEpoch;
     void WakeDelivery(){Interlocked.Increment(ref queueEpoch);foreach(var p in Peers)StartDelivery(p);}
-    void StartDelivery(Peer p){if(Running&&sending.TryAdd(p.Id,0))_=Task.Run(async()=>{long observed=-1;try{do{observed=Interlocked.Read(ref queueEpoch);await Deliver(p);}while(Running&&observed!=Interlocked.Read(ref queueEpoch));}finally{sending.TryRemove(p.Id,out _);if(Running&&observed!=Interlocked.Read(ref queueEpoch))StartDelivery(p);}});}
-    async Task TimerLoop(){while(!stop.IsCancellationRequested){try{PurgeExpired();QueueImageDownloads();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,stop.Token);}catch(OperationCanceledException){break;}catch{await Task.Delay(500);}}}
-    async Task<TcpClient> Connect(string host,int peerPort){var client=new TcpClient(new IPEndPoint(bind,0)){NoDelay=true};try{using var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);timeout.CancelAfter(1800);await client.ConnectAsync(IPAddress.Parse(host),peerPort,timeout.Token);return client;}catch{client.Dispose();throw;}}
+    void StartDelivery(Peer p){long session;lock(networkGate){if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)return;session=generation;if(!sending.TryAdd(p.Id,session))return;}_=Task.Run(async()=>{workerSession.Value=session;long observed=-1;try{do{observed=Interlocked.Read(ref queueEpoch);await Deliver(p);}while(Running&&session==generation&&observed!=Interlocked.Read(ref queueEpoch));}finally{if(sending.TryGetValue(p.Id,out var owner)&&owner==session)sending.TryRemove(p.Id,out _);if(Running&&session==generation&&observed!=Interlocked.Read(ref queueEpoch))StartDelivery(p);}});}
+    async Task TimerLoop(CancellationToken token){workerSession.Value=generation;while(!token.IsCancellationRequested){try{PurgeExpired();QueueImageDownloads();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,token);}catch(OperationCanceledException){break;}catch{try{await Task.Delay(500,token);}catch(OperationCanceledException){break;}}}}
+    async Task<TcpClient> Connect(string host,int peerPort){TcpClient client;CancellationToken token;lock(networkGate){if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)throw new IOException("Network is offline.");token=stop.Token;client=new TcpClient(new IPEndPoint(bind,0)){NoDelay=true};activeClients.RemoveWhere(c=>c.Client?.SafeHandle.IsClosed??true);activeClients.Add(client);}try{using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(1800);await client.ConnectAsync(IPAddress.Parse(host),peerPort,timeout.Token);if(token.IsCancellationRequested)throw new IOException("Network is offline.");return client;}catch{client.Dispose();Untrack(client);throw;}}
     static async Task<string> Read(Stream stream)
     {
         using var timeout=new CancellationTokenSource(3500);using var bytes=new MemoryStream();var b=new byte[1];
@@ -138,9 +169,9 @@ public sealed partial class PeerEngine : IDisposable
         var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]==Id)return;Remember(h[2],Dec(h[3]),((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(),int.Parse(h[4]));RecordCertificate(h[2],fingerprint,SecureIdentity.RemotePublicKey(tls));await Write(tls,Hello());
         if(!Trusted(h[2],fingerprint)){await Write(tls,"LM4\tPAIR");return;}await Write(tls,"LM4\tREADY");
         var a=(await Read(tls)).Split('\t');
-        if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CAPS"){await Write(tls,"LM4\tCAPS\t1");return;}
+        if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CAPS"){await Write(tls,"LM4\tCAPS\t2");return;}
         if((a.Length==6||a.Length==7)&&a[0]=="LM4"&&a[1]=="GROUP"){AcceptGroup(a,h[2],fingerprint);await Write(tls,"LM4\tGROUPACK\t"+a[2]);Notify();return;}
-        if(!SimulateLegacyBuild&&a.Length==5&&a[0]=="LM4"&&a[1]=="MEMBERSUPDATE"){HandleMembersUpdate(a,h[2],fingerprint);await Write(tls,$"LM4\tMEMBERSUPDATEACK\t{a[2]}\t{a[3]}");Notify();return;}
+        if(!SimulateLegacyBuild&&(a.Length==5||a.Length==6)&&a[0]=="LM4"&&a[1]=="MEMBERSUPDATE"){HandleMembersUpdate(a,h[2],fingerprint);await Write(tls,$"LM4\tMEMBERSUPDATEACK\t{a[2]}\t{a[3]}");Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SEEN"&&Uuid(a[2])&&a[3]==h[2]){MarkSeen(a[2],h[2]);await Write(tls,"LM4\tSEENACK\t"+a[2]);Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SYNCREQ2"&&Uuid(a[2])){await HandleSync(tls,a[2],a[3],h[2]);Notify();return;}
         if(a.Length==5&&a[0]=="LM4"&&a[1]=="AVATAR"&&a[2]==h[2]){await HandleAvatar(tls,a[2],a[3],a[4]);Notify();return;}
@@ -211,7 +242,11 @@ public sealed partial class PeerEngine : IDisposable
     {
         // Probe every known endpoint for its TLS certificate, even when there are no messages.
         try{using var probe=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(probe.GetStream());await identity.Authenticate(tls,false);await Write(tls,Hello());var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]!=peer.Id)return;Remember(h[2],Dec(h[3]),peer.Host,int.Parse(h[4]));RecordCertificate(h[2],SecureIdentity.Remote(tls),SecureIdentity.RemotePublicKey(tls));}catch{return;}
-        foreach(var group in Groups.Where(g=>g.Owner==Id&&g.Members.Contains(peer.Id)&&MemberAckedVersion(g.Id,peer.Id)<g.MembersVersion))
+        // Normally only the current owner broadcasts; while a handoff I started is still pending, I
+        // also keep pushing this group's (already-decided) snapshot even though Group.Owner now
+        // correctly says someone else — see PLAN-GROUP-OWNERSHIP-TRANSFER.md for why the new owner
+        // can't take over delivery to a still-lagging member instead.
+        foreach(var group in Groups.Where(g=>(g.Owner==Id||PendingOwnershipHandoff(g.Id))&&g.Members.Contains(peer.Id)&&MemberAckedVersion(g.Id,peer.Id)<g.MembersVersion))
         try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fp=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fp))return;await Write(tls,Hello());var hello=(await Read(tls)).Split('\t');if(!ValidHello(hello)||hello[2]!=peer.Id||await Read(tls)!="LM4\tREADY")return;
             var sentVersion=group.MembersVersion;var neverAcked=MemberAckedVersion(group.Id,peer.Id)<0;
             if(neverAcked){
@@ -219,10 +254,12 @@ public sealed partial class PeerEngine : IDisposable
                 await Write(tls,wire);
                 if(await Read(tls)!="LM4\tGROUPACK\t"+group.Id||!Trusted(peer.Id,fp))return;
             }else{
-                await Write(tls,$"LM4\tMEMBERSUPDATE\t{group.Id}\t{sentVersion}\t{string.Join(",",group.Members)}");
+                var ownerField=group.EverTransferredOwnership?$"\t{group.Owner}":"";
+                await Write(tls,$"LM4\tMEMBERSUPDATE\t{group.Id}\t{sentVersion}\t{string.Join(",",group.Members)}{ownerField}");
                 if(await Read(tls)!=$"LM4\tMEMBERSUPDATEACK\t{group.Id}\t{sentVersion}"||!Trusted(peer.Id,fp))return;
             }
             lock(gate){if(!memberAcked.TryGetValue(group.Id,out var m))memberAcked[group.Id]=m=[];var had=m.TryGetValue(peer.Id,out var old);m[peer.Id]=sentVersion;try{Save();}catch{if(had)m[peer.Id]=old;else m.Remove(peer.Id);throw;}}
+            CheckOwnershipHandoffConvergence(group.Id);
         }catch{return;}
         Message[] queued;lock(gate)queued=messages.Where(m=>m.To==peer.Id&&m.Status=="Queued").ToArray();
         foreach(var m in queued)try{using var c=await Connect(peer.Host,peer.Port);using var tls=identity.Wrap(c.GetStream());await identity.Authenticate(tls,false);var fingerprint=SecureIdentity.Remote(tls);if(!Trusted(peer.Id,fingerprint))return;
@@ -301,5 +338,5 @@ public sealed partial class PeerEngine : IDisposable
     }
 
     void Notify(){try{Changed?.Invoke();}catch{}}
-    public void Dispose(){Running=false;stop.Cancel();listener?.Stop();udp?.Dispose();}
+    public void Dispose(){GoOffline();lock(networkGate)disposed=true;}
 }

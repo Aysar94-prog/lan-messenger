@@ -9,7 +9,7 @@ import javax.net.ssl.SSLSocket;
 /** STREAM1: a single pinned TLS stream, resumed at saved 256 KiB encrypted block boundaries. */
 final class ResumableTransfer {
   static void active(PeerEngine e,PeerEngine.Message m,String key)throws IOException {
-    if(!e.running||!Boolean.TRUE.equals(e.downloads.get(key)))throw new IOException("Download paused; saved progress kept");
+    if(!e.running||e.workerSession.get()!=null&&e.workerSession.get()!=e.generation||!Boolean.TRUE.equals(e.downloads.get(key)))throw new IOException("Download paused; saved progress kept");
     if(!e.retained(m))throw new IOException("Attachment cleared or expired");
   }
   static List<PeerEngine.Peer> candidates(PeerEngine e,PeerEngine.Message m){

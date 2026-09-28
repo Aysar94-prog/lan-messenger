@@ -8,6 +8,13 @@ sealed partial class ChatWindow
     void DeleteConversationConfirm()
     {
         if(contacts.SelectedItem is not ContactItem item)return;
+        if(item.Group){
+            var owned=engine.Groups.FirstOrDefault(x=>x.Id==item.Id);
+            if(owned!=null&&owned.Owner==engine.Id){
+                var others=owned.Members.Where(m=>m!=engine.Id).ToArray();
+                if(others.Length>0){ShowTransferOwnershipPicker(owned,others);return;}
+            }
+        }
         var title=item.Group?"Leave group":"Delete conversation";
         var message=item.Group
             ?$"Leave \"{item.Name}\"? You'll need a new invitation to rejoin. Other members keep the group and their own copies."
@@ -19,6 +26,31 @@ sealed partial class ChatWindow
             if(selected==item.Id){selected=null;feed.Controls.Clear();cards.Clear();statusLabels.Clear();feedConversation="";composer.Clear();ClearPendingAttachment();}
             lastFeed="";lastContacts="";Render();
         }catch(Exception e){MessageBox.Show(this,e.Message,item.Group?"Could not leave group":"Could not delete conversation");}
+    }
+    // Shown instead of the normal leave confirmation when the local user is this group's owner and
+    // other members remain — leaving requires handing off first. Confirming starts the handoff; the
+    // actual departure completes automatically, in the background, once every other member has caught
+    // up (see PLAN-GROUP-OWNERSHIP-TRANSFER.md), not immediately when this dialog closes.
+    void ShowTransferOwnershipPicker(PeerEngine.Group g,string[] others)
+    {
+        using var dialog=new Form{Text="Choose a new admin",Size=new Size(440,Math.Min(560,220+others.Length*40)),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        var layout=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(18),FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true};
+        layout.Controls.Add(MessageLabel($"You're the admin of \"{g.Name}\". Choose who takes over before you leave. You'll leave automatically, in the background, once they and everyone else have caught up.",10,Color.SlateGray,390));
+        foreach(var id in others){
+            var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,Margin=new Padding(0,4,0,4)};
+            row.Controls.Add(MessageLabel(engine.DisplayName(id),11,Ink,240));
+            var pick=new Button{Text="Make admin",AutoSize=true};
+            pick.Click+=async(_,_)=>{
+                pick.Enabled=false;
+                try{await engine.TransferOwnership(g.Id,id);dialog.Close();lastContacts="";lastFeed="";Render();}
+                catch(Exception e){MessageBox.Show(dialog,e.Message,"Could not transfer ownership");}
+                finally{if(!pick.IsDisposed)pick.Enabled=true;}
+            };
+            row.Controls.Add(pick);
+            layout.Controls.Add(row);
+        }
+        var cancel=new Button{Text="Cancel",AutoSize=true};cancel.Click+=(_,_)=>dialog.Close();StyleButtons(layout);layout.Controls.Add(cancel);
+        dialog.Controls.Add(layout);dialog.ShowDialog(this);
     }
     void DeleteAllDataConfirm()
     {

@@ -32,7 +32,7 @@ sealed partial class ChatWindow : Form
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
-    public const string AppVersion="2.0.1";
+    public const string AppVersion="2.1.0";
     static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
@@ -55,11 +55,16 @@ sealed partial class ChatWindow : Form
     readonly ListBox contacts = new() { Dock=DockStyle.Fill, IntegralHeight=false, BorderStyle=BorderStyle.None, HorizontalScrollbar=true };
     readonly TextBox profile = new() { Width=180, MaxLength=30, PlaceholderText="Your display name" };
     readonly Label status = new() { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DimGray };
+    readonly Button connection = new() { Text="Go offline", AutoSize=true };
+    readonly ToolStripMenuItem trayConnection = new("Go offline");
+    readonly string preferencePath;
+    bool requestedOnline;
     readonly Label heading = new() { Text="Choose a contact", Dock=DockStyle.Fill, Font=new Font("Segoe UI",17,FontStyle.Bold), AutoSize=false, AutoEllipsis=true };
     readonly BufferedFeed feed = new() { Dock=DockStyle.Fill, AutoScroll=true, FlowDirection=FlowDirection.TopDown, WrapContents=false, BackColor=ChatBg, Padding=new Padding(8) };
     readonly FlowLayoutPanel attachmentDraft = new() { Dock=DockStyle.Fill, FlowDirection=FlowDirection.LeftToRight, WrapContents=false, AutoScroll=true, Visible=false, BackColor=Color.FromArgb(235,240,250), Padding=new Padding(8) };
     readonly TextBox composer = new() { Dock=DockStyle.Fill, Multiline=true, MaxLength=2000, PlaceholderText="Write a message…", Enabled=false };
     readonly Button send = new() { Text="Send", Dock=DockStyle.Fill, Enabled=false };
+    Button scan=null!, add=null!;
     readonly Dictionary<string,string> drafts=[];
     string? selected;
     // The picked file's path, not its bytes — a 1 GB attachment is never fully read into memory
@@ -79,6 +84,8 @@ sealed partial class ChatWindow : Form
         Text="LAN Messenger"; Size=new Size(1140,810); MinimumSize=new Size(940,650); StartPosition=FormStartPosition.CenterScreen;
         Font=new Font("Segoe UI",11); BackColor=PanelBg; RightToLeft=RightToLeft.No;
         var data=dataDirectory??Environment.GetEnvironmentVariable("LAN_MESSENGER_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"LanMessenger");
+        preferencePath=Path.Combine(data,"network-preference.txt");
+        requestedOnline=!File.Exists(preferencePath)||File.ReadAllText(preferencePath).Trim()!="Offline";
         engine=new PeerEngine(data,Environment.UserName,protector); profile.Text=engine.Name;
         var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(0),ColumnCount=1,RowCount=5};
         root.ColumnStyles.Add(new(SizeType.Percent,100));
@@ -86,8 +93,8 @@ sealed partial class ChatWindow : Form
         var headerBar=new Panel{Dock=DockStyle.Fill,BackColor=HeaderDark,Padding=new Padding(20,0,20,0)};
         headerBar.Controls.Add(new Label{Text="LAN Messenger",Font=new Font("Segoe UI",18,FontStyle.Bold),AutoSize=true,ForeColor=Color.White,Location=new Point(20,14)});
         root.Controls.Add(headerBar,0,0);
-        var toolbar=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(20,4,0,0),BackColor=PanelBg};var save=new Button{Text="Save name",AutoSize=true};var scan=new Button{Text="Refresh",AutoSize=true};var add=new Button{Text="Add by IP",AutoSize=true};
-        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,about,deleteData]);createGroup.Click+=(_,_)=>CreateGroup();about.Click+=(_,_)=>ShowAbout();deleteData.Click+=(_,_)=>DeleteAllDataConfirm();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
+        var toolbar=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(20,4,0,0),BackColor=PanelBg};var save=new Button{Text="Save name",AutoSize=true};scan=new Button{Text="Refresh",AutoSize=true};add=new Button{Text="Add by IP",AutoSize=true};
+        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,connection,about,deleteData]);createGroup.Click+=(_,_)=>CreateGroup();about.Click+=(_,_)=>ShowAbout();deleteData.Click+=(_,_)=>DeleteAllDataConfirm();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
         var split=new SplitContainer{Size=new Size(950,460),Dock=DockStyle.Fill,SplitterDistance=300,FixedPanel=FixedPanel.Panel1,Panel1MinSize=220,Panel2MinSize=280};
         var people=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=2,ColumnCount=1};people.ColumnStyles.Add(new(SizeType.Percent,100));people.RowStyles.Add(new(SizeType.Absolute,35));people.RowStyles.Add(new(SizeType.Percent,100));people.Controls.Add(new Label{Text="CONVERSATIONS",AutoSize=true},0,0);people.Controls.Add(contacts,0,1);split.Panel1.Controls.Add(people);
         var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=6};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));groupNoticeRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(groupNoticeRow);chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,leaveGroup,clear,fastTransfer]);chat.Controls.Add(actions,0,1);groupNotice.AutoSize=false;groupNotice.Dock=DockStyle.Fill;groupNotice.Margin=new Padding(0,2,0,0);chat.Controls.Add(groupNotice,0,2);chat.Controls.Add(feed,0,3);chat.Controls.Add(attachmentDraft,0,4);
@@ -112,7 +119,8 @@ sealed partial class ChatWindow : Form
         try{var raw=engine.Avatar;if(raw!=null){avatarImage=TryImageThumbnail(raw,80,80);avatarBox.Image=avatarImage;}}catch{}
         attach.Click+=async(_,_)=>await AttachFile();fastTransfer.Click+=async(_,_)=>await PickAttachment(true);clear.Click+=(_,_)=>ClearChat();members.Click+=(_,_)=>ShowMembers();leaveGroup.Click+=(_,_)=>DeleteConversationConfirm();saveFile.Click+=async(_,_)=>{if(files.SelectedItem is FileItem item)await FileAction(item.Message);};preview.Click+=(_,_)=>PreviewImage();
         verify.Click+=(_,_)=>VerifyDevice();
-        var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
+        var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add(trayConnection);trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
+        connection.Click+=(_,_)=>SetConnection(!requestedOnline||!engine.Running);trayConnection.Click+=(_,_)=>SetConnection(!requestedOnline||!engine.Running);
         engine.Received+=m=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();var peer=engine.Peers.FirstOrDefault(p=>p.Id==m.From);ShowNotification(m.GroupId.Length>0?m.GroupId:m.From,m.GroupId.Length>0?engine.DisplayName(m.GroupId):peer?.Name??"LAN Messenger","New encrypted message");}));}catch{}};
         engine.Forgotten+=peerId=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();ShowNotification(peerId,"LAN Messenger",engine.DisplayName(peerId)+" has removed you as a contact. Verify again to keep chatting.");}));}catch{}};
         // Attachment transfers run on background connection threads, not the UI thread — marshal
@@ -120,12 +128,22 @@ sealed partial class ChatWindow : Form
         engine.TransferProgress+=(id,done,total)=>{if(IsDisposed||!IsHandleCreated)return;try{BeginInvoke(new Action(()=>{if(IsDisposed)return;if(done>=total)transferProgress.Remove(id);else transferProgress[id]=(done,total);UpdateTransferLabels();}));}catch{}};
         FormClosing+=(_,e)=>{if(!exiting&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;Hide();ShowNotification(null,"LAN Messenger","Still running. Right-click the tray icon and choose Exit to stop.");}};
         save.Click+=(_,_)=>{try{engine.Rename(profile.Text);profile.Text=engine.Name;}catch(Exception e){MessageBox.Show(e.Message,"Could not save name");}};
-        scan.Click+=async(_,_)=>{await engine.Announce();Render();};add.Click+=async(_,_)=>await AddAddress();
+        scan.Click+=async(_,_)=>{if(!engine.Running)return;await engine.Announce();Render();};add.Click+=async(_,_)=>{if(engine.Running)await AddAddress();};
         contacts.SelectedIndexChanged+=(_,_)=>{if(rendering)return;if(selected!=null)drafts[selected]=composer.Text;var next=(contacts.SelectedItem as ContactItem)?.Id;if(pendingAttachmentTarget!=null&&pendingAttachmentTarget!=next)ClearPendingAttachment();selected=next;composer.Text=selected!=null&&drafts.TryGetValue(selected,out var draft)?draft:"";lastFeed="";Render();};
         send.Click+=async(_,_)=>await Send();composer.KeyDown+=async(_,e)=>{if(e.KeyCode==Keys.Enter&&!e.Shift){e.SuppressKeyPress=true;await Send();}};
-        timer.Tick+=(_,_)=>Render();Shown+=(_,_)=>{try{engine.Start();timer.Start();Render();}catch(Exception e){status.Text="Could not start: "+e.Message;}};
+        timer.Tick+=(_,_)=>Render();Shown+=(_,_)=>{timer.Start();if(requestedOnline)SetConnection(true,false);else Render();};
         FormClosed+=(_,_)=>{timer.Stop();tray.Visible=false;tray.Dispose();engine.Dispose();};
         feed.Controls.Add(MessageLabel("People running LAN Messenger on your network appear automatically.\n\nContacts and messages stay saved after you close the app.\n\nOffline? Write a message now. It stays Queued until both devices are connected.\n\nNo contacts yet? Open the new app on another device on the same Wi-Fi. You can use Add by IP if discovery is blocked.",11,Ink,Math.Max(300,feed.Width-30)));
+    }
+    string connectionProblem="";
+    void SetConnection(bool online,bool persist=true)
+    {
+        requestedOnline=online;
+        if(persist)try{Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);var temp=preferencePath+".tmp";File.WriteAllText(temp,online?"Online":"Offline");File.Move(temp,preferencePath,true);}catch(Exception e){MessageBox.Show(this,e.Message,"Could not save connection preference");}
+        connectionProblem="";
+        try{if(online)engine.Start();else engine.GoOffline();}
+        catch(Exception e){connectionProblem=e.Message;}
+        Render();
     }
     async Task Send()
     {

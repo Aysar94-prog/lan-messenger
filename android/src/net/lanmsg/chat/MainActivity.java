@@ -44,6 +44,14 @@ public class MainActivity extends Activity {
   // People-screen side menu: Profile, About, and the persisted offline-row/group-row filters. stage
   // is the single full-screen FrameLayout the overlay is added to; menuOverlay is null while closed.
   FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline; boolean hideGroups;
+  Button refreshButton, addAddressButton;
+  MessengerService host;
+  boolean bound;
+  final ServiceConnection serviceConnection=new ServiceConnection(){
+    public void onServiceConnected(ComponentName name,IBinder binder){host=((MessengerService.LocalBinder)binder).host();bound=true;render();}
+    public void onServiceDisconnected(ComponentName name){host=null;bound=false;render();}
+  };
+  PeerEngine engine(){return host==null?null:host.engine;}
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
@@ -54,14 +62,15 @@ public class MainActivity extends Activity {
   TextView circle(String letter,int color,int diameterDp,int textSize){TextView t=new TextView(this);t.setText(letter);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(textSize);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(color,diameterDp));return t;}
   EditText input(String hint,int max){EditText e=new EditText(this);e.setHint(hint);e.setTextSize(17);e.setSingleLine(true);e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});return e;}
   GradientDrawable bg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(12));return d;}
-  @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");startConnection();
+  @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");
     // The people rows are filtered by a persisted preference, so the first render has to wait for
     // the read instead of flashing unfiltered rows and then hiding them. Reading preferences
-    // touches disk, so it stays off the UI thread; the service start above is deliberately first
-    // so background connection work begins immediately, as before.
-    new Thread(()->{final boolean offlineValue=PeopleListView.readShowOffline(this);final boolean hideGroupsValue=PeopleListView.readHideGroups(this);ui.post(()->{if(isDestroyed())return;showOffline=offlineValue;hideGroups=hideGroupsValue;showPeople();});},"lan-ui-preference").start();
+    // touches disk, so it stays off the UI thread. The saved Online request starts the service
+    // after the first render; an Offline request binds locally without starting networking.
+    new Thread(()->{final boolean offlineValue=PeopleListView.readShowOffline(this);final boolean hideGroupsValue=PeopleListView.readHideGroups(this);final boolean online=getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).getBoolean("default_online",true);ui.post(()->{if(isDestroyed())return;showOffline=offlineValue;hideGroups=hideGroupsValue;showPeople();bindService(new Intent(this,MessengerService.class),serviceConnection,BIND_AUTO_CREATE);if(online)startConnection();});},"lan-ui-preference").start();
     if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
-  void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class));}catch(Exception e){MessengerService.problem="Could not start. Open the app and try again.";}}
+  void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class).setAction("ONLINE"));}catch(Exception e){if(host!=null)host.problem="Could not start. Open the app and try again.";}}
+  void setConnection(boolean online){if(online)startConnection();else if(host!=null)host.transition(false);lastSignature="";render();}
   // The header is built by each screen (showPeople/showChat) and inserted at chrome index 0, so a
   // space-constrained chat can use a single compact bar instead of always paying for the full app banner.
   // The content view is a single full-screen stage so the people side menu can overlay everything,
@@ -80,20 +89,20 @@ public class MainActivity extends Activity {
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
     FrameLayout avatarWrap=new FrameLayout(this);LinearLayout.LayoutParams avatarWrapParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarWrapParams.setMargins(0,0,dp(8),0);tools.addView(avatarWrap,avatarWrapParams);
     ImageView avatarView=new ImageView(this);avatarView.setLayoutParams(new FrameLayout.LayoutParams(-1,-1));avatarView.setScaleType(ImageView.ScaleType.CENTER_CROP);avatarView.setClipToOutline(true);
-    PeerEngine ownEngine=MessengerService.engine;byte[] ownAvatar=ownEngine==null?null:ownEngine.avatar();
+    PeerEngine ownEngine=engine();byte[] ownAvatar=ownEngine==null?null:ownEngine.avatar();
     Bitmap ownBitmap=ownAvatar==null?null:inlineBitmap(ownAvatar);
     if(ownBitmap!=null){avatarView.setImageBitmap(ownBitmap);avatarWrap.addView(avatarView);}
     else{avatarWrap.setBackground(circleBg(accent,40));String initial=ownEngine!=null&&!ownEngine.name.isEmpty()?ownEngine.name.substring(0,1).toUpperCase(Locale.ROOT):"?";TextView t=new TextView(this);t.setText(initial);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);avatarWrap.addView(t,new FrameLayout.LayoutParams(-1,-1));}
     avatarWrap.setOnClickListener(v->changeAvatar());
     // Profile and About moved into the side menu to keep this row to the per-conversation actions.
-    Button refresh=button("Refresh"),add=button("Add by IP");tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
-    refresh.setOnClickListener(v->{PeerEngine e=MessengerService.engine;if(e==null)startConnection();else new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
+     Button refresh=button("Refresh"),add=button("Add by IP");refreshButton=refresh;addAddressButton=add;tools.addView(refresh);tools.addView(add);Button group=button("New group");tools.addView(group);group.setOnClickListener(v->createGroup());HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.setHorizontalScrollBarEnabled(false);toolScroll.addView(tools);root.addView(toolScroll);
+    refresh.setOnClickListener(v->{PeerEngine e=engine();if(e!=null&&host!=null&&"Online".equals(host.state))new Thread(()->{try{e.announce();}catch(Exception ignored){}}).start();lastSignature="";render();});add.setOnClickListener(v->addAddress());
     root.addView(label("Conversations",20));scroll=new ScrollView(this);body=column();scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));root.addView(label("Saved contacts stay saved when hidden.\nOnly devices using LAN Messenger appear.",14));render();
   }
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
   void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
-    PeerEngine chatEngine=MessengerService.engine;boolean isGroup=false;String chatInitial="?";int chatColor=accent;
+    PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
       if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
     LinearLayout chatHeader=new LinearLayout(this);chatHeader.setOrientation(LinearLayout.HORIZONTAL);chatHeader.setGravity(android.view.Gravity.CENTER_VERTICAL);chatHeader.setBackgroundColor(headerDark);chatHeader.setPadding(dp(2),dp(6),dp(10),dp(6));
@@ -107,7 +116,7 @@ public class MainActivity extends Activity {
     scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(chatBg);feed=column();feed.setPadding(dp(6),dp(6),dp(6),dp(6));scroll.addView(feed);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
     scroll.setOnScrollChangeListener((View.OnScrollChangeListener)(view,x,y,oldX,oldY)->{
       if(loadingEarlier||y>dp(24)||oldY<=y||selected==null)return;
-      PeerEngine engine=MessengerService.engine;if(engine==null)return;
+      PeerEngine engine=engine();if(engine==null)return;
       int current=visibleMessageCounts.getOrDefault(selected,10);
       if(engine.messages(selected).size()<=current)return;
       loadingEarlier=true;int previousHeight=feed.getHeight();visibleMessageCounts.put(selected,current+20);lastSignature="";render();
@@ -115,7 +124,7 @@ public class MainActivity extends Activity {
     });
     attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->AttachmentFlow.capturePhoto(this));photo.setOnClickListener(v->AttachmentFlow.pickFile(this,true));file.setOnClickListener(v->AttachmentFlow.pickFile(this,false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->AttachmentFlow.pickFastFile(this));HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
     send.setOnClickListener(v->{
-      PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online to save a new message.",Toast.LENGTH_SHORT).show();return;}
+      PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_SHORT).show();return;}
       if(pendingAttachmentUri==null&&composer.getText().toString().trim().isEmpty())return;
       String target=selected;String caption=composer.getText().toString();Uri uri=pendingAttachmentUri;long size=pendingAttachmentSize;String name=pendingAttachmentName;File cameraFile2=pendingCameraFile;boolean fastMode=pendingFast;
       sendBusy=true;send.setEnabled(false);composer.setEnabled(false);send.setText("Preparing…");
@@ -148,7 +157,7 @@ public class MainActivity extends Activity {
     decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
   }
   PeerEngine transferProgressWiredFor;
-  void render(){if(root==null||status==null)return;PeerEngine e=MessengerService.engine;if(e==null){status.setText(MessengerService.problem.isEmpty()?"Offline · Tap Refresh to go online":MessengerService.problem);return;}
+  void render(){if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);PeerEngine e=engine();if(e==null){status.setText(host==null?"Loading local messages…":host.problem.isEmpty()?host.state:host.problem);return;}
     if(e!=transferProgressWiredFor){
       // Attachment transfers run on background connection threads, not the UI thread — marshal
       // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
@@ -158,7 +167,7 @@ public class MainActivity extends Activity {
     updateProgressLabels(e);
     if(pendingOpen!=null){String target=pendingOpen;pendingOpen=null;showChat(target);return;}
     if(selected!=null)try{e.markRead(selected);}catch(Exception ignored){}
-    List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;for(PeerEngine.Peer p:people)if(p.online())online++;status.setText(online+" online · "+e.pending()+" queued · "+e.name);
+    List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;if("Online".equals(host.state))for(PeerEngine.Peer p:people)if(p.online())online++;status.setText((host.problem.isEmpty()?host.state:host.state+" · "+host.problem)+" · "+online+" online · "+e.pending()+" queued · "+e.name);
     if(selected==null){
       // Most recently active conversation first, like a typical chat app — groups and contacts mixed
       // together by last message time, not name/online order. {lastActivity, isGroup, id, group-or-peer}
@@ -171,11 +180,11 @@ public class MainActivity extends Activity {
       // list, but the engine keeps the peer, its messages, unread count and queued sends untouched,
       // and an incoming deep link or an already-open chat still reaches it. Group rows are never
       // filtered by this one, so a group whose members are all offline stays reachable.
-      for(PeerEngine.Peer p:people){if(!showOffline&&!p.online())continue;long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
+       for(PeerEngine.Peer p:people){if(!showOffline&&"Online".equals(host.state)&&!p.online())continue;long last=0;for(PeerEngine.Message m:e.messages(p.id))if(m.time>last)last=m.time;convos.add(new Object[]{last,Boolean.FALSE,p.id,p});}
       convos.sort((x,y)->Long.compare((Long)y[0],(Long)x[0]));
       // The preferences are part of the signature because they also decide the empty-state hint,
       // which is a rendered row of its own and would otherwise survive a toggle with the wrong wording.
-      StringBuilder signature=new StringBuilder(showOffline?"offline-shown:":"offline-hidden:").append(hideGroups?"groups-hidden:":"groups-shown:");for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length);}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
+       StringBuilder signature=new StringBuilder(showOffline?"offline-shown:":"offline-hidden:").append(host.state).append(hideGroups?"groups-hidden:":"groups-shown:");for(Object[] c:convos){signature.append(c[2]).append(c[0]).append(e.unread((String)c[2]));if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];signature.append(g.name).append(g.members.length).append(e.pendingOwnershipHandoff(g.id));}else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];signature.append(p.name).append(p.online()).append(p.security());}}
       if(signature.toString().equals(lastSignature)&&body.getChildCount()>0)return;lastSignature=signature.toString();body.removeAllViews();
       if(convos.isEmpty()){
         if(people.isEmpty()&&e.groups().isEmpty())body.addView(label("No contacts yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi. No host computer is needed.\n\nIf your router blocks discovery, use Add by IP.",17));
@@ -183,12 +192,14 @@ public class MainActivity extends Activity {
         else body.addView(label(showOffline?"No conversations yet.\n\nOpen LAN Messenger on another phone or computer connected to the same Wi-Fi, or use Add by IP.":"No conversations to show.\n\nEvery contact is offline right now and hidden from this list, and groups may be hidden too.\n\nOpen the menu to turn on Show offline users or turn off Hide groups.",17));
       }
       for(Object[] c:convos){
-        if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members");contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(g.id,g.name,true);return true;});}
-        else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+(p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
+        if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members"+(e.pendingOwnershipHandoff(g.id)?" · Leaving…":""));contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(g.id,g.name,true);return true;});}
+         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+("Online".equals(host.state)&&p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
       }
       return;
     }
-    PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;heading.setText(group!=null?group.name+" · "+group.members.length+" members":peer.name+" · "+(peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy);List<PeerEngine.Message> messages=e.messages(selected);
+    PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;
+    boolean leavingPending=group!=null&&e.pendingOwnershipHandoff(group.id);
+    heading.setText(group!=null?group.name+" · "+group.members.length+" members"+(leavingPending?" · Leaving — waiting for members to catch up":""):peer.name+" · "+("Online".equals(host.state)&&peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&!leavingPending&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy&&!leavingPending);List<PeerEngine.Message> messages=e.messages(selected);
     int visibleCount=visibleMessageCounts.getOrDefault(selected,10);int start=Math.max(0,messages.size()-visibleCount);
     StringBuilder signature=new StringBuilder(selected).append(start);for(int i=start;i<messages.size();i++){PeerEngine.Message m=messages.get(i);signature.append(m.id).append(m.status).append(e.hasAttachment(m)).append(e.downloading(m));}if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();progressLabels.clear();
     if(messages.isEmpty())feed.addView(label("Verify this device before chatting.\n\nQueued messages send after both verified devices reconnect. Delivered means saved on the other device.",17));
@@ -228,7 +239,7 @@ public class MainActivity extends Activity {
   static String formatSize(long bytes){return bytes>=1024*1024?String.format(Locale.ROOT,"%.1f MB",bytes/1024.0/1024.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
   Bitmap inlineBitmap(byte[] bytes){try{BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>32000000)return null;bounds.inSampleSize=1;while(bounds.outWidth/bounds.inSampleSize>1000||bounds.outHeight/bounds.inSampleSize>800)bounds.inSampleSize*=2;bounds.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);}catch(Exception ignored){return null;}}
   void releaseImages(View view){if(view instanceof ImageView){((ImageView)view).setImageDrawable(null);}else if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)releaseImages(group.getChildAt(i));}}
-  void verifyDevice(){PeerEngine e=MessengerService.engine;if(e==null||selected==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;final PeerEngine.Peer target=peer;
+  void verifyDevice(){PeerEngine e=engine();if(selected==null)return;if(host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to verify a device.",Toast.LENGTH_LONG).show();return;}if(e==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;final PeerEngine.Peer target=peer;
     try{final String code=e.pairingCode(target.id);StringBuilder formatted=new StringBuilder();for(int i=0;i<8;i++)formatted.append(code.substring(i*8,i*8+8)).append(i%2==0?" ":"\n");
       TextView text=label((target.keyChanged()?"KEY CHANGED. Check with this person before trusting their device again.\n\n":"Compare this entire safety code on BOTH devices in person or through a trusted channel.\n\n")+formatted+"\nOpen Verify device on the other device too. Confirm on each device only if every group matches.",16);text.setPadding(dp(20),dp(10),dp(20),dp(10));text.setTextIsSelectable(true);
       AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle("Verify device").setView(text).setNegativeButton("Cancel",null);
@@ -237,30 +248,54 @@ public class MainActivity extends Activity {
     }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
   }
 
-  void chatMenu(View anchor){if(selected==null)return;PeerEngine e=MessengerService.engine;boolean isPeer=false;PeerEngine.Group group=null;
+  void chatMenu(View anchor){if(selected==null)return;PeerEngine e=engine();boolean isPeer=false;PeerEngine.Group group=null;
     if(e!=null){for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))isPeer=true;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;}
     final PeerEngine.Group selectedGroup=group;
     PopupMenu menu=new PopupMenu(this,anchor);if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");if(selectedGroup!=null)menu.getMenu().add("Leave group");
     menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);else showMembers();return true;});menu.show();}
-  void clearChat(){final PeerEngine e=MessengerService.engine;final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
+  void clearChat(){final PeerEngine e=engine();final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
   void confirmDeleteConversation(String id,String name,boolean isGroup){
+     PeerEngine e=engine();
+    if(isGroup&&e!=null){
+      PeerEngine.Group g=null;for(PeerEngine.Group candidate:e.groups())if(candidate.id.equals(id))g=candidate;
+      if(g!=null&&g.owner.equals(e.id)){
+        ArrayList<String> others=new ArrayList<>();for(String m:g.members)if(!m.equals(e.id))others.add(m);
+        if(!others.isEmpty()){if(host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online before handing off this group.",Toast.LENGTH_LONG).show();return;}showTransferOwnershipPicker(g,others);return;}
+      }
+    }
     new AlertDialog.Builder(this).setTitle(isGroup?"Leave group?":"Delete conversation?")
       .setMessage(isGroup
         ?"Leave \""+name+"\"? You'll need a new invitation to rejoin. Other members keep the group and their own copies."
         :"Delete \""+name+"\" entirely? This removes the conversation and its attachments, and revokes verification. Seeing this device again on the network starts from an unverified state. Other devices keep their own copies.")
       .setNegativeButton("Cancel",null)
-      .setPositiveButton(isGroup?"Leave":"Delete",(d,w)->{PeerEngine e=MessengerService.engine;if(e==null)return;try{e.deleteConversation(id);drafts.remove(id);if(id.equals(selected)){selected=null;showPeople();}else{lastSignature="";render();}}catch(Exception error){problem(error);}})
+       .setPositiveButton(isGroup?"Leave":"Delete",(d,w)->{PeerEngine engine=engine();if(engine==null)return;try{engine.deleteConversation(id);drafts.remove(id);if(id.equals(selected)){selected=null;showPeople();}else{lastSignature="";render();}}catch(Exception error){problem(error);}})
+      .show();
+  }
+  // Shown instead of the normal leave confirmation when the local user is this group's owner and
+  // other members remain -- leaving requires handing off first. Confirming starts the handoff; the
+  // actual departure completes automatically, in the background, once every other member has caught
+  // up (see PLAN-GROUP-OWNERSHIP-TRANSFER.md), not immediately when this dialog closes.
+  void showTransferOwnershipPicker(PeerEngine.Group g,ArrayList<String> others){
+     PeerEngine e=engine();if(e==null)return;
+    String[] names=new String[others.size()];for(int i=0;i<names.length;i++)names[i]=e.displayName(others.get(i));
+    new AlertDialog.Builder(this).setTitle("Choose a new admin")
+      .setMessage("You're the admin of \""+g.name+"\". Choose who takes over before you leave. You'll leave automatically, in the background, once they and everyone else have caught up.")
+      .setItems(names,(d,which)->{
+        String newOwnerId=others.get(which);
+        new Thread(()->{try{e.transferOwnership(g.id,newOwnerId);ui.post(this::render);}catch(Exception error){ui.post(()->problem(error));}}).start();
+      })
+      .setNegativeButton("Cancel",null)
       .show();
   }
   void confirmDeleteAllData(){
     new AlertDialog.Builder(this).setTitle("Delete app data?")
       .setMessage("Permanently remove every conversation, contact, group and downloaded file on this device. Your profile name and picture are kept. This cannot be undone.")
       .setNegativeButton("Cancel",null)
-      .setPositiveButton("Delete",(d,w)->{PeerEngine e=MessengerService.engine;if(e==null)return;try{e.deleteAllData();thumbnailCache.evictAll();drafts.clear();selected=null;showPeople();}catch(Exception error){problem(error);}})
+       .setPositiveButton("Delete",(d,w)->{PeerEngine e=engine();if(e==null)return;try{e.deleteAllData();thumbnailCache.evictAll();drafts.clear();selected=null;showPeople();}catch(Exception error){problem(error);}})
       .show();
   }
   void showMembers(){
-    PeerEngine e=MessengerService.engine;if(e==null)return;
+     PeerEngine e=engine();if(e==null)return;
     for(PeerEngine.Group g:e.groups())if(g.id.equals(selected)){
       boolean isOwner=g.owner.equals(e.id);
       LinearLayout list=column();list.setPadding(dp(4),dp(4),dp(4),dp(4));
@@ -276,7 +311,7 @@ public class MainActivity extends Activity {
         row.addView(label(e.displayName(id)+status+sync+(known.active?"":" · Left"),15),new LinearLayout.LayoutParams(0,-2,1));
         if(isOwner&&!known.active){
           Button reinvite=button("Re-invite");final String memberId=id;final PeerEngine.Group group=g;
-          reinvite.setOnClickListener(v->{reinvite.setEnabled(false);new Thread(()->{try{e.reinviteMember(group.id,memberId);ui.post(()->Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show());}catch(Exception error){ui.post(()->{problem(error);reinvite.setEnabled(true);});}}).start();});
+          reinvite.setOnClickListener(v->{if(host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to re-invite.",Toast.LENGTH_SHORT).show();return;}reinvite.setEnabled(false);new Thread(()->{try{e.reinviteMember(group.id,memberId);ui.post(()->Toast.makeText(this,"Invite sent",Toast.LENGTH_SHORT).show());}catch(Exception error){ui.post(()->{problem(error);reinvite.setEnabled(true);});}}).start();});
           row.addView(reinvite);
         }
         list.addView(row);
@@ -287,12 +322,12 @@ public class MainActivity extends Activity {
     }
     Toast.makeText(this,"This is a direct conversation.",Toast.LENGTH_SHORT).show();
   }
-  void createGroup(){final PeerEngine e=MessengerService.engine;if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
+   void createGroup(){final PeerEngine e=engine();if(e==null)return;final ArrayList<PeerEngine.Peer> peers=new ArrayList<>();for(PeerEngine.Peer p:e.peers())if(p.trusted())peers.add(p);if(peers.size()<2){Toast.makeText(this,"Verify at least two contacts first.",Toast.LENGTH_LONG).show();return;}
     final EditText name=input("Group name",50);final boolean[] checked=new boolean[peers.size()];String[] names=new String[peers.size()];for(int i=0;i<names.length;i++)names[i]=peers.get(i).name+" · "+peers.get(i).id.substring(0,6);
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New group · select 2–15 contacts").setView(name).setMultiChoiceItems(names,checked,(d,which,on)->checked[which]=on).setNegativeButton("Cancel",null).setPositiveButton("Create",null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{try{ArrayList<String> ids=new ArrayList<>();for(int i=0;i<checked.length;i++)if(checked[i])ids.add(peers.get(i).id);String id=e.createGroup(name.getText().toString(),ids);dialog.dismiss();showChat(id);}catch(Exception error){problem(error);}}));dialog.show();
   }
   void problem(Exception error){Toast.makeText(this,error.getMessage()==null?"Operation failed":error.getMessage(),Toast.LENGTH_LONG).show();}
-  @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if(request==44&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online and try again.",Toast.LENGTH_LONG).show();return;}
+   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if(request==44&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_LONG).show();return;}
     final String target=attachmentTarget;final PeerEngine.Message exporting=exportMessage;final File captured=cameraFile;
     new Thread(()->{try{
       if(request==47&&exporting!=null&&uri!=null){
@@ -330,16 +365,16 @@ public class MainActivity extends Activity {
   }
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
 
-  static final String APP_VERSION="2.0.1";
+  static final String APP_VERSION="2.1.0";
   void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+APP_VERSION+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
-  void changeAvatar(){PeerEngine e=MessengerService.engine;if(e==null){Toast.makeText(this,"Go online first.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
-  void profile(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.\n\n"+e.uploadPolicy.summary()).setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNeutralButton("Go offline",(d,w)->{stopService(new Intent(this,MessengerService.class));}).setNegativeButton("Cancel",null).show();}
-  void addAddress(){PeerEngine e=MessengerService.engine;if(e==null){startConnection();return;}EditText address=input("192.168.1.20",60);address.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);StringBuilder ips=new StringBuilder();try{Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();while(all.hasMoreElements()){Enumeration<InetAddress> addresses=all.nextElement().getInetAddresses();while(addresses.hasMoreElements()){InetAddress a=addresses.nextElement();if(a instanceof Inet4Address&&!a.isLoopbackAddress())ips.append(a.getHostAddress()).append("  ");}}}catch(Exception ignored){}
+   void changeAvatar(){PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
+   void profile(){PeerEngine e=engine();if(e==null)return;EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.\n\n"+e.uploadPolicy.summary()).setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNegativeButton("Close",null).show();}
+   void addAddress(){PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to find a device.",Toast.LENGTH_SHORT).show();return;}EditText address=input("192.168.1.20",60);address.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);StringBuilder ips=new StringBuilder();try{Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();while(all.hasMoreElements()){Enumeration<InetAddress> addresses=all.nextElement().getInetAddresses();while(addresses.hasMoreElements()){InetAddress a=addresses.nextElement();if(a instanceof Inet4Address&&!a.isLoopbackAddress())ips.append(a.getHostAddress()).append("  ");}}}catch(Exception ignored){}
     new AlertDialog.Builder(this).setTitle("Add a device").setMessage("Your IP: "+ips+"\nEnter the other device's IP. It must be running LAN Messenger.").setView(address).setPositiveButton("Find device",(d,w)->{String value=address.getText().toString();new Thread(()->{try{e.addAddress(value);ui.post(()->{lastSignature="";render();});}catch(Exception error){ui.post(()->Toast.makeText(this,"Device not reachable. Check Wi-Fi, IP and firewall.",Toast.LENGTH_LONG).show());}}).start();}).setNegativeButton("Cancel",null).show();
   }
   // Back closes an open side menu first; only then does the existing navigation run.
   @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;ui.removeCallbacks(tick);ui.post(tick);}
   @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);saveDraft();}
-  @Override protected void onDestroy(){super.onDestroy();ui.removeCallbacksAndMessages(null);}
+   @Override protected void onDestroy(){if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
 }

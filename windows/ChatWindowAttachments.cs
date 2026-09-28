@@ -43,6 +43,7 @@ sealed partial class ChatWindow
             var saved=engine.SavedDestination(message);
             if(saved.Length>0){if(openDownloadedFile!=null)openDownloadedFile(saved);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(saved){UseShellExecute=true});return;}
             if(engine.HasAttachment(message)&&PeerEngine.IsImageAttachment(message)){PreviewImage(message);return;}
+            if(!engine.Running){MessageBox.Show(this,"Go online to download this file.","Download");return;}
             var destination=engine.PendingDestination(message);
             if(destination.Length==0){destination=ChooseDownloadDestination(message);if(string.IsNullOrEmpty(destination))return;}
             var download=Task.Run(()=>engine.DownloadToAsync(message,destination));await Task.Delay(50);Render();await download;
