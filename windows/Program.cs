@@ -29,8 +29,8 @@ sealed partial class ChatWindow : Form
     readonly Button clear=new(){Text="Clear chat",AutoSize=true};
     readonly Button members=new(){Text="Members",AutoSize=true};
     readonly Button leaveGroup=new(){Text="Leave group",AutoSize=true};
-    readonly Button recordVoice=new(){Text="Record voice",AutoSize=true};
-    readonly Button stopRecording=new(){Text="Stop recording",AutoSize=true,Visible=false};
+    readonly Button recordVoice=new(){Text="Record voice",AutoSize=true,AccessibleName="Record a voice message"};
+    readonly Button stopRecording=new(){Text="Stop recording",AutoSize=true,Visible=false,AccessibleName="Stop recording and save"};
     readonly ComboBox files=new(){Width=230,DropDownStyle=ComboBoxStyle.DropDownList};
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
