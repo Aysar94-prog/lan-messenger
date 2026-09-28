@@ -138,7 +138,7 @@ public sealed partial class PeerEngine : IDisposable
     long queueEpoch;
     void WakeDelivery(){Interlocked.Increment(ref queueEpoch);foreach(var p in Peers)StartDelivery(p);}
     void StartDelivery(Peer p){long session;lock(networkGate){if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)return;session=generation;if(!sending.TryAdd(p.Id,session))return;}_=Task.Run(async()=>{workerSession.Value=session;long observed=-1;try{do{observed=Interlocked.Read(ref queueEpoch);await Deliver(p);}while(Running&&session==generation&&observed!=Interlocked.Read(ref queueEpoch));}finally{if(sending.TryGetValue(p.Id,out var owner)&&owner==session)sending.TryRemove(p.Id,out _);if(Running&&session==generation&&observed!=Interlocked.Read(ref queueEpoch))StartDelivery(p);}});}
-    async Task TimerLoop(CancellationToken token){workerSession.Value=generation;while(!token.IsCancellationRequested){try{PurgeExpired();QueueImageDownloads();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,token);}catch(OperationCanceledException){break;}catch{try{await Task.Delay(500,token);}catch(OperationCanceledException){break;}}}}
+    async Task TimerLoop(CancellationToken token){workerSession.Value=generation;while(!token.IsCancellationRequested){try{PurgeExpired();QueueAutomaticMedia();await Announce();foreach(var p in Peers)StartDelivery(p);await Task.Delay(2000,token);}catch(OperationCanceledException){break;}catch{try{await Task.Delay(500,token);}catch(OperationCanceledException){break;}}}}
     async Task<TcpClient> Connect(string host,int peerPort){TcpClient client;CancellationToken token;lock(networkGate){if(!Running||workerSession.Value!=0&&workerSession.Value!=generation)throw new IOException("Network is offline.");token=stop.Token;client=new TcpClient(new IPEndPoint(bind,0)){NoDelay=true};activeClients.RemoveWhere(c=>c.Client?.SafeHandle.IsClosed??true);activeClients.Add(client);}try{using var timeout=CancellationTokenSource.CreateLinkedTokenSource(token);timeout.CancelAfter(1800);await client.ConnectAsync(IPAddress.Parse(host),peerPort,timeout.Token);if(token.IsCancellationRequested)throw new IOException("Network is offline.");return client;}catch{client.Dispose();Untrack(client);throw;}}
     static async Task<string> Read(Stream stream)
     {
@@ -205,7 +205,7 @@ public sealed partial class PeerEngine : IDisposable
             else if(name.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}}
 
         if(incoming is not null)try{Received?.Invoke(incoming);}catch{}
-        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");QueueImageDownloads();Notify();}catch(Exception e){LastConnectionError=e.ToString();}
+        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");QueueAutomaticMedia();Notify();}catch(Exception e){LastConnectionError=e.ToString();}
     }
     // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
     static TimeSpan TransferTimeout(int size)=>TimeSpan.FromSeconds(Math.Max(60,30+size/1_000_000));
