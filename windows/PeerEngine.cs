@@ -65,6 +65,7 @@ public sealed partial class PeerEngine : IDisposable
         else{Id=Guid.NewGuid().ToString();Name=CleanName(defaultName);}
         identity=new SecureIdentity(directory,Id,protector);
         PurgeExpired();
+        ReconcileVoiceDrafts();
         // Two encrypted saves replace the legacy plaintext primary and backup without losing data.
         Save();Save();
     }
