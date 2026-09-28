@@ -29,7 +29,7 @@ NuGet.Config` before relying on it.
 | W09 | Accessibility | **Code written, uncompiled** | Added `AccessibleName` to every interactive voice control (record/stop, play/pause, ±10s seek, delete, send, retrieve, save, and the "open/download/resume/pause" fallback on an Invalid card) across `Program.cs`, `ChatWindowVoice.cs`, `ChatWindowVoiceCard.cs`, and `AccessibleRole.StatusBar` (plus a live-updated `AccessibleName`) on the state-conveying labels (recording clock, playback position, Candidate/Fetching/Unavailable text). Most of W09's other requirements were already structurally satisfied by earlier tasks rather than needing new code, verified explicitly rather than assumed: **keyboard accessibility** — every voice control is a stock `Button`, inherently Tab/Enter-operable, no custom controls were introduced; **focus order** — controls are added to their `FlowLayoutPanel`s in the same order they read visually, so default WinForms tab order already matches; **non-color errors** — every state (Invalid, Unavailable, device failure) is conveyed via text, color is only ever supplementary; **notification privacy** — grepped every `ShowNotification` call site and confirmed the existing generic "New encrypted message" text (shared by all message types, not voice-specific) never reveals content, so no code needed to change. **Accepted limitation**: WinForms has no simple public API for live-region screen-reader announcements (the `AccessibleName` updates on tick/refresh keep the *current* value correct for a user who navigates to that control, but won't proactively interrupt to announce it changing) — implementing that would need a custom `AccessibleObject` subclass, judged out of proportion to the rest of this pass. The ±10s seek buttons (chosen in W08 as a scope simplification over a drag scrubber) turned out to double as an accessibility win: a button is more reliably screen-reader-operable than a `TrackBar` would have been. |
 | W10 | Persistence/regression + architecture-boundary + canonical-fixture checks | Not started | |
 | W11 | Update `windows/STATUS.md` + `PROJECT_STATUS.md` comparison entry | Not started | Must merge, not replace — A11 (Android) touches the same comparison entry; see plan finding R3-01. |
-| WT01-WT06 | Automated tests | Not started | Blocked on the dotnet build issue above even once written. |
+| WT01-WT06 | Automated tests | WT01 **code written, unrun**; WT02-WT06 not started | `tests/CsharpHarness/VoiceMessagesCheck.cs` (new file) runs the real `VoicePcmAssembler`/`VoiceWav`/`VoiceSeek`/`VoiceMarker` production classes against `tests/voice_messages/vectors/manifest.json` directly (not a reimplementation, unlike the earlier Python cross-check) — invoked via a new `CsharpHarness --voice-check <manifestDir>` early-exit mode in `Program.cs` that skips constructing a live `PeerEngine`/network setup entirely, and wired into `tests/run.ps1` right after the existing `CsharpHarness` build step. **This has never actually run** — blocked on the same dotnet build issue. **Known consequence for whoever runs the suite next**: given the Python cross-check already found the identical production logic disagrees with 2 of the manifest's own vectors (`pcm-short-final`, `seek-align-odd-byte` — see above), this WT01 step is expected to fail (`Check-Result` will trip, non-zero exit) the very first time the full suite runs, UNLESS that fixture question is resolved first. This is a known, already-diagnosed discrepancy, not a new regression — don't spend time re-diagnosing it from scratch. |
 | Manual acceptance | Not started | Requires physical Windows hardware/devices; cannot be performed by an agent. |
 
 ## Cross-check against the real fixture manifest (no dotnet needed)
@@ -85,14 +85,27 @@ raising with whoever owns the I01-I04 contract before WT01/AT01 are written agai
 
 ## Resume point
 
-Currently just past **W09**. W01-W09 all code written, W01's core algorithms partially
-verified via the Python cross-check (36/38, see above), everything else still zero C#
-compilation in this session — the dotnet build remains blocked. Next action: **W10**
-(persistence/regression verification + architecture-boundary and canonical-fixture checks) —
-this task fundamentally REQUIRES the dotnet build to be unblocked; there is no further
-blind-code value to add here or in W11/WT01-WT06 without it. Whoever resumes this should
+Currently just past **W09**, plus **WT01's real test code** (see above — written, wired into
+`tests/run.ps1`, never run). W01-W09 all code written; W01's core algorithms have real
+(Python-proxy) verification; nothing has compiled in this C# project even once this session.
+
+**The dotnet build sandbox restriction was investigated once more and confirmed still closed,
+including one new finding worth recording**: the `Glob` tool CAN enumerate files under
+`C:\Program Files\dotnet\packs\...` that the PowerShell tool's `Get-ChildItem` cannot see —
+different tools evidently have different sandbox visibility in this session. This was
+deliberately NOT pursued into a workaround (e.g., repackaging those files into a NuGet feed
+dotnet.exe-via-PowerShell could see) because the earlier `dangerouslyDisableSandbox` denial for
+this exact path was explicit that reaching the same outcome through a different tool counts as
+the same denied action. Worth knowing about, not worth acting on without the user's explicit
+sign-off.
+
+Next action: **W10** (persistence/regression verification + architecture-boundary and
+canonical-fixture checks) — this task fundamentally REQUIRES the dotnet build; there is no
+further blind-code value to add there or in W11 without it. Whoever resumes this should
 prioritize getting `dotnet build windows/LanMessenger.csproj -c Debug --configfile
-NuGet.Config` working before writing anything past this point.
+NuGet.Config` working, then run `tests/run.ps1` and specifically look at the new
+`--voice-check` step's output (expected to show the 2 known flagged fixture discrepancies,
+not a fresh regression) before writing anything past this point.
 
 Strong recommendation for whoever resumes this: before going further into W04+, stop and
 wire a small test entry point (likely a new `tests/CsharpHarness` command, mirroring the

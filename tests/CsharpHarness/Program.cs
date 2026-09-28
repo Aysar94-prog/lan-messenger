@@ -1,5 +1,10 @@
 using LanMessenger;
 using System.Text;
+// WT01: `CsharpHarness --voice-check <manifestDir>` runs the real Voice Messages algorithms
+// against the shared fixture manifest without needing a live PeerEngine/network setup at all.
+// Uses Environment.ExitCode (not `return <int>`) to match this file's existing top-level-
+// program inference, established below by mixing `await` with `Environment.ExitCode=1`.
+if(args.Length==2&&args[0]=="--voice-check"){Environment.ExitCode=VoiceMessagesCheck.Run(args[1]);return;}
 try {
 using var engine=new PeerEngine(args[0],args[1],new TestProtector(args[0]));int notifications=0;engine.Received+=m=>Interlocked.Increment(ref notifications);engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));Console.WriteLine("READY\t"+engine.Id);
 string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
