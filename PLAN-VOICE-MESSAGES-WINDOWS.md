@@ -19,8 +19,8 @@ NuGet.Config` before relying on it.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | W01 | Marker recognition, WAV validation, PCM normalization, WAV sink/source, checked seek conversion | **Code written, uncompiled** | `windows/VoiceMessages.cs` (new file): `VoicePcmAssembler` (frame/epoch/event assembly per pcm-contract.md), `VoiceMarker` (marker parse/classify), `VoiceWav` (bounded streaming validation + canonical WAV builder), `VoiceSeek` (7-step seek procedure). No WinForms/PeerEngine/attachment-store/device dependencies (forbidden-dependency boundary respected). Not yet cross-checked against `tests/voice_messages/vectors/manifest.json` (WT01) — no test harness wired yet. |
-| W02 | Durable application-private draft registry, atomic transitions, 10-entry cap, stale-review, reconciliation | Not started | Next up. |
-| W03 | Reusable `waveIn` adapter | Not started | |
+| W02 | Durable application-private draft registry, atomic transitions, 10-entry cap, stale-review, reconciliation | **Code written, uncompiled** | `windows/VoiceDrafts.cs` (new file, `partial class PeerEngine`): `VoiceDraft` record (all 10 registry fields), `VoiceDraftWriter` (open/append/close/abort an encrypted per-draft PCM file, same AES-256-CBC + protector-wrapped-key construction as `Conversations.cs` attachment storage), CRUD + `ReconcileVoiceDrafts()` (runs at startup, wired into the `PeerEngine` constructor right after `PurgeExpired()`). Registry rows persist as new `R` rows in `Storage.cs`'s existing encrypted `state.txt` (Load/Save both updated). `DeleteAllData()` (`Conversations.cs`) now also clears `voiceDrafts` and sweeps the `voice-drafts/` folder, matching how it already handles `attachments/`/`avatars/`. **Design note**: per-frame progress (`RecordVoiceDraftProgress`) is deliberately in-memory only, not persisted — a `Recording`-state entry is unconditionally diagnosed `Invalid` on the next startup regardless of recorded byte size (no writer survives a process exit), so durably rewriting the whole encrypted store on every ~20 ms frame (up to ~15,000 times for a 5-minute recording) would cost real performance for zero recovery benefit. Not yet cross-checked against `tests/voice_messages/vectors/manifest.json`. |
+| W03 | Reusable `waveIn` adapter | Not started | Next up. |
 | W04 | Record/Stop/Preview/Delete/Send UI + lifecycle-safe stop | Not started | |
 | W05 | Transactional Send (ten-step durable write order) | Not started | Integration point identified: `windows/Conversations.cs` `QueueContentAsync`/`QueueFileFromPathAsync` (~line 187-213) already does steps 8-9 (import into encrypted Normal store, durably save message) but generates its own `Guid.NewGuid()` message id internally — this conflicts with step 7 ("allocate the message ID and final marked filename on Send" as one act, since the filename `voice-<id>.lanvoice.wav` must embed that same id). Will need a small, backward-compatible optional-parameter change to let a caller supply the id up front. Not yet made. |
 | W06 | Extend `PeerEngine.QueueImageDownloads()`/`imageSlots`/`imageAttempts` (`windows/Transfers.cs`) into the fixed 9-rule automatic-media scheduler | Not started | |
@@ -34,10 +34,15 @@ NuGet.Config` before relying on it.
 
 ## Resume point
 
-Currently on **W01**, code written but unverified. Next action: continue W01 by wiring a
-small test entry point (likely a new `tests/CsharpHarness` command, mirroring the existing
-`OWNER`/`TRANSFEROWNER` pattern) that loads `tests/voice_messages/vectors/manifest.json` and
-runs `VoicePcmAssembler`/`VoiceWav`/`VoiceSeek`/`VoiceMarker` against every vector — this is
-WT01's actual required coverage, and doing it now (rather than after W02-W09) gives the
-earliest possible real correctness signal once the build is unblocked. Then proceed to W02
-(draft registry).
+Currently just past **W02**, both W01 and W02 code written but unverified (build still
+blocked — see above). Next action: **W03**, a reusable `waveIn` adapter (serialized native
+control, rooted delegates/buffers, bounded frame delivery via `VoicePcmAssembler`, safe
+completion signaling, idempotent stop/disposal per the plan's Windows implementation notes).
+
+Before going further into W04+, it would be worth pausing to wire a small test entry point
+(likely a new `tests/CsharpHarness` command, mirroring the existing `OWNER`/`TRANSFEROWNER`
+pattern) that loads `tests/voice_messages/vectors/manifest.json` and runs
+`VoicePcmAssembler`/`VoiceWav`/`VoiceSeek`/`VoiceMarker` against every vector (WT01's actual
+required coverage) — this is the earliest point a real correctness signal becomes possible
+once the dotnet build is unblocked, and W01/W02 are both already self-contained enough to
+test in isolation without W03-W09.

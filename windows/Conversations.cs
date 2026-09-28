@@ -259,8 +259,9 @@ public sealed partial class PeerEngine
             var oldDeparted=departedHistory.ToDictionary(kv=>kv.Key,kv=>new HashSet<string>(kv.Value));
             var oldAcked=memberAcked.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,int>(kv.Value));
             var oldPendingHandoff=new HashSet<string>(pendingOwnershipHandoff);
+            var oldVoiceDrafts=new Dictionary<string,VoiceDraft>(voiceDrafts);
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();pendingOwnershipHandoff.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();pendingOwnershipHandoff.Clear();voiceDrafts.Clear();
             foreach(var id in oldPeers.Keys)forgotten.Add(id);
             peers.Clear();
             try{Save();}
@@ -269,6 +270,7 @@ public sealed partial class PeerEngine
                 foreach(var kv in oldPeers)peers[kv.Key]=kv.Value;foreach(var kv in oldGroups)groups[kv.Key]=kv.Value;
                 foreach(var kv in oldDeparted)departedHistory[kv.Key]=kv.Value;foreach(var kv in oldAcked)memberAcked[kv.Key]=kv.Value;
                 pendingOwnershipHandoff.UnionWith(oldPendingHandoff);
+                foreach(var kv in oldVoiceDrafts)voiceDrafts[kv.Key]=kv.Value;
                 forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
                 throw;
             }
@@ -278,6 +280,7 @@ public sealed partial class PeerEngine
             // Own avatar.sec and identity.sec are siblings of these two folders, never touched.
             try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"attachments"),true);}catch{}
             try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"avatars"),true);}catch{}
+            try{Directory.Delete(Path.Combine(Path.GetDirectoryName(file)!,"voice-drafts"),true);}catch{}
         }
         Notify();WakeDelivery();
     }
