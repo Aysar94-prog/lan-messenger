@@ -39,35 +39,36 @@ sealed partial class ChatWindow
         var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Margin=new Padding(0,4,0,4)};
         switch(state){
             case VoiceCardState.Candidate:
-                row.Controls.Add(MessageLabel("Voice message",11,Ink,width-140,true));
-                var retryBtn=new Button{Text="Retrieve",AutoSize=true};retryBtn.Click+=(_,_)=>_=engine.DownloadAttachmentAsync(message);row.Controls.Add(retryBtn);
+                var candidateLabel=MessageLabel("Voice message",11,Ink,width-140,true);candidateLabel.AccessibleRole=AccessibleRole.StatusBar;row.Controls.Add(candidateLabel);
+                var retryBtn=new Button{Text="Retrieve",AutoSize=true,AccessibleName="Retrieve this voice message"};retryBtn.Click+=(_,_)=>_=engine.DownloadAttachmentAsync(message);row.Controls.Add(retryBtn);
                 break;
             case VoiceCardState.Fetching:
                 var pct=transferProgress.TryGetValue(message.Id,out var p)&&p.total>0?$" {p.done*100/p.total}%":"";
-                row.Controls.Add(MessageLabel("Voice message · Retrieving…"+pct,11,Ink,width-24));
+                var fetchingLabel=MessageLabel("Voice message · Retrieving…"+pct,11,Ink,width-24);fetchingLabel.AccessibleRole=AccessibleRole.StatusBar;row.Controls.Add(fetchingLabel);
                 break;
             case VoiceCardState.Playable:
                 var duration=validation?.Info!.DurationMs??0;
                 var playKey="msg:"+message.From+"/"+message.Id;
                 var durationLabel=MessageLabel(VoicePlaybackText(playKey,duration,""),11,Ink,width-220,true);
+                durationLabel.AccessibleRole=AccessibleRole.StatusBar;durationLabel.AccessibleName=durationLabel.Text;
                 row.Controls.Add(durationLabel);
-                var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true};
-                void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,duration,"");playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
+                var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true,AccessibleName="Play or pause this voice message"};
+                void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,duration,"");durationLabel.AccessibleName=durationLabel.Text;playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
                 playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadAttachment(message)),Refresh);row.Controls.Add(playBtn);
-                var back=new Button{Text="-10s",AutoSize=true};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
-                var fwd=new Button{Text="+10s",AutoSize=true};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
-                var saveBtn=new Button{Text="Save",AutoSize=true};saveBtn.Click+=(_,_)=>SaveAttachment(message);row.Controls.Add(saveBtn);
+                var back=new Button{Text="-10s",AutoSize=true,AccessibleName="Rewind 10 seconds"};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
+                var fwd=new Button{Text="+10s",AutoSize=true,AccessibleName="Forward 10 seconds"};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
+                var saveBtn=new Button{Text="Save",AutoSize=true,AccessibleName="Save this voice message to a file"};saveBtn.Click+=(_,_)=>SaveAttachment(message);row.Controls.Add(saveBtn);
                 break;
             case VoiceCardState.Invalid:
                 // Falls back to the ordinary attachment treatment, backed by whatever copy is
                 // already retrieved — never a second fetch attempt for this reason alone.
-                int thumbWidth=Math.Min(420,width-24);
                 var fileLabel=MessageLabel($"{message.FileName}  ·  {FormatSize(message.FileSize)}",10,Ink,width-24);fileLabel.Cursor=Cursors.Hand;fileLabel.Click+=async(_,_)=>await FileAction(message);row.Controls.Add(fileLabel);
                 var available=engine.HasAttachment(message);var openBtn=new Button{Text=available?"Open":engine.Downloading(message)?"Pause":engine.PendingDestination(message).Length>0?"Resume":"Download",AutoSize=true};
+                openBtn.AccessibleName=openBtn.Text+" attachment";
                 openBtn.Click+=async(_,_)=>await FileAction(message);row.Controls.Add(openBtn);
                 break;
             case VoiceCardState.Unavailable:
-                row.Controls.Add(MessageLabel("Voice message · No longer available",11,Color.SlateGray,width-24));
+                var unavailableLabel=MessageLabel("Voice message · No longer available",11,Color.SlateGray,width-24);unavailableLabel.AccessibleRole=AccessibleRole.StatusBar;row.Controls.Add(unavailableLabel);
                 break;
         }
         StyleButtons(row);

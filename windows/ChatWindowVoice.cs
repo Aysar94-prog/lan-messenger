@@ -130,21 +130,24 @@ sealed partial class ChatWindow
         if(recordingHere){
             attachmentDraft.Visible=true;pendingAttachmentRow.Height=60;
             var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
-            row.Controls.Add(MessageLabel("Recording…  "+FormatElapsed(DateTime.UtcNow-recordingStartedAtUtc),11,Ink,220,true));
+            var clockLabel=MessageLabel("Recording…  "+FormatElapsed(DateTime.UtcNow-recordingStartedAtUtc),11,Ink,220,true);
+            clockLabel.AccessibleName="Recording in progress";clockLabel.AccessibleRole=AccessibleRole.StatusBar;
+            row.Controls.Add(clockLabel);
             attachmentDraft.Controls.Add(row);
         }else if(draft!=null){
             attachmentDraft.Visible=true;pendingAttachmentRow.Height=70;
             var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
             var playKey="draft:"+draft.Id;
             var durationLabel=MessageLabel(VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages"),10,Ink,240,true);
+            durationLabel.AccessibleRole=AccessibleRole.StatusBar;durationLabel.AccessibleName=durationLabel.Text;
             row.Controls.Add(durationLabel);
-            var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true};
-            void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages");playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
+            var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true,AccessibleName="Play or pause this recording"};
+            void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages");durationLabel.AccessibleName=durationLabel.Text;playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
             playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadVoiceDraftWav(draft.Id)),Refresh);row.Controls.Add(playBtn);
-            var back=new Button{Text="-10s",AutoSize=true};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
-            var fwd=new Button{Text="+10s",AutoSize=true};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
-            var deleteBtn=new Button{Text="Delete",AutoSize=true};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);row.Controls.Add(deleteBtn);
-            if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);row.Controls.Add(sendBtn);}
+            var back=new Button{Text="-10s",AutoSize=true,AccessibleName="Rewind 10 seconds"};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
+            var fwd=new Button{Text="+10s",AutoSize=true,AccessibleName="Forward 10 seconds"};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
+            var deleteBtn=new Button{Text="Delete",AutoSize=true,AccessibleName="Delete this recording"};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);row.Controls.Add(deleteBtn);
+            if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true,AccessibleName="Send this voice message"};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);row.Controls.Add(sendBtn);}
             StyleButtons(row);
             attachmentDraft.Controls.Add(row);
         }else{
@@ -155,8 +158,10 @@ sealed partial class ChatWindow
     void UpdateVoiceClockLabel()
     {
         if(pendingAttachmentPath!=null||attachmentDraft.Controls.Count==0)return;
-        if(attachmentDraft.Controls[0] is FlowLayoutPanel row&&row.Controls.Count>0&&row.Controls[0] is Label label)
+        if(attachmentDraft.Controls[0] is FlowLayoutPanel row&&row.Controls.Count>0&&row.Controls[0] is Label label){
             label.Text="Recording…  "+FormatElapsed(DateTime.UtcNow-recordingStartedAtUtc);
+            label.AccessibleName=label.Text;
+        }
     }
 
     static string FormatElapsed(TimeSpan span)=>span.TotalHours>=1?span.ToString(@"h\:mm\:ss"):span.ToString(@"m\:ss");
