@@ -115,12 +115,6 @@ sealed partial class ChatWindow
         lastVoicePanel="";RenderVoicePanel();
     }
 
-    // Playback (waveOut inline player, seven-step seeking) is W08 — not built yet. Shared stub
-    // for both the own-draft Preview button (ChatWindowVoice.cs) and a received Playable
-    // message's Play button (ChatWindowVoiceCard.cs); neither the draft nor the received
-    // message is affected by playback being unavailable — both stay fully usable otherwise.
-    void ShowVoicePlaybackNotImplemented()=>MessageBox.Show(this,"Voice message playback is not implemented yet.","Preview");
-
     // Rebuilds attachmentDraft's contents for the recording/pending-draft state. A pending
     // file attachment (pendingAttachmentPath) always takes priority, matching how it already
     // owns this panel; voice state only renders when there is no pending file attachment.
@@ -141,9 +135,14 @@ sealed partial class ChatWindow
         }else if(draft!=null){
             attachmentDraft.Visible=true;pendingAttachmentRow.Height=70;
             var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
-            var durationLabel=MessageLabel($"Voice message · {FormatElapsed(TimeSpan.FromMilliseconds(draft.DurationMs))}"+(engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages"),10,Ink,220,true);
+            var playKey="draft:"+draft.Id;
+            var durationLabel=MessageLabel(VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages"),10,Ink,240,true);
             row.Controls.Add(durationLabel);
-            var previewBtn=new Button{Text="Preview",AutoSize=true};previewBtn.Click+=(_,_)=>ShowVoicePlaybackNotImplemented();row.Controls.Add(previewBtn);
+            var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true};
+            void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages");playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
+            playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadVoiceDraftWav(draft.Id)),Refresh);row.Controls.Add(playBtn);
+            var back=new Button{Text="-10s",AutoSize=true};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
+            var fwd=new Button{Text="+10s",AutoSize=true};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
             var deleteBtn=new Button{Text="Delete",AutoSize=true};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);row.Controls.Add(deleteBtn);
             if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);row.Controls.Add(sendBtn);}
             StyleButtons(row);

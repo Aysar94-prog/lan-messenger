@@ -210,6 +210,16 @@ public sealed partial class PeerEngine
         DeleteVoiceDraft(draftId);
     }
 
+    // W08: lets the UI preview a finalized (or invalid, for diagnostics) draft's own decrypted
+    // WAV bytes without exposing the private on-disk encoding.
+    public byte[] ReadVoiceDraftWav(string draftId)
+    {
+        lock(gate){
+            if(!voiceDrafts.ContainsKey(draftId))throw new IOException("Unknown voice draft.");
+            return ReadVoiceDraftPlaintext(VoiceDraftPath(draftId));
+        }
+    }
+
     // --- Encrypted plaintext read/write, matching Conversations.cs's attachment-store construction ---
 
     byte[] ReadVoiceDraftPlaintext(string path)

@@ -46,8 +46,14 @@ sealed partial class ChatWindow
                 break;
             case VoiceCardState.Playable:
                 var duration=validation?.Info!.DurationMs??0;
-                row.Controls.Add(MessageLabel($"Voice message · {FormatElapsed(TimeSpan.FromMilliseconds(duration))}",11,Ink,width-160,true));
-                var playBtn=new Button{Text="Play",AutoSize=true};playBtn.Click+=(_,_)=>ShowVoicePlaybackNotImplemented();row.Controls.Add(playBtn);
+                var playKey="msg:"+message.From+"/"+message.Id;
+                var durationLabel=MessageLabel(VoicePlaybackText(playKey,duration,""),11,Ink,width-220,true);
+                row.Controls.Add(durationLabel);
+                var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true};
+                void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,duration,"");playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
+                playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadAttachment(message)),Refresh);row.Controls.Add(playBtn);
+                var back=new Button{Text="-10s",AutoSize=true};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
+                var fwd=new Button{Text="+10s",AutoSize=true};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
                 var saveBtn=new Button{Text="Save",AutoSize=true};saveBtn.Click+=(_,_)=>SaveAttachment(message);row.Controls.Add(saveBtn);
                 break;
             case VoiceCardState.Invalid:
