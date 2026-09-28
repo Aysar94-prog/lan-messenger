@@ -1,0 +1,656 @@
+{
+  "schema_version": 1,
+  "description": "Voice Messages shared fixture manifest — canonical versioned test vectors for I03/I04. This manifest declares expected behavior for every fixture; actual binary source files are added incrementally. A null source means the binary is not yet committed; the declared expectations are still normative.",
+  "categories": {
+    "wav-validation": "WAV validation vectors covering contract.md WAV validation items 1–14",
+    "pcm-frames": "PCM frame assembly and stream-event vectors covering pcm-contract.md",
+    "seek": "Seek procedure vectors covering contract.md Seek procedure items 1–7",
+    "marker": "Marker filename validation vectors covering contract.md Decisions items 1, 8–9 (filename marker, store identity, forged/mismatched/unmarked classification)"
+  },
+  "vectors": [
+    {
+      "id": "wav-valid-minimal",
+      "category": "wav-validation",
+      "description": "Minimal valid WAV: 16 kHz mono 16-bit PCM, exactly one 20 ms frame (640 data bytes), canonical 44-byte header",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 0,
+        "length": 684,
+        "sha256": "6d5a57285af5ab10fd11ee5fb4f564281eac95b3131bcadad5812952a39558e1"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 20,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 640,
+        "total_bytes": 684
+      }
+    },
+    {
+      "id": "wav-valid-300s-max",
+      "category": "wav-validation",
+      "description": "Maximum-duration valid WAV: 300 s at 16 kHz mono 16-bit PCM, 9,600,000 data bytes, canonical 44-byte header. Recipe-only: the 9.6 MB file is never committed; the expected hash is deterministic.",
+      "source": {
+        "recipe": "max-boundary",
+        "expected_sha256": "0d8478492c063d19d0918691e57f0700b707d0e486304a5f8fc1037a78fcd6f0",
+        "expected_byte_length": 9600044
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 300000,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 9600000,
+        "total_bytes": 9600044
+      }
+    },
+    {
+      "id": "wav-invalid-empty",
+      "category": "wav-validation",
+      "description": "Empty file (0 bytes) — fails RIFF identifier and chunk-offset checks",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 684,
+        "length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "empty file"
+      }
+    },
+    {
+      "id": "wav-invalid-bad-riff",
+      "category": "wav-validation",
+      "description": "File whose first four bytes are not 'RIFF'",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 684,
+        "length": 684,
+        "sha256": "7c00f2f491b238b78b9985e94aaf1dcc7d74282e9c70336313a938b76cff20e3"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "missing RIFF identifier"
+      }
+    },
+    {
+      "id": "wav-invalid-wrong-rate",
+      "category": "wav-validation",
+      "description": "Structurally valid WAV with 44100 Hz sample rate instead of 16000 Hz",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 1368,
+        "length": 684,
+        "sha256": "09d6e030ae806840e3ecec0e2e4cffa8a03eaead034d42acf802df94eee23997"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "unsupported sample rate"
+      }
+    },
+    {
+      "id": "wav-invalid-truncated",
+      "category": "wav-validation",
+      "description": "WAV whose data chunk is shorter than the declared size",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2052,
+        "length": 364,
+        "sha256": "10e2416ebf3f6b673fecd7548ea93181dea7c782a53b4a5def342bb5e1141487"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "truncated data chunk"
+      }
+    },
+    {
+      "id": "wav-invalid-one-sample",
+      "category": "wav-validation",
+      "description": "Valid header but only 2 bytes of PCM data (one sample, not a full 640-byte frame)",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2416,
+        "length": 46,
+        "sha256": "156075e2635b9b2c186258f4db987ed9fbdfb727f49e5eac4b9a126aefbdf727"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "data too short for a complete frame"
+      }
+    },
+    {
+      "id": "wav-invalid-short-final-frame",
+      "category": "wav-validation",
+      "description": "642 data bytes: one full 640-byte frame plus a 2-byte short final frame",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2462,
+        "length": 686,
+        "sha256": "12bc7121cd94e3fd56dbad6912783dfa40e4ef1c48469964580589783336802a"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "short final frame"
+      }
+    },
+    {
+      "id": "wav-invalid-bad-block-align",
+      "category": "wav-validation",
+      "description": "Block alignment is 4 instead of 2",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 3148,
+        "length": 684,
+        "sha256": "b85f9c0c69a0df9cf03a4600171ecefbce9feb7ae297d0eb7f6644f31dcb28e2"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "incorrect block alignment"
+      }
+    },
+    {
+      "id": "wav-invalid-unknown-chunk",
+      "category": "wav-validation",
+      "description": "Has a 'junk' chunk between fmt and data chunks",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 3832,
+        "length": 700,
+        "sha256": "e0fee1c793082437b60fcff409a7ddfd6de4b9370772e136548806557126ffdd"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 20,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 640,
+        "total_bytes": 700
+      }
+    },
+    {
+      "id": "wav-invalid-duplicate-chunk",
+      "category": "wav-validation",
+      "description": "Two 'fmt ' chunks — duplicate required chunk must be rejected",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 4532,
+        "length": 708,
+        "sha256": "01026b977a0e86dcaeb8fb44c094ad7577e50a9fd33ff6912f3602708fc54927"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "duplicate fmt chunk"
+      }
+    },
+    {
+      "id": "wav-invalid-reordered-chunks",
+      "category": "wav-validation",
+      "description": "'data' chunk appears before 'fmt ' chunk",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 5240,
+        "length": 684,
+        "sha256": "cbef7ed19efb69428ea5ebf7668391180619ab75ccd2a2965ce7d664dcc6cfa8"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "reordered chunks"
+      }
+    },
+    {
+      "id": "wav-invalid-trailing-bytes",
+      "category": "wav-validation",
+      "description": "6 extra bytes after the data chunk",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 5924,
+        "length": 690,
+        "sha256": "9c2ae4cadb00ed1cdbce6182d85c05489081b82e8672840a6334e10d4ce7e673"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "trailing bytes after data chunk"
+      }
+    },
+    {
+      "id": "wav-invalid-unsupported-format",
+      "category": "wav-validation",
+      "description": "Non-PCM audio format (ADPCM, format tag 2)",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 6614,
+        "length": 684,
+        "sha256": "21831240978268a1bf9c16ce667de606199944b5acc5bd531aa6f4d88f5d73c4"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "unsupported audio format"
+      }
+    },
+    {
+      "id": "pcm-empty-callback",
+      "category": "pcm-frames",
+      "description": "Empty callback delivers 0 bytes — no frames produced, no events, no odd byte pending",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 0,
+        "length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expectations": {
+        "frame_count": 0,
+        "total_bytes": 0,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": []
+      }
+    },
+    {
+      "id": "pcm-one-sample",
+      "category": "pcm-frames",
+      "description": "Single 2-byte sample (one int16) — valid nonempty even final frame per Ownership item 3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 0,
+        "length": 2,
+        "sha256": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 2,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 0,
+        "first_timestamp_ns": 62500,
+        "last_timestamp_ns": 62500
+      }
+    },
+    {
+      "id": "pcm-one-frame-exact",
+      "category": "pcm-frames",
+      "description": "Exactly 640 bytes on a clean callback boundary — one complete frame",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 2,
+        "length": 640,
+        "sha256": "52c7c7d3e9efb6d3304579d3f44e5b804d2236f3a53d8eef62f4ac497cee3972"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 640,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 0,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 20000000
+      }
+    },
+    {
+      "id": "pcm-short-final",
+      "category": "pcm-frames",
+      "description": "642 bytes: one full 640-byte frame plus a 2-byte short final frame — both valid (nonempty and even)",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 642,
+        "length": 642,
+        "sha256": "7a5eb96e90d90b5f5cb22bc82eff1d8c2b63ececc8362cfe71d1940669f266d2"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 642,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 20125000
+      }
+    },
+    {
+      "id": "pcm-fragmented",
+      "category": "pcm-frames",
+      "description": "Two callbacks: first delivers 641 bytes (640-byte frame + 1 odd byte pending), second delivers 639 bytes (assembles with pending byte into another 640-byte frame)",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 1284,
+        "length": 1280,
+        "sha256": "194ae4ca2f4e3349524765c7826977a4201902180a9d09a51e71a7a553014d44"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 40000000,
+        "callback_plan": [
+          {"deliver_bytes": 641, "frames_emitted": 1, "odd_byte_pending_after": true},
+          {"deliver_bytes": 639, "frames_emitted": 1, "odd_byte_pending_after": false}
+        ]
+      }
+    },
+    {
+      "id": "pcm-oversized-callback",
+      "category": "pcm-frames",
+      "description": "Single callback delivers 1920 bytes (3 full frames) — must split incrementally with bounded allocation per Fragments item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 2564,
+        "length": 1920,
+        "sha256": "12d1334836be34d5fb4637c423f6430bf38498b4b4a423aee3b0ccac89fc9df3"
+      },
+      "expectations": {
+        "frame_count": 3,
+        "total_bytes": 1920,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 2,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 60000000
+      }
+    },
+    {
+      "id": "pcm-discontinuity",
+      "category": "pcm-frames",
+      "description": "Two frames with a Discontinuity event between them — gap in sample stream without closing epoch; sequence and timestamp continue per Epoch item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 4484,
+        "length": 1280,
+        "sha256": "891c7090d237b7d316880ea58377323c654c9c41aacdfb8f73a58782ccb34cc4"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["Discontinuity", "End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 40000000
+      }
+    },
+    {
+      "id": "pcm-overflow",
+      "category": "pcm-frames",
+      "description": "Nine frames (5760 bytes) exceed the 8-frame/5120-byte capacity — overflow discards the epoch and emits exactly one terminal DeviceFailure per Capacity items 1-3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 5764,
+        "length": 5760,
+        "sha256": "53aaa09fecb690cadc8f1b2e686c780a5f8eb5468c3c4d06f7cf6ed41af054ea"
+      },
+      "expectations": {
+        "frame_count": 8,
+        "total_bytes": 5120,
+        "odd_byte_pending": false,
+        "terminal_failure": true,
+        "failure_reason": "overflow beyond 8-frame capacity",
+        "events": ["DeviceFailure"]
+      }
+    },
+    {
+      "id": "pcm-restart",
+      "category": "pcm-frames",
+      "description": "One frame, End event, then Restart into a new epoch with reset sequence and timestamp per Epoch item 3 and Events item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 11524,
+        "length": 1280,
+        "sha256": "36eab993c5343b9a845443caf69e7b4e5b77e601e880a79c8e398307653fc87c"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End", "Restart", "End"],
+        "epochs": [
+          {"sequence_range": [0, 0], "timestamp_ns_range": [20000000, 20000000]},
+          {"sequence_range": [0, 0], "timestamp_ns_range": [20000000, 20000000]}
+        ]
+      }
+    },
+    {
+      "id": "pcm-odd-byte-terminal",
+      "category": "pcm-frames",
+      "description": "641 bytes: one full 640-byte frame plus 1 odd byte — stream ends with pending odd byte, fatal per Fragments item 3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 12804,
+        "length": 641,
+        "sha256": "30764b195c665cc17945c06f8f8fd9904054c566eb400c478189e062857df1d8"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 640,
+        "odd_byte_pending": true,
+        "terminal_failure": true,
+        "failure_reason": "odd byte pending at stream end",
+        "events": ["DeviceFailure"]
+      }
+    },
+    {
+      "id": "seek-clamp-beyond-duration",
+      "category": "seek",
+      "description": "Seek to 999999 ms on a 20 ms WAV clamps to 20 ms (end)",
+      "source": null,
+      "expectations": {
+        "duration_ms": 20,
+        "data_bytes": 640,
+        "data_start": 44,
+        "requested_ms": 999999,
+        "effective_ns": 20000000,
+        "aligned_byte": 684,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-align-odd-byte",
+      "category": "seek",
+      "description": "Seek to a time that resolves to an odd byte offset — must align downward to even",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 1,
+        "effective_ns": 0,
+        "aligned_byte": 44,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-beginning",
+      "category": "seek",
+      "description": "Seek to 0 ms — lands on dataStart (byte 44), effective_ns 0, state ready",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 0,
+        "effective_ns": 0,
+        "aligned_byte": 44,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-middle",
+      "category": "seek",
+      "description": "Seek to 500 ms on a 1000 ms virtual WAV — evenly aligned, byte 16044",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 500,
+        "effective_ns": 500000000,
+        "aligned_byte": 16044,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-last-sample",
+      "category": "seek",
+      "description": "Seek to 999 ms — last complete aligned sample position before end, byte 32012",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 999,
+        "effective_ns": 999000000,
+        "aligned_byte": 32012,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-end",
+      "category": "seek",
+      "description": "Seek exactly to 1000 ms (duration) — produces completed state, byte at dataStart + data_bytes",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 1000,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-negative",
+      "category": "seek",
+      "description": "Seek to -100 ms — clamped to 0 ms per step 1, byte 44, state ready",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": -100,
+        "effective_ns": 0,
+        "aligned_byte": 44,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-oversized",
+      "category": "seek",
+      "description": "Seek to 999999 ms on a 1000 ms WAV — clamped to duration, completed state",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 999999,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-overflow-attempt",
+      "category": "seek",
+      "description": "Seek with a requested time near Long.MAX_VALUE — must clamp first in step 1 before any arithmetic in step 2–4; no overflow",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 9223372036854775807,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "marker-valid",
+      "category": "marker",
+      "description": "Valid marker: filename voice-msg01.lanvoice.wav, attachment message-id msg01, Normal store — parses, matches, candidate",
+      "source": null,
+      "expectations": {
+        "filename": "voice-msg01.lanvoice.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": true,
+        "extracted_message_id": "msg01",
+        "message_id_matches": true,
+        "classification": "candidate"
+      }
+    },
+    {
+      "id": "marker-forged",
+      "category": "marker",
+      "description": "Forged marker: filename has voice marker pattern but attachment is in Fast store, not Normal — store invalid, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "voice-evil01.lanvoice.wav",
+        "attachment_message_id": null,
+        "store": "Fast",
+        "marker_parses": true,
+        "extracted_message_id": "evil01",
+        "store_valid": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-mismatched",
+      "category": "marker",
+      "description": "Mismatched marker: filename says msg02 but attachment message-id is msg01 — parses but IDs do not match, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "voice-msg02.lanvoice.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": true,
+        "extracted_message_id": "msg02",
+        "message_id_matches": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-unmarked",
+      "category": "marker",
+      "description": "Unmarked WAV: filename regular.wav, no voice marker pattern — does not parse, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "regular.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-arbitrary-filename",
+      "category": "marker",
+      "description": "Arbitrary filename data.pcm with valid message-id msg01 in Normal store — no marker pattern, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "data.pcm",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": false,
+        "classification": "ordinary_attachment"
+      }
+    }
+  ]
+}
