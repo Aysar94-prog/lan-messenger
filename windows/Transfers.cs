@@ -11,17 +11,52 @@ public sealed partial class PeerEngine
     readonly ConcurrentDictionary<string,CancellationTokenSource> downloads=new();
     readonly SemaphoreSlim imageSlots=new(2);
     readonly ConcurrentDictionary<string,byte> imageAttempts=new();
+    // Voice Messages (W06): the same imageSlots capacity pool now also admits automatic Voice
+    // Message retrieval, per tests/voice_messages/contract.md's fixed scheduler rules —
+    // user-initiated downloads (a separate, ungated path; see DownloadAttachmentAsync callers
+    // from the UI) are never affected by this pool. voiceAttempts mirrors imageAttempts exactly
+    // (in-memory only, reset on restart, matching rule 9's "reconstructs ... without special-
+    // casing" via simply re-scanning current message/retention state each pass).
+    readonly ConcurrentDictionary<string,byte> voiceAttempts=new();
+    readonly object schedulerGate=new();
+    int consecutiveAutoVoiceAdmissions;
     public static bool IsImageAttachment(Message m)=>new[]{".jpg",".jpeg",".png",".gif",".bmp",".webp",".tif",".tiff",".heic",".heif",".avif"}.Contains(Path.GetExtension(m.FileName).ToLowerInvariant());
-    void QueueImageDownloads()
+    static bool IsVoiceCandidate(Message m)=>VoiceMarker.TryParse(m.FileName,out _);
+
+    // Rules 1-3: user-initiated work is a separate, ungated path (DownloadAttachmentAsync
+    // called directly from the UI never touches imageSlots), so it is never delayed by this
+    // scheduler. Among automatic work, voice is considered before image by default (rule 2/3);
+    // rule 4 overrides that after three consecutive automatic voice admissions while an
+    // eligible image is waiting. Rule 5: already-running downloads hold their semaphore permit
+    // independently and are never touched here. Rule 7: the fairness counter only moves on an
+    // actual successful admission (a claimed TryAdd), never on a scan, rejection, duplicate,
+    // or unreachable offer. Rule 9: eligibility is recomputed fresh from current message/
+    // retention state on every call (including the first call after restart), so there is
+    // nothing extra to reconstruct.
+    void QueueAutomaticMedia()
     {
         if(!Running)return;
-        Message[] images;lock(gate)images=messages.Where(m=>m.From!=Id&&IsImageAttachment(m)).ToArray();
-        foreach(var m in images){
-            var key=m.From+"/"+m.Id;
-            if(HasAttachment(m)||Downloading(m)||imageAttempts.ContainsKey(key)||!Retained(m))continue;
-            if(!Peers.Any(p=>p.Trusted&&p.Online&&(p.Id==m.From||(m.GroupId.Length>0&&Groups.Any(g=>g.Id==m.GroupId&&g.Members.Contains(p.Id))))))continue;
+        Message[] snapshot;lock(gate)snapshot=messages.Where(m=>m.From!=Id).ToArray();
+        bool CandidateReady(Message m)=>!HasAttachment(m)&&!Downloading(m)&&Retained(m)&&
+            Peers.Any(p=>p.Trusted&&p.Online&&(p.Id==m.From||(m.GroupId.Length>0&&Groups.Any(g=>g.Id==m.GroupId&&g.Members.Contains(p.Id)))));
+        var images=snapshot.Where(m=>IsImageAttachment(m)&&!imageAttempts.ContainsKey(m.From+"/"+m.Id)&&CandidateReady(m)).ToArray();
+        var voices=snapshot.Where(m=>IsVoiceCandidate(m)&&!voiceAttempts.ContainsKey(m.From+"/"+m.Id)&&CandidateReady(m)).ToArray();
+        int vi=0,ii=0;
+        while(vi<voices.Length||ii<images.Length){
+            bool admitVoice;
+            lock(schedulerGate){
+                if(vi>=voices.Length)admitVoice=false;
+                else if(ii>=images.Length)admitVoice=true;
+                else admitVoice=consecutiveAutoVoiceAdmissions<3;
+            }
+            var chosen=admitVoice?voices[vi++]:images[ii++];
+            var isVoice=IsVoiceCandidate(chosen);
+            var attempts=isVoice?voiceAttempts:imageAttempts;
+            var key=chosen.From+"/"+chosen.Id;
             if(!imageSlots.Wait(0))break;
-            if(!imageAttempts.TryAdd(key,0)){imageSlots.Release();continue;}
+            if(!attempts.TryAdd(key,0)){imageSlots.Release();continue;}
+            lock(schedulerGate){if(isVoice)consecutiveAutoVoiceAdmissions++;else consecutiveAutoVoiceAdmissions=0;}
+            var m=chosen;
             _=Task.Run(async()=>{try{await DownloadAttachmentAsync(m);}catch{}finally{imageSlots.Release();Notify();}});
         }
     }
