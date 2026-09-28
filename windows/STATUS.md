@@ -1,5 +1,39 @@
 # Windows status
 
+## Voice Messages implemented in source (Phase 2 / W01-W10, WT01+WT06, not a release)
+
+Windows Phase 2 of the shared Voice Messages feature (`plan-v003`, tracked at
+[PLAN-VOICE-MESSAGES-WINDOWS.md](../PLAN-VOICE-MESSAGES-WINDOWS.md)): record, send, receive and
+play short voice clips, reusing the existing encrypted Normal attachment store with a
+`voice-<message-id>.lanvoice.wav` marker filename — no new LM4 wire frame. Fixed format:
+RIFF/WAVE, 16 kHz mono 16-bit PCM, 640-byte/20 ms frames, max 300 s/9.6 MB. `waveIn`/`waveOut`
+P/Invoke capture/playback (serialized native control, minimal-work native callbacks, idempotent
+Stop/Dispose — avoids the classic MM-callback deadlock); a durable, encrypted, capped (10-entry)
+draft registry with startup reconciliation; transactional Send (message id and marked filename
+allocated together); Candidate/Fetching/Playable/Invalid/Unavailable receiver cards; one active
+inline player app-wide with seven-step seeking (±10 s buttons) and no plaintext playback file;
+voice folded into the existing automatic-media scheduler under the shared nine fixed rules;
+full keyboard/accessibility coverage. W11 (this entry) is the only remaining code-adjacent task —
+W10 verification is done; **manual two-device acceptance on physical hardware is Pending, cannot
+be performed by an agent.**
+
+Build: `dotnet build windows/LanMessenger.csproj` passes (0 errors). WT01
+(`CsharpHarness --voice-check`, the real `VoicePcmAssembler`/`VoiceWav`/`VoiceSeek`/`VoiceMarker`
+production classes against the shared `tests/voice_messages/vectors/manifest.json`) passes
+(`PASS=38 FAIL=0 SKIP=30`). WT06 (`tests/voice_architecture_check.py`) confirms the
+transport-independent PCM/WAV/marker/seek core has no WinForms/PeerEngine/attachment-store/LM4/
+device-API dependency and that Windows carries no platform-local copy of the shared fixtures.
+WT02-WT05 (fake-audio-input lifecycle faults, scheduler/dedup coverage, one-player-enforcement/
+export) are not yet written. A full `tests/run.ps1` run surfaced one pre-existing failure in
+`tests/group_membership.py`, unrelated to Voice Messages (traced to `AddMember`'s live
+`QueryCapability` call returning 0 on a real network timeout under the heaviest 16-17-process
+scenario — the same class of environmental contention already documented below for the
+2.0.0-era group-membership work, not a regression from this feature).
+
+This is **platform-local only; interoperability with the Android Phase 1 work (developed
+concurrently by another agent in this same repository) has not yet been verified** — that is
+Phase 3 of the plan, not yet started.
+
 ## Offline controls implemented in source (G1–G3, not a release)
 
 The Windows engine has reusable `Start`/`GoOffline` and terminal `Dispose` (G1). G2 adds a default-Online persisted request read before `Shown` starts the network, one transition method shared by toolbar and tray, actual engine state and bind error in the status line, and local queued direct/group sends while Offline. Closing the window still hides to tray; Exit terminates. Offline closes LAN listeners/connections/discovery; Refresh and Add by IP are disabled while Offline, and verification, group capability checks and new remote downloads cannot reach LAN. Local identity, contacts, groups, history, cached attachments and partial transfers remain accessible; interrupted transfers resume on reconnect. Remote presence turns gray after approximately 12 seconds. A failed bind leaves actual state Offline despite an Online request; toolbar and tray show Retry online, which retries without flipping the persisted preference. The native UI suite covers offline preference/queued sends and blocked-port retry. No release or LM4 wire/compatibility change.
@@ -47,6 +81,7 @@ Reviewed 2026-09-26. Release: **2.1.0** (unified with Android's version number a
 
 ## Handoff pointers
 
+- Voice Messages (Phase 2): `VoiceMessages.cs` (transport-independent PCM/WAV/marker/seek core), `VoiceDrafts.cs` (`partial class PeerEngine` draft registry + `SendVoiceDraft`), `VoiceRecorder.cs`/`VoicePlayer.cs` (`waveIn`/`waveOut` P/Invoke adapters), `ChatWindowVoice.cs` (own-draft record/send UI), `ChatWindowVoiceCard.cs` (receiver cards), `ChatWindowVoicePlayback.cs` (shared one-active-player controller), `Transfers.cs` (`QueueAutomaticMedia`, the renamed/extended scheduler). Tests: `tests/CsharpHarness/VoiceMessagesCheck.cs` (WT01), `tests/voice_architecture_check.py` (WT06). Progress tracker: [PLAN-VOICE-MESSAGES-WINDOWS.md](../PLAN-VOICE-MESSAGES-WINDOWS.md).
 - UI: `ChatWindowRender.cs`/`ChatWindowMessages.cs`/`ChatWindowAttachments.cs`/`ChatWindowDialogs.cs`/`ChatControls.cs` (split out of `Program.cs`; `Program.cs` now holds only `Program.Main`, `ChatWindow`'s fields, constructor and `Send`). Delete conversation ("Leave group" for a group, now also intercepted by the ownership-transfer picker)/app data: `ChatWindowDialogs.cs` (`DeleteConversationConfirm`, `ShowTransferOwnershipPicker`, `DeleteAllDataConfirm`), engine side in `Conversations.cs` (`DeleteConversation`, `DeleteAllData`), context-menu label wiring in `Program.cs`.
 - Forget-notice / group re-invite: `Conversations.cs` (`forgotten`/`pendingLeaves`, `HandleLeave`, `ReinviteMember`), `Storage.cs` (`F`/`L` rows), `PeerEngine.cs` (`Forgotten` event, `Deliver()`'s `FORGET`/`LEAVE` sending, `Receive()`'s `FORGET`/`LEAVE` dispatch), `Program.cs` (`engine.Forgotten` tray-notice wiring), `ChatWindowDialogs.cs` (`ShowMembers`'s departed-member rows and Re-invite button).
 - Mutable group membership foundation: `Conversations.cs` (`Group.MembersVersion`, `departedHistory`, `memberAcked`, `AllKnownMembers`, `AcceptGroup`, `HandleMembersUpdate`, `QueryCapability`, `AddMember`, `MemberAckedVersion`, `SimulateLegacyBuild` test-only field), `Storage.cs` (`G` row's version field + migration, `D`/`V` rows; `J`/`Q` rows from the removed join-request feature are tolerated but ignored on load), `PeerEngine.cs` (`Receive()`'s `CAPS`/`MEMBERSUPDATE` dispatch, `Deliver()`'s versioned group-broadcast loop), `ChatWindowDialogs.cs` (`ShowMembers`'s sync-status rows). Plan: `PLAN-GROUP-MEMBERSHIP.md`.

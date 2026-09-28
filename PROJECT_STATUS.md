@@ -61,10 +61,18 @@ Windows 2.1.0 interoperates with Android 2.1.1, and both remain wire-compatible 
 | Keep complete UI trees for multiple active chats | Not implemented | Not implemented |
 | Daily aggregate upload tiers: unlimited below 2 GiB, then 30/20/10 MiB/s at 2/5/10 GiB | Not implemented by earlier Android-only scope | Implemented |
 | Comprehensive anti-flood policy | Not implemented beyond basic connection/transfer limits | Not implemented beyond basic limits and daily upload policy |
+| Voice messages: record, send, receive and play short voice clips (reuses the existing encrypted Normal attachment store; no new wire frame) | Implemented in source (Phase 2, W01-W10, WT01+WT06); WT02-WT05 and manual acceptance not yet done | Phase 1 developed concurrently by another agent in this repository; not yet reflected in this comparison — see `android/STATUS.md` for its own current state |
 
 Automatic ordinary images are the exception to destination selection and use an app-private cache. Fast image offers remain manual.
 
 Offline automation (not device acceptance): Android SDK source compilation and full `tests/run.ps1` (including Windows native UI and cross-platform `tests/offline_lifecycle.py`) passed with SDK 9 MSBuild and in-workspace test output. The loopback runner checks accepted idle socket closure, Offline gating, delayed avatar/group work, interrupted Fast/ordinary/cache transfers, partial stability, integrity and duplicate-free retry. One earlier full-suite 16-member capability stress failure passed on isolated rerun and final full rerun. A 2.1.1 APK has since been built, signed and independently verified (see Current releases above). Windows source-only Offline controls have no Windows 2.1.0 package acceptance; Android 2.1.1 APK device/emulator acceptance is **Pending-Unavailable**. Historical Android source-based two-device Offline checks passed but do not constitute 2.1.1 APK acceptance; remote peers age out after approximately 12 seconds, not instantaneously.
+
+Voice messages (Windows Phase 2, in source, not released): record/send/receive/play short voice
+clips per `plan-v003` — see [windows/STATUS.md](windows/STATUS.md) for the full write-up. Build
+and the new WT01/WT06 automated checks pass; manual two-device acceptance and Windows WT02-WT05
+remain outstanding. **Platform-local only; interoperability between the Windows and Android
+implementations has not yet been verified** (Phase 3 of the plan, not yet started) — this row
+will be revised once both platform exit gates and the integration phase complete.
 
 ## Performance and compatibility limits
 
