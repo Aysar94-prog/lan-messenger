@@ -5,6 +5,7 @@ using System.Text;
 // Uses Environment.ExitCode (not `return <int>`) to match this file's existing top-level-
 // program inference, established below by mixing `await` with `Environment.ExitCode=1`.
 if(args.Length==2&&args[0]=="--voice-check"){Environment.ExitCode=VoiceMessagesCheck.Run(args[1]);return;}
+var voiceWriters=new Dictionary<string,VoiceDraftWriter>();
 try {
 using var engine=new PeerEngine(args[0],args[1],new TestProtector(args[0]));int notifications=0;engine.Received+=m=>Interlocked.Increment(ref notifications);engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));Console.WriteLine("READY\t"+engine.Id);
 string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
@@ -58,6 +59,23 @@ string? line;while((line=Console.ReadLine())!=null){var a=line.Split('\t');try{
  if(a[0]=="SEND")engine.Queue(a[1],Encoding.UTF8.GetString(Convert.FromBase64String(a[2])));
  if(a[0]=="STATE")foreach(var p in engine.Peers){Console.WriteLine($"P\t{p.Id}\t{p.Online}");foreach(var m in engine.Messages(p.Id))Console.WriteLine($"M\t{m.Id}\t{m.From}\t{m.To}\t{m.Status}\t{Convert.ToBase64String(Encoding.UTF8.GetBytes(m.Text))}");}
  if(a[0]=="STATE")foreach(var g in engine.Groups){Console.WriteLine($"G\t{g.Id}\t{Convert.ToBase64String(Encoding.UTF8.GetBytes(g.Name))}");foreach(var m in engine.Messages(g.Id))Print(m);}
+ // WT02: harness commands for the Voice Messages durable draft registry (VoiceDrafts.cs, W02).
+ // No audio hardware or PeerEngine networking is exercised here beyond the existing plumbing —
+ // frames are supplied directly as base64 PCM bytes by the Python driver.
+ if(a[0]=="CREATEDRAFT")Console.WriteLine("DRAFT\t"+engine.CreateVoiceDraft(a[1],a[2]=="true"));
+ if(a[0]=="OPENWRITER")voiceWriters[a[1]]=engine.OpenVoiceDraftWriter(a[1]);
+ if(a[0]=="WRITEFRAME")await voiceWriters[a[1]].WriteFrame(Convert.FromBase64String(a[2]));
+ if(a[0]=="CLOSEWRITER"){await voiceWriters[a[1]].CloseAsync();voiceWriters.Remove(a[1]);}
+ if(a[0]=="ABORTWRITER"){voiceWriters[a[1]].Abort();voiceWriters.Remove(a[1]);}
+ if(a[0]=="FINALIZEDRAFT"){try{var v=engine.FinalizeVoiceDraft(a[1]);Console.WriteLine("FINALIZE\t"+v.Pass.ToString().ToLowerInvariant()+"\t"+(v.FailureReason??""));}catch(Exception e){Console.WriteLine("FINALIZE\tERROR\t"+e.Message);}}
+ if(a[0]=="INVALIDATEDRAFT")engine.InvalidateVoiceDraft(a[1]);
+ if(a[0]=="DELETEDRAFT")engine.DeleteVoiceDraft(a[1]);
+ if(a[0]=="DRAFTSTATE"){var d=engine.GetVoiceDraft(a[1]);Console.WriteLine(d==null?"DRAFTSTATE\tNONE":$"DRAFTSTATE\t{d.State}\t{d.ByteSize}\t{d.DurationMs}\t{d.SendTransactionId}");}
+ if(a[0]=="DRAFTSFOR")Console.WriteLine("DRAFTSFOR\t"+string.Join(",",engine.VoiceDraftsFor(a[1]).Select(d=>d.Id)));
+ if(a[0]=="DRAFTSENDABLE")Console.WriteLine("DRAFTSENDABLE\t"+engine.VoiceDraftSendable(a[1]).ToString().ToLowerInvariant());
+ if(a[0]=="SENDDRAFT")await engine.SendVoiceDraft(a[1],a.Length>2?Encoding.UTF8.GetString(Convert.FromBase64String(a[2])):"");
+ if(a[0]=="READDRAFTWAV"){try{var wav=engine.ReadVoiceDraftWav(a[1]);Console.WriteLine($"DRAFTWAV\t{SecureIdentity.Hash(wav)}\t{wav.Length}");}catch(Exception e){Console.WriteLine("DRAFTWAV\tERROR\t"+e.Message);}}
+ if(a[0]=="RECONCILEDRAFTS")engine.ReconcileVoiceDrafts();
  Console.WriteLine("END");
  }catch(Exception e){Console.WriteLine("ERROR\t"+e.Message);Console.WriteLine("END");}}
 
