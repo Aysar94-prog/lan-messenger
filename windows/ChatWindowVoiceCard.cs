@@ -7,13 +7,15 @@ sealed partial class ChatWindow
 {
     enum VoiceCardState { Candidate,Fetching,Playable,Invalid,Unavailable }
 
-    // Classification stays separate from content validation (contract.md): a marker that
-    // merely parses is a Candidate; only a fully retrieved, WAV-validated file is Playable.
-    // The message id embedded in the marker must match the message's own id — a mismatch is
-    // itself invalid marked content, never a playable candidate.
+    // Classification stays separate from content validation (contract.md): MessageCard's
+    // caller-side gate (VoiceMarker.Classify) already guarantees the marker parses and its id
+    // matches before this is ever reached, so a genuine Candidate always starts here; only a
+    // fully retrieved, WAV-validated file becomes Playable, and only a Candidate whose
+    // retrieved bytes fail that validation becomes Invalid marked content — a mismatched or
+    // unparsed marker is never routed here at all (it renders as an ordinary attachment from
+    // MessageCard directly).
     (VoiceCardState state,VoiceWavValidation? validation) ClassifyVoiceMessage(PeerEngine.Message message)
     {
-        if(!VoiceMarker.TryParse(message.FileName,out var extractedId)||extractedId!=message.Id)return (VoiceCardState.Invalid,null);
         if(engine.HasAttachment(message)){
             try{
                 var validation=VoiceWav.Validate(engine.ReadAttachment(message));

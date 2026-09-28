@@ -16,12 +16,17 @@ public sealed class VoicePcmFrame
 
 // Assembles raw (possibly fragmented, possibly oversized) device callback bytes into complete
 // PCM frames per pcm-contract.md. One instance covers exactly one epoch; Restart() begins a new
-// one. Frames are handed to the caller synchronously via Push()'s return value — the "pending
-// capacity" backpressure model applies to the caller's own downstream queue, not to this class.
+// one. Frames are handed to the caller synchronously via Push()'s return value, which the
+// caller is expected to consume promptly (e.g. write to disk) — "pending capacity" (eight
+// frames) bounds how many complete frames a single Push can produce before the producer must
+// be considered to have overrun its consumer; producing a ninth frame within one Push is the
+// overflow case in pcm-contract.md's Capacity items 1-3, verified against
+// tests/voice_messages/vectors/manifest.json's pcm-overflow vector.
 public sealed class VoicePcmAssembler
 {
     public const int FrameBytes = 640;
     public const int FrameSamples = 320;
+    public const int MaxFramesPerPush = 8;
     public const long MaxTotalBytes = 9_600_000;
     const long NsPerSample = 62500; // 1e9 / 16000 Hz
 
@@ -39,6 +44,9 @@ public sealed class VoicePcmAssembler
     // Splits `fragment` into complete 640-byte frames, carrying any partial trailing bytes
     // (0..639) over to the next Push. Rejects input beyond the 9,600,000-byte maximum instead
     // of truncating it, per contract.md's "Maximum PCM data" / pcm-contract.md Capacity item 5.
+    // If producing a frame would exceed the eight-frame-per-Push capacity, the epoch fails
+    // terminally (TerminallyFailed becomes true) and this returns only the frames already
+    // produced before the overflow — callers must check TerminallyFailed after every Push.
     public List<VoicePcmFrame> Push(byte[] fragment)
     {
         if(terminallyFailed)throw new InvalidOperationException("epoch already terminally failed");
@@ -52,6 +60,7 @@ public sealed class VoicePcmAssembler
             for(int k=0;k<take;k++)carry.Add(fragment[i+k]);
             i+=take;
             if(carry.Count==FrameBytes){
+                if(frames.Count>=MaxFramesPerPush){terminallyFailed=true;carry.Clear();return frames;}
                 frames.Add(EmitFrame(carry.ToArray()));
                 carry.Clear();
             }
@@ -109,7 +118,13 @@ public sealed class VoicePcmAssembler
     }
 }
 
-public enum VoiceMarkerClassification { Candidate, OrdinaryAttachment, InvalidMarkedContent }
+// Only two outcomes: a marker that parses, matches the attachment's own message id, and
+// names the Normal store is a Candidate; anything else (parse failure, id mismatch, or a
+// non-Normal store) is an ordinary attachment from the start — it is never shown as pending
+// voice UI at all. "Invalid marked content" is a distinct, later-stage receiver state (see
+// ChatWindow's VoiceCardState) reached only when a genuine Candidate's retrieved bytes fail
+// WAV validation — it is not a possible outcome of this classification.
+public enum VoiceMarkerClassification { Candidate, OrdinaryAttachment }
 
 public static class VoiceMarker
 {
@@ -131,13 +146,15 @@ public static class VoiceMarker
         return true;
     }
 
-    // Classifies a received attachment for receiver-UI purposes. `store` must be "Normal";
-    // Voice Messages never use Fast storage (contract.md Decision 2).
+    // Classifies a received attachment for receiver-UI purposes. A forged store (anything but
+    // Normal — Voice Messages never use Fast, contract.md Decision 2) or a mismatched id falls
+    // straight back to an ordinary attachment, exactly like an unmarked filename — per
+    // tests/voice_messages/vectors/manifest.json's marker-forged/marker-mismatched vectors,
+    // neither case is ever shown as a voice Candidate.
     public static VoiceMarkerClassification Classify(string fileName,string store,string attachmentMessageId)
     {
         if(!TryParse(fileName,out var extractedId))return VoiceMarkerClassification.OrdinaryAttachment;
-        if(store!="Normal")return VoiceMarkerClassification.InvalidMarkedContent;
-        if(extractedId!=attachmentMessageId)return VoiceMarkerClassification.InvalidMarkedContent;
+        if(store!="Normal"||extractedId!=attachmentMessageId)return VoiceMarkerClassification.OrdinaryAttachment;
         return VoiceMarkerClassification.Candidate;
     }
 }

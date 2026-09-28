@@ -32,14 +32,66 @@ NuGet.Config` before relying on it.
 | WT01-WT06 | Automated tests | Not started | Blocked on the dotnet build issue above even once written. |
 | Manual acceptance | Not started | Requires physical Windows hardware/devices; cannot be performed by an agent. |
 
+## Cross-check against the real fixture manifest (no dotnet needed)
+
+Since `dotnet build` stayed blocked, wrote a standalone Python port of W01's core algorithms
+(`VoiceWav.Validate`, `VoicePcmAssembler`, `VoiceSeek.Resolve`, `VoiceMarker.Classify`) and ran
+it against the live `tests/voice_messages/vectors/manifest.json` fixtures — script saved at
+the session scratchpad path `voice_crosscheck.py` (not committed; it's a diagnostic aid, not
+the real WT01 test, which must exercise the actual C# code once the build works). Result:
+**36/38 testable vectors pass** (30 skipped: recipe-only/large fixtures and non-algorithmic
+categories). Found and fixed three real issues in the committed C# before they could compound
+further:
+
+1. **`VoiceMarker.Classify` bug**: returned `InvalidMarkedContent` for a wrong-store or
+   mismatched-id marker; the fixtures (`marker-forged`, `marker-mismatched`) expect
+   `ordinary_attachment` for both — "Invalid marked content" is a distinct, later-stage
+   receiver state reached only after a genuine Candidate's retrieved bytes fail WAV
+   validation, never a possible outcome of marker classification itself. Removed
+   `InvalidMarkedContent` from `VoiceMarkerClassification` entirely (it only ever had two real
+   outcomes) and fixed `Classify`.
+2. **`MessageCard`'s voice-card gate** (W07) only checked `VoiceMarker.TryParse` succeeding,
+   not that the extracted id actually matched the message's own id — meaning a mismatched
+   marker would incorrectly enter the voice-card code path (landing on `VoiceCardState.Invalid`
+   there instead of never entering it at all). Fixed to gate on
+   `VoiceMarker.Classify(...)==Candidate`; simplified `ClassifyVoiceMessage` accordingly since
+   the id-check is now guaranteed by the caller.
+3. **Real design gap in `VoicePcmAssembler`** (W01): it had no bounded-capacity/overflow
+   behavior at all — Push() just returned however many frames a fragment produced, unbounded.
+   The `pcm-overflow` fixture (9 frames delivered in one push) expects the assembler itself to
+   cap at 8 frames per Push and fail terminally on a 9th, per pcm-contract.md's Capacity
+   items 1-3. Added a `MaxFramesPerPush=8` cap directly in `Push()`'s loop. No API change was
+   needed elsewhere: `VoiceRecorder.cs` (W03) already checked `TerminallyFailed` after every
+   `Push()` call, so this fix required touching only `VoiceMessages.cs`.
+
+**Two flagged, unresolved discrepancies** (left as-is, not blindly "fixed"):
+- `pcm-short-final`: expects `last_timestamp_ns=20125000` for a 2-byte (1-sample) final frame
+  following a 640-byte (320-sample) first frame; every formula I could derive from
+  pcm-contract.md's literal text gives `20062500` (321 samples × 62500) instead. The expected
+  value implies crediting that final frame with 2 samples' worth of time, not 1.
+- `seek-align-odd-byte`: expects seeking to 1 ms into a 1000 ms recording to resolve to byte 0
+  (`effective_ns=0`), when 16 kHz/16-bit audio has exactly 32 bytes/ms — 1 ms can only ever
+  resolve to byte 32 under any formula I can construct, never byte 0, and the "odd byte before
+  alignment" the vector's own description promises is mathematically unreachable from a clean
+  millisecond value at this fixed sample rate.
+
+Both fixture vectors pass `tests/voice_messages/check_contract.py`'s own internal-consistency
+checks (which validate self-consistency, e.g. `effective_ns` matching `aligned_byte`, not
+correctness against the actual seek/timestamp formula) — so the checker wouldn't have caught
+either discrepancy regardless of which side (my code or the fixture) is actually right. Given
+`manifest.json` is being actively edited by the Android-phase agent throughout this session
+(confirmed via repeated `git status` checks), these may simply not be finalized yet. Worth
+raising with whoever owns the I01-I04 contract before WT01/AT01 are written against them.
+
 ## Resume point
 
-Currently just past **W08**. W01-W08 all code written but completely unverified — the
-dotnet build is still blocked in this session (see above), so none of this has compiled even
-once. The full user-facing loop is now wired: record → stop → finalize → preview/delete/send,
-and receive → Candidate → Fetching → Playable (with real Play/Pause/±10s seek) or
-Invalid/Unavailable. Next action: **W09** (accessibility — labels, textual states, touch/
-focus order, announcements, accessible seeking, notification privacy, non-color errors).
+Currently just past **W08**, plus the cross-check above. W01-W08 all code written and now
+partially verified via the Python cross-check (36/38); still zero C# compilation in this
+session — the dotnet build remains blocked (see above). The full user-facing loop is wired:
+record → stop → finalize → preview/delete/send, and receive → Candidate → Fetching → Playable
+(with real Play/Pause/±10s seek) or Invalid/Unavailable. Next action: **W09** (accessibility —
+labels, textual states, touch/focus order, announcements, accessible seeking, notification
+privacy, non-color errors).
 
 Strong recommendation for whoever resumes this: before going further into W04+, stop and
 wire a small test entry point (likely a new `tests/CsharpHarness` command, mirroring the
