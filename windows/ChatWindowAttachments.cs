@@ -17,7 +17,7 @@ sealed partial class ChatWindow
     void RenderPendingAttachment()
     {
         foreach(Control control in attachmentDraft.Controls.Cast<Control>().ToArray())control.Dispose();attachmentDraft.Controls.Clear();
-        if(pendingAttachmentPath==null){attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;return;}
+        if(pendingAttachmentPath==null){attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;lastVoicePanel="";RenderVoicePanel();return;}
         attachmentDraft.Visible=true;pendingAttachmentRow.Height=150;
         var path=pendingAttachmentPath;long size;try{size=new FileInfo(path).Length;}catch{size=0;}
         // Only decode a thumbnail for attachments small enough that reading them fully is cheap;

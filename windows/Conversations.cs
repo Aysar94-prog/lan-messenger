@@ -191,7 +191,11 @@ public sealed partial class PeerEngine
         if(info.Length>MaxFileSize)throw new IOException($"Files must be {MaxFileSize/1024/1024} MB or smaller.");
         await QueueContentAsync(conversation,caption,name,File.OpenRead(sourcePath),(int)info.Length,onProgress);
     }
-    async Task QueueContentAsync(string conversation,string text,string fileName,Stream? data,int declaredSize,Action<long>? onProgress)
+    // `explicitId` lets a caller allocate the message id itself before calling in, needed when
+    // the id must also appear inside the attachment's filename (Voice Messages' marked
+    // `voice-<message-id>.lanvoice.wav` — see VoiceDrafts.cs SendVoiceDraft). Every other
+    // caller leaves it null and gets a freshly generated id, unchanged from before.
+    async Task QueueContentAsync(string conversation,string text,string fileName,Stream? data,int declaredSize,Action<long>? onProgress,string? explicitId=null)
     {
         text=text.Trim();if(text.Length>2000||(data==null&&text.Length==0)){data?.Dispose();throw new IOException("Messages must contain 1–2000 characters.");}
         if(data!=null&&declaredSize>MaxFileSize){data.Dispose();throw new IOException($"Files must be {MaxFileSize/1024/1024} MB or smaller.");}
@@ -201,7 +205,7 @@ public sealed partial class PeerEngine
             else if(peers.ContainsKey(conversation))recipients=[conversation];
             else{data?.Dispose();throw new IOException("Choose a conversation first.");}
         }
-        var id=Guid.NewGuid().ToString();var at=Now;var hash="";
+        var id=explicitId??Guid.NewGuid().ToString();var at=Now;var hash="";
         if(data!=null)using(data){
             var placeholder=new Message(id,Id,recipients[0],text,at,"Queued",groupId,fileName,declaredSize,"");
             hash=await StoreAttachmentStream(placeholder,data,declaredSize,onProgress);

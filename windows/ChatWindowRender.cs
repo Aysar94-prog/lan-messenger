@@ -31,6 +31,9 @@ sealed partial class ChatWindow
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
         var leavingPending=group!=null&&engine.PendingOwnershipHandoff(group.Id);
         verify.Enabled=peer!=null&&engine.Running;members.Enabled=group!=null;leaveGroup.Enabled=group!=null&&!leavingPending;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&!leavingPending&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy&&!leavingPending;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
+        var recordingHere=recordingConversation!=null&&recordingConversation==selected;
+        stopRecording.Visible=recordingHere;recordVoice.Visible=!recordingHere;recordVoice.Enabled=send.Enabled&&recordingDraftId==null;
+        RenderVoicePanel();
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
         heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members"+(leavingPending?" · Leaving — waiting for members to catch up":""):$"{peer!.Name} · {(engine.Running&&peer.Online?"Online":"Offline")}";
         var items=engine.Messages(selected!);

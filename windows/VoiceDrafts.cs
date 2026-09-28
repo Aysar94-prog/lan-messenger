@@ -186,6 +186,30 @@ public sealed partial class PeerEngine
         }
     }
 
+    // Ten-step durable write order, steps 7-10: allocate the message id and final marked
+    // filename together (the marker embeds this exact id — VoiceMarker.FileName), import the
+    // finalized WAV into the encrypted Normal store, durably save the queued message, then
+    // remove the registry entry (best-effort plaintext delete) only after both are durable.
+    // Voice Messages always use Normal storage (contract.md Decision 2) — never Fast, never
+    // an original-file reference — matching how QueueContentAsync is called below.
+    public async Task SendVoiceDraft(string draftId,string caption="")
+    {
+        string conversation;byte[] wav;
+        lock(gate){
+            if(!voiceDrafts.TryGetValue(draftId,out var d))throw new IOException("Unknown voice draft.");
+            if(d.State!=VoiceDraftState.Finalized)throw new IOException("This recording is not ready to send.");
+            var sendable=d.IsGroup?groups.ContainsKey(d.ConversationId):peers.ContainsKey(d.ConversationId);
+            if(!sendable)throw new IOException("This conversation can no longer receive messages; the recording can only be previewed or deleted.");
+            conversation=d.ConversationId;
+            wav=ReadVoiceDraftPlaintext(VoiceDraftPath(draftId));
+        }
+        var id=Guid.NewGuid().ToString();
+        MarkVoiceDraftSendTransaction(draftId,id);
+        var markedName=VoiceMarker.FileName(id);
+        await QueueContentAsync(conversation,caption,markedName,new MemoryStream(wav),wav.Length,null,id);
+        DeleteVoiceDraft(draftId);
+    }
+
     // --- Encrypted plaintext read/write, matching Conversations.cs's attachment-store construction ---
 
     byte[] ReadVoiceDraftPlaintext(string path)
