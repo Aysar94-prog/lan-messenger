@@ -132,10 +132,10 @@ sealed partial class ChatWindow : Form
         FormClosing+=(_,e)=>{if(!exiting&&e.CloseReason==CloseReason.UserClosing){e.Cancel=true;StopVoiceRecording();Hide();ShowNotification(null,"LAN Messenger","Still running. Right-click the tray icon and choose Exit to stop.");}};
         save.Click+=(_,_)=>{try{engine.Rename(profile.Text);profile.Text=engine.Name;}catch(Exception e){MessageBox.Show(e.Message,"Could not save name");}};
         scan.Click+=async(_,_)=>{if(!engine.Running)return;await engine.Announce();Render();};add.Click+=async(_,_)=>{if(engine.Running)await AddAddress();};
-        contacts.SelectedIndexChanged+=(_,_)=>{if(rendering)return;if(selected!=null)drafts[selected]=composer.Text;var next=(contacts.SelectedItem as ContactItem)?.Id;if(pendingAttachmentTarget!=null&&pendingAttachmentTarget!=next)ClearPendingAttachment();if(recordingConversation!=null&&recordingConversation!=next)StopVoiceRecording();selected=next;composer.Text=selected!=null&&drafts.TryGetValue(selected,out var draft)?draft:"";lastFeed="";Render();};
+        contacts.SelectedIndexChanged+=(_,_)=>{if(rendering)return;if(selected!=null)drafts[selected]=composer.Text;var next=(contacts.SelectedItem as ContactItem)?.Id;if(pendingAttachmentTarget!=null&&pendingAttachmentTarget!=next)ClearPendingAttachment();if(recordingConversation!=null&&recordingConversation!=next)StopVoiceRecording();StopActivePlayer();selected=next;composer.Text=selected!=null&&drafts.TryGetValue(selected,out var draft)?draft:"";lastFeed="";Render();};
         send.Click+=async(_,_)=>await Send();composer.KeyDown+=async(_,e)=>{if(e.KeyCode==Keys.Enter&&!e.Shift){e.SuppressKeyPress=true;await Send();}};
-        timer.Tick+=(_,_)=>{TickVoiceRecording();Render();};Shown+=(_,_)=>{timer.Start();if(requestedOnline)SetConnection(true,false);else Render();};
-        FormClosed+=(_,_)=>{StopVoiceRecording();timer.Stop();tray.Visible=false;tray.Dispose();engine.Dispose();};
+        timer.Tick+=(_,_)=>{TickVoiceRecording();TickVoicePlayback();Render();};Shown+=(_,_)=>{timer.Start();if(requestedOnline)SetConnection(true,false);else Render();};
+        FormClosed+=(_,_)=>{StopVoiceRecording();StopActivePlayer();timer.Stop();tray.Visible=false;tray.Dispose();engine.Dispose();};
         feed.Controls.Add(MessageLabel("People running LAN Messenger on your network appear automatically.\n\nContacts and messages stay saved after you close the app.\n\nOffline? Write a message now. It stays Queued until both devices are connected.\n\nNo contacts yet? Open the new app on another device on the same Wi-Fi. You can use Add by IP if discovery is blocked.",11,Ink,Math.Max(300,feed.Width-30)));
     }
     string connectionProblem="";
