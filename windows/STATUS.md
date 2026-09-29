@@ -40,7 +40,21 @@ The Windows engine has reusable `Start`/`GoOffline` and terminal `Dispose` (G1).
 
 G3 automated check: cross-platform `tests/offline_lifecycle.py` covers accepted idle control socket shutdown, Offline Add-by-IP/refresh and remote-download gating, rejected discovery, delayed avatar sync, group capability refusal, three interrupted receiver transfer modes (Fast direct, ordinary direct, encrypted ordinary cache) plus interrupted Fast sender, partial stability, no early completion marker, integrity and duplicate-free retries. The full `tests/run.ps1` suite (including Windows native UI) and Android SDK source compilation passed with SDK 9 MSBuild and in-workspace test output; one prior full attempt failed under the 16-member capability stress scenario and passed on isolated rerun and final full rerun. This is loopback engine coverage, not physical LAN acceptance; Windows native UI blocked-port/retry is automated, but physical Windows/two-device acceptance: **Pending-Unavailable**.
 
-Reviewed 2026-09-26. Release: **2.1.0** (unified with Android's version number as of this release). See the [platform comparison](../PROJECT_STATUS.md).
+Reviewed 2026-09-29. Release: **2.2.0** — the first Windows release to package the Voice
+Messages Phase 2 work described in the section above (record/send/receive/play, ±10s seek
+steps, one active inline player app-wide). No wire/storage change from 2.1.0; every other 2.1.0
+capability (group ownership transfer, 2.0.1 carryover) is unchanged. `dotnet build
+windows/LanMessenger.csproj -c Release` passed (0 errors, the one pre-existing benign
+`CS1998` warning in `ChatWindowVoice.cs` noted above). Published framework-dependent via `dotnet
+publish -c Release -o outputs/LanMessenger-Windows-2.2.0` (matching every prior Windows release's
+shape — requires .NET Desktop Runtime 9) and zipped: `outputs/LanMessenger-Windows-2.2.0.zip`
+(2,847,939 bytes, SHA-256 `fb5b2349…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`). Full
+`tests/run.ps1` run for this release exited 0: every native Windows UI test passed, including the
+Voice Messages ones (first/second voice message arrival and auto-download, Play starting real
+playback, one-active-player enforcement across cards, pause/resume toggle, seek not crashing,
+force-stop-and-finalize on conversation switch/tray-close/Offline). As noted above, W11's manual
+two-device physical acceptance is still **Pending** — this release has not been exercised on real
+Windows hardware beyond the automated build/test suite.
 
 ## Implemented
 

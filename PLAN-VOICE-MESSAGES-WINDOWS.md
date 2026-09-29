@@ -126,6 +126,28 @@ scenario — the same class of environmental network-timeout contention already 
 `windows/STATUS.md`'s 2.0.0-era entry, predating this session and this feature. Left untouched;
 out of scope for Voice Messages.
 
+## First packaged release (2026-09-29)
+
+By explicit user request — "build a Windows release with Voice Messages included" — packaged the
+already-code-complete W01-W11 work into an actual release for the first time, rather than leaving
+it source-only. `windows/LanMessenger.csproj`'s `<Version>` and `Program.cs`'s `AppVersion` both
+bumped `2.1.0` → `2.2.0`. `dotnet build -c Release` passed (0 errors, the one pre-existing benign
+`CS1998` warning in `ChatWindowVoice.cs`). Published framework-dependent via `dotnet publish -c
+Release`, matching the shape of every prior Windows release exactly (`LanMessenger.exe`/`.dll`/
+`.pdb`, `BouncyCastle.Cryptography.dll`, `.deps.json`/`.runtimeconfig.json` — requires .NET
+Desktop Runtime 9, no self-contained/RID bundling). Zipped as
+`outputs/LanMessenger-Windows-2.2.0.zip` (2,847,939 bytes, SHA-256 `fb5b2349…`; manifest:
+`outputs/SHA256SUMS-Windows-2.2.0.txt`). Full `tests/run.ps1` run for this exact release exited 0,
+including every native Windows UI test for Voice Messages: first/second voice message arrival and
+auto-download, clicking Play on a received card starting real playback, one active player app-wide
+(starting a second card stops the first, row updates immediately), pause/resume toggle, seek not
+crashing, and force-stop-and-finalize of an active recording on conversation switch, tray-close,
+and going Offline. WT02-WT05 remain unwritten and W11's manual two-device physical acceptance
+remains Pending — this packaging step did not add or skip any verification, it just makes the
+already-tested W01-W10/WT01/WT06 work installable for the first time. No wire or storage change
+from 2.1.0, so this interoperates with every 2.1.0-and-newer Android build at the pre-Voice-
+Messages feature level; actual cross-platform voice send/receive (Phase 3) is still unverified.
+
 Coordination note: `tests/voice_messages/check_contract.py`, `manifest.json`,
 `generate_wav_cases.py` and `wav_cases.bin` were under active concurrent edit by the
 Android-phase agent throughout this session (confirmed repeatedly via `git status`) and were
