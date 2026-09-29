@@ -88,13 +88,13 @@ final class VoiceCard {
         TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, durationMs), 15);
         durationLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
         controls.addView(durationLabel);
-        Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+        Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? VoicePlayback.PAUSE_ICON : VoicePlayback.PLAY_ICON);
         play.setContentDescription("Play or pause this voice message");
         android.widget.SeekBar seekBar = VoicePlayback.buildSeekBar(activity, playKey);
         seekBar.setLayoutParams(new LinearLayout.LayoutParams(activity.dp(220), LinearLayout.LayoutParams.WRAP_CONTENT));
         Runnable refresh = () -> {
           durationLabel.setText(VoicePlayback.playbackText(activity, playKey, durationMs));
-          play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+          play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? VoicePlayback.PAUSE_ICON : VoicePlayback.PLAY_ICON);
           VoicePlayback.updateSeekBar(activity, playKey, seekBar, durationMs);
         };
         play.setOnClickListener(v -> VoicePlayback.togglePlayback(activity, playKey, () -> { try { return e.readAttachment(m); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh));

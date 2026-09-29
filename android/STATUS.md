@@ -65,9 +65,11 @@ plan, not yet started.
 
 G3 automated check: fixed `goOffline()` for a unit test that intentionally exercises storage without starting the engine (executors are then absent). Cross-platform `tests/offline_lifecycle.py` checks accepted idle socket closure, Add-by-IP/refresh and remote-download gating, rejected discovery while Offline, delayed avatar sync, group capability refusal, Fast direct/ordinary direct/encrypted ordinary cache receiver interruption and Fast sender interruption, stable partial state, no premature completion marker, integrity and duplicate-free retry. `tests/android_service_lifecycle.py` guards the bound-only cleanup on engine-load failure, bind failure, and unbind while actual Offline. Android SDK compilation, APK packaging/signature verification, and Windows SDK 9 build passed after the final service-lifetime correction. Historical source-based physical checks passed on two Android devices for sender-side and receiver-side Offline transitions during transfer, Online resume, integrity, and duplicate avoidance. Historical source-based ADB checks confirmed no crash/ANR and no remaining Started service after removing the Offline Activity from Recents; reopening preserved local content and Online recovery succeeded. None of these device checks accepts the packaged 2.1.1 APK.
 
-Prior Android releases: **2.2.1** (2026-09-29, versionCode 28, Send/Save-button scroll fix),
-**2.2.0** (2026-09-29, versionCode 27, the first release packaging the Voice Messages Phase 1
-work), **2.1.1** (2026-09-27, versionCode 26). See the [platform comparison](../PROJECT_STATUS.md).
+Prior Android releases: **2.2.2** (2026-09-29, versionCode 29, replayable voice messages, drag
+seek bar, sender-sees-own-voice-as-player), **2.2.1** (2026-09-29, versionCode 28, Send/Save-
+button scroll fix), **2.2.0** (2026-09-29, versionCode 27, the first release packaging the Voice
+Messages Phase 1 work), **2.1.1** (2026-09-27, versionCode 26). See the
+[platform comparison](../PROJECT_STATUS.md).
 
 Reviewed 2026-09-29. Current Android local APK build: **2.2.2**, versionCode 29 — a same-day
 follow-up addressing real device-testing feedback on 2.2.1's voice messages, all in
@@ -105,6 +107,17 @@ message as a player (`ChatWindowVoiceCard.cs`'s W07 comment) and still only offe
 steps (`ChatWindowVoicePlayback.cs`'s W08 comment) — this pass was Android-only, addressing the
 user's Android device testing; Windows parity for these three UX points has not been raised with
 the user and is not yet planned.
+
+**Post-release icon pass (2026-09-29, same day)**: user feedback after 2.2.2 asked for WhatsApp-
+style iconography — a triangle Play button and a microphone icon for the record trigger, instead
+of text labels. Changed all voice transport buttons from text to Unicode glyphs: `▶`/`⏸`
+(`VoicePlayback.PLAY_ICON`/`PAUSE_ICON`, used by both `VoiceCard.java`'s Playable row and
+`VoiceUi.java`'s draft preview), `⏹` for Stop-recording, and `🎤` for the compose row's
+"Record voice" trigger in `MainActivity.java` (content description text is unchanged for
+accessibility — only the visible label changed). No layout, wire, or storage change. Verified
+through the real Android toolchain (`javac -source 8 -target 8` + `d8`), 0 errors. Packaged as
+**Android 2.2.3** (versionCode 30). Same signer as every prior release. No device/emulator
+acceptance yet for this build.
 
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 

@@ -95,6 +95,16 @@ the fixes directly target the three issues the user reported, but retesting on t
 still outstanding. Android-only pass; Windows still deliberately does the opposite on all three
 points (`ChatWindowVoicePlayback.cs`/`ChatWindowVoiceCard.cs`) and parity has not been raised.
 
+**Post-2.2.2 icon pass**: user asked for WhatsApp-style iconography instead of text buttons — a
+triangle Play button and a microphone icon for the record trigger. Changed every voice transport
+button from a text label to a Unicode glyph: `VoicePlayback.PLAY_ICON`/`PAUSE_ICON` (▶/⏸, used by
+both `VoiceCard.java`'s Playable row and `VoiceUi.java`'s draft preview row), `⏹` for
+Stop-recording, and `🎤` for `MainActivity.java`'s "Record voice" compose-row trigger.
+`setContentDescription` text is unchanged, so accessibility/TalkBack labeling is unaffected —
+only the visible glyph changed. No layout, wire, or storage change; verified through the real
+Android toolchain, 0 errors. Packaged as **Android 2.2.3** (versionCode 30), same signer as every
+prior release. No device/emulator acceptance yet for this build.
+
 Genuinely remaining, not something further agent work in this sandboxed environment can close:
 **AT03/AT05** (need real or simulated `AudioRecord`/`AudioTrack` device behavior — no equivalent
 to Windows' confirmed real `waveIn`/`waveOut` device has been found here, and Android's

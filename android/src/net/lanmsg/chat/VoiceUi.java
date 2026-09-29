@@ -182,7 +182,7 @@ final class VoiceUi {
       android.widget.TextView clockLabel = activity.label(formatElapsed(System.currentTimeMillis() - activity.recordingStartedAtMs), 15);
       clockLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE); // proactively announced as it ticks, unlike Windows' documented W09 limitation here.
       activity.attachmentDraft.addView(clockLabel);
-      Button stop = activity.button("Stop"); stop.setContentDescription("Stop recording"); stop.setOnClickListener(v -> stopVoiceRecording(activity)); activity.attachmentDraft.addView(stop);
+      Button stop = activity.button("⏹"); stop.setContentDescription("Stop recording"); stop.setOnClickListener(v -> stopVoiceRecording(activity)); activity.attachmentDraft.addView(stop);
     } else if (draft != null) {
       activity.attachmentDraft.setPadding(activity.dp(10), activity.dp(6), activity.dp(10), activity.dp(6));
       activity.attachmentDraft.setBackground(activity.bg(Color.rgb(235, 240, 250)));
@@ -194,11 +194,11 @@ final class VoiceUi {
       android.widget.SeekBar seekBar = VoicePlayback.buildSeekBar(activity, playKey);
       activity.attachmentDraft.addView(seekBar);
       LinearLayout row = new LinearLayout(activity); row.setOrientation(LinearLayout.HORIZONTAL);
-      Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+      Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? VoicePlayback.PAUSE_ICON : VoicePlayback.PLAY_ICON);
       play.setContentDescription("Play or pause this recording");
       Runnable refresh = () -> {
         durationLabel.setText(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"));
-        play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+        play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? VoicePlayback.PAUSE_ICON : VoicePlayback.PLAY_ICON);
         VoicePlayback.updateSeekBar(activity, playKey, seekBar, durationMs);
       };
       play.setOnClickListener(v -> { PeerEngine engine = activity.engine(); if (engine == null) return; VoicePlayback.togglePlayback(activity, playKey, () -> { try { return engine.readVoiceDraftWav(dId); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh); });

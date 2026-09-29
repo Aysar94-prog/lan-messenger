@@ -16,6 +16,9 @@ import java.util.function.Supplier;
 final class VoicePlayback {
   private VoicePlayback() {}
 
+  // WhatsApp-style icon glyphs instead of text labels for the transport buttons.
+  static final String PLAY_ICON = "▶", PAUSE_ICON = "⏸";
+
   static void stopActivePlayer(MainActivity activity) {
     if (activity.activePlayer == null) return;
     VoicePlayer p = activity.activePlayer;
