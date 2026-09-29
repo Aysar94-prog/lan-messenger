@@ -32,6 +32,15 @@ public class MainActivity extends Activity {
   // The picked attachment's Uri and size, not its bytes — a 1 GB attachment is never fully read
   // into memory just to sit in the compose draft; it's streamed only once actually queued to send.
   Uri pendingAttachmentUri; long pendingAttachmentSize; File pendingCameraFile; boolean pendingFast,sendBusy;
+  // Voice Messages (Phase 1 / Android), A04: one recorder app-wide, matching the shared
+  // one-recorder rule. See VoiceUi.java for the actual logic; these fields are just state.
+  String recordingDraftId,recordingConversation; VoiceRecorder activeRecorder; VoiceDraftWriter activeWriter;
+  long recordingStartedAtMs; boolean recordingStopping; String lastVoicePanel="";
+  // Only one persistent button lives in the compose action row (Record); Stop lives inside the
+  // voice panel itself (VoiceUi.renderVoicePanel), next to the recording clock -- avoids adding a
+  // second permanently-visible button to an already-crowded action row for a state that's only
+  // ever active while that panel is showing anyway.
+  Button recordVoice;
   final Map<String,TextView> progressLabels=new HashMap<>();
   static final long THUMBNAIL_PREVIEW_CAP=20*1024*1024;
   // (bytesDone, bytesTotal) per in-flight message id — transient, never persisted.
@@ -53,7 +62,7 @@ public class MainActivity extends Activity {
   };
   PeerEngine engine(){return host==null?null:host.engine;}
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
-  final Runnable tick=new Runnable(){public void run(){render();if(active)ui.postDelayed(this,1000);}};
+  final Runnable tick=new Runnable(){public void run(){VoiceUi.tickVoiceRecording(MainActivity.this);render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
   TextView label(String text,int size){TextView t=new TextView(this);t.setText(text);t.setTextColor(ink);t.setTextSize(size);t.setPadding(0,dp(6),0,dp(6));return t;}
   LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
@@ -80,7 +89,7 @@ public class MainActivity extends Activity {
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
   void saveDraft(){if(selected!=null&&composer!=null)drafts.put(selected,composer.getText().toString());}
-  void showPeople(){saveDraft();AttachmentFlow.clearPendingAttachment(this);selected=null;composer=null;lastSignature="";frame();
+  void showPeople(){saveDraft();if(recordingConversation!=null)VoiceUi.stopVoiceRecording(this);AttachmentFlow.clearPendingAttachment(this);selected=null;composer=null;lastSignature="";frame();
     LinearLayout headerBar=new LinearLayout(this);headerBar.setOrientation(LinearLayout.HORIZONTAL);headerBar.setGravity(android.view.Gravity.CENTER_VERTICAL);headerBar.setBackgroundColor(headerDark);headerBar.setPadding(dp(18),dp(14),dp(18),dp(14));
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
     Button menuButton=PeopleListView.barButton(this,"☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->PeopleListView.openMenu(this));headerBar.addView(menuButton);
@@ -101,7 +110,7 @@ public class MainActivity extends Activity {
   }
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
-  void showChat(String id){saveDraft();if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
+  void showChat(String id){saveDraft();if(recordingConversation!=null&&!recordingConversation.equals(id))VoiceUi.stopVoiceRecording(this);if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
     PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
       if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
@@ -122,7 +131,7 @@ public class MainActivity extends Activity {
       loadingEarlier=true;int previousHeight=feed.getHeight();visibleMessageCounts.put(selected,current+20);lastSignature="";render();
       scroll.post(()->{scroll.scrollTo(0,Math.max(0,feed.getHeight()-previousHeight));loadingEarlier=false;});
     });
-    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->AttachmentFlow.capturePhoto(this));photo.setOnClickListener(v->AttachmentFlow.pickFile(this,true));file.setOnClickListener(v->AttachmentFlow.pickFile(this,false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->AttachmentFlow.pickFastFile(this));HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
+    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->AttachmentFlow.capturePhoto(this));photo.setOnClickListener(v->AttachmentFlow.pickFile(this,true));file.setOnClickListener(v->AttachmentFlow.pickFile(this,false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->AttachmentFlow.pickFastFile(this));recordVoice=button("Record voice");composeActions.addView(recordVoice);recordVoice.setOnClickListener(v->VoiceUi.startVoiceRecording(this));HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
     send.setOnClickListener(v->{
       PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_SHORT).show();return;}
       if(pendingAttachmentUri==null&&composer.getText().toString().trim().isEmpty())return;
@@ -144,7 +153,7 @@ public class MainActivity extends Activity {
           if(uri==null)try{e.flush();}catch(Exception ignored){}
         }catch(Exception error){ui.post(()->{sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);problem(error);});}
       },"lan-send").start();
-    });AttachmentFlow.renderPendingAttachment(this);render();
+    });AttachmentFlow.renderPendingAttachment(this);VoiceUi.renderVoicePanel(this);render();
     // The header is now a single always-compact bar, so keyboard-open only needs to hide the group
     // notice and snap to the latest message — there is no separate button row left to collapse.
     View decor=getWindow().getDecorView();final boolean[] keyboardWasVisible={false};
@@ -199,7 +208,7 @@ public class MainActivity extends Activity {
     }
     PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;
     boolean leavingPending=group!=null&&e.pendingOwnershipHandoff(group.id);
-    heading.setText(group!=null?group.name+" · "+group.members.length+" members"+(leavingPending?" · Leaving — waiting for members to catch up":""):peer.name+" · "+("Online".equals(host.state)&&peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&!leavingPending&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy&&!leavingPending);List<PeerEngine.Message> messages=e.messages(selected);
+    heading.setText(group!=null?group.name+" · "+group.members.length+" members"+(leavingPending?" · Leaving — waiting for members to catch up":""):peer.name+" · "+("Online".equals(host.state)&&peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&!leavingPending&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy&&!leavingPending);if(recordVoice!=null)recordVoice.setEnabled(send.isEnabled()&&recordingDraftId==null);List<PeerEngine.Message> messages=e.messages(selected);
     int visibleCount=visibleMessageCounts.getOrDefault(selected,10);int start=Math.max(0,messages.size()-visibleCount);
     StringBuilder signature=new StringBuilder(selected).append(start);for(int i=start;i<messages.size();i++){PeerEngine.Message m=messages.get(i);signature.append(m.id).append(m.status).append(e.hasAttachment(m)).append(e.downloading(m));}if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();progressLabels.clear();
     if(messages.isEmpty())feed.addView(label("Verify this device before chatting.\n\nQueued messages send after both verified devices reconnect. Delivered means saved on the other device.",17));
@@ -375,6 +384,23 @@ public class MainActivity extends Activity {
   // Back closes an open side menu first; only then does the existing navigation run.
   @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;ui.removeCallbacks(tick);ui.post(tick);}
-  @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);saveDraft();}
-   @Override protected void onDestroy(){if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
+  // Backgrounding forces a safe stop, same as Windows' hide-to-tray/conversation-switch triggers:
+  // recording is a foreground-UI activity here (no foreground-service microphone type declared),
+  // so it cannot continue meaningfully once the Activity leaves the foreground.
+  @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);saveDraft();}
+   // stopVoiceRecording's real work runs on its own background thread and is not awaited here --
+   // unlike Windows' FormClosed (which really does end the whole process), destroying this
+   // Activity does not by itself kill the process (MessengerService keeps it alive as a
+   // foreground service), so that thread realistically gets to finish naturally in the common
+   // case. If it doesn't, ReconcileVoiceDrafts (A02) safely diagnoses the leftover
+   // Recording-state entry as Invalid the next time the registry is reconciled -- acceptable,
+   // matching Windows' own documented limitation here.
+   @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
+  @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+    super.onRequestPermissionsResult(requestCode,permissions,results);
+    if(requestCode==VoiceUi.RECORD_AUDIO_REQUEST){
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)VoiceUi.startVoiceRecording(this);
+      else VoiceUi.permissionDenied(this);
+    }
+  }
 }
