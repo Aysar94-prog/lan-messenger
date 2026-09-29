@@ -18,15 +18,19 @@ try {
   Check-Result
   dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-scheduler-check
   Check-Result
+  dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-draft-reconcile-check
+  Check-Result
   python tests/voice_architecture_check.py
   Check-Result
   python tests/voice_drafts.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
   python tests/voice_scheduler.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
-  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/DirectFileTransfer.java android/src/net/lanmsg/chat/DownloadDestination.java android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/AttachmentStore.java android/src/net/lanmsg/chat/TransferManager.java android/src/net/lanmsg/chat/GroupSync.java android/src/net/lanmsg/chat/AvatarSync.java android/src/net/lanmsg/chat/ResumeStore.java android/src/net/lanmsg/chat/ResumableTransfer.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java android/src/net/lanmsg/chat/VoiceMessages.java android/src/net/lanmsg/chat/VoiceDrafts.java tests/PeerHarness.java tests/TestProtector.java tests/LegacyGroupState.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java tests/TransferWatchdogTest.java tests/ResumeStoreTest.java tests/MiniJson.java tests/VoiceMessagesCheck.java
+  & "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -d "$TestRoot\java" android/src/net/lanmsg/chat/DirectFileTransfer.java android/src/net/lanmsg/chat/DownloadDestination.java android/src/net/lanmsg/chat/PeerEngine.java android/src/net/lanmsg/chat/AttachmentStore.java android/src/net/lanmsg/chat/TransferManager.java android/src/net/lanmsg/chat/GroupSync.java android/src/net/lanmsg/chat/AvatarSync.java android/src/net/lanmsg/chat/ResumeStore.java android/src/net/lanmsg/chat/ResumableTransfer.java android/src/net/lanmsg/chat/DailyUploadPolicy.java android/src/net/lanmsg/chat/SecureIdentity.java android/src/net/lanmsg/chat/VoiceMessages.java android/src/net/lanmsg/chat/VoiceDrafts.java tests/PeerHarness.java tests/TestProtector.java tests/LegacyGroupState.java tests/DailyUploadPolicyTest.java tests/AttachmentRangeTest.java tests/TransferWatchdogTest.java tests/ResumeStoreTest.java tests/MiniJson.java tests/VoiceMessagesCheck.java tests/VoiceDraftReconcileCheck.java
   Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.VoiceMessagesCheck (Join-Path $PSScriptRoot 'voice_messages/vectors')
+  Check-Result
+  & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.VoiceDraftReconcileCheck
   Check-Result
   python tests/voice_drafts_android.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
