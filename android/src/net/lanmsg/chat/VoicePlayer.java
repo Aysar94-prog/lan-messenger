@@ -81,7 +81,6 @@ public final class VoicePlayer {
   }
 
   public void resume() throws IOException {
-    boolean restartTrack;
     synchronized (lock) {
       if (closed || track == null) return;
       if (!requestFocusLocked()) throw new IOException("Could not get audio playback focus.");
@@ -90,18 +89,24 @@ public final class VoicePlayer {
       // play() already had this reset; resume() (used by togglePlayback for the same active key,
       // which is exactly the "press Play again after it finished" case) needed it too, to let a
       // voice message be replayed any number of times.
-      restartTrack = playPosition >= dataEnd();
-      if (restartTrack) { playPosition = info.dataOffset; epoch++; }
+      if (playPosition >= dataEnd()) {
+        playPosition = info.dataOffset; epoch++;
+        // A plain play() on a track that naturally drained (buffer underrun, never explicitly
+        // stopped) doesn't reliably resume producing audio on every device -- confirmed on a
+        // real device after the position-reset above alone wasn't enough. stop()+flush() forces
+        // the track back to a clean, known state, exactly like seek()'s own pause+flush.
+        //
+        // This whole reset MUST finish, and play() MUST already have been called, before
+        // notifyAll() below wakes the write thread -- otherwise the write thread can race ahead,
+        // write a chunk into the track, and then have this very flush() wipe it out (or race
+        // against this play() call), which is exactly what caused audio to start and then stop
+        // immediately on a real device with the previous (racy) version of this fix.
+        try { track.stop(); track.flush(); } catch (Exception ignored) {}
+      }
+      try { track.play(); } catch (Exception ex) { throw new IOException("Could not resume playback.", ex); }
       playing = true;
       lock.notifyAll();
     }
-    // A plain play() on a track that naturally drained (buffer underrun, never explicitly
-    // stopped) doesn't reliably resume producing audio on every device -- confirmed on a real
-    // device after the position-reset fix above alone wasn't enough. stop()+flush() forces the
-    // track back to a clean, known state before feeding it fresh data, exactly like seek()
-    // already does for its own pause+flush before continuing.
-    if (restartTrack) { try { track.stop(); track.flush(); } catch (Exception ignored) {} }
-    track.play();
   }
 
   // Contract.md's seven-step seek procedure, steps 5-7: invalidates output already queued from
