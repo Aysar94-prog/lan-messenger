@@ -14,6 +14,8 @@ try {
   Check-Result
   dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-check (Join-Path $PSScriptRoot 'voice_messages/vectors')
   Check-Result
+  dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-device-check
+  Check-Result
   python tests/voice_architecture_check.py
   Check-Result
   python tests/voice_drafts.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
