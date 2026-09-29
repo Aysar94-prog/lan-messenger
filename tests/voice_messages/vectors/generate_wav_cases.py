@@ -99,18 +99,18 @@ def case_truncated() -> tuple[str, bytes]:
     return "wav-invalid-truncated", header + data
 
 
-def case_one_sample() -> tuple[str, bytes]:
-    """Valid header but only 2 bytes of data (one sample, not a full frame)."""
+def case_valid_one_sample() -> tuple[str, bytes]:
+    """One-sample valid WAV: 16 kHz mono 16-bit PCM, 2 data bytes (nonempty even)."""
     data = silent_pcm_samples(1)  # 2 bytes
     header = build_wav_header(len(data))
-    return "wav-invalid-one-sample", header + data
+    return "wav-valid-one-sample", header + data
 
 
-def case_short_final_frame() -> tuple[str, bytes]:
-    """642 data bytes: one full 640-byte frame + 2-byte short final frame."""
+def case_valid_short_final_frame() -> tuple[str, bytes]:
+    """Valid WAV: 642 data bytes (640-byte full frame + 2-byte nonempty even final frame)."""
     data = silent_pcm_samples(321)  # 642 bytes
     header = build_wav_header(len(data))
-    return "wav-invalid-short-final-frame", header + data
+    return "wav-valid-short-final-frame", header + data
 
 
 def case_bad_block_align() -> tuple[str, bytes]:
@@ -219,12 +219,52 @@ def case_reordered_chunks() -> tuple[str, bytes]:
     return "wav-invalid-reordered-chunks", bytes(buf)
 
 
-def case_trailing_bytes() -> tuple[str, bytes]:
-    """Extra bytes after the data chunk (item 14: trailing bytes)."""
+def case_riff_size_mismatch() -> tuple[str, bytes]:
+    """RIFF declared size does not match physical file length (bounds error at precedence 4).
+    
+    Canonical 44-byte header + 640 data bytes = 684 bytes (RIFF size declares 676 → 680 total).
+    Physical file is 690 bytes, so RIFF declared total (680) ≠ physical - 8 (682).
+    """
     data = silent_pcm_samples(320)
-    header = build_wav_header(len(data))
+    header = build_wav_header(len(data))  # RIFF size = 676, total RIFF declared = 680
     trailing = b"\xde\xad\xbe\xef\xca\xfe"
-    return "wav-invalid-trailing-bytes", header + data + trailing
+    return "wav-invalid-riff-size-mismatch", header + data + trailing
+
+
+def case_trailing_bytes() -> tuple[str, bytes]:
+    """Extra bytes after the data chunk inside a size-correct RIFF (trailing error at precedence 14).
+    
+    RIFF declared size is deliberately set to match physical length minus 8 so the RIFF
+    chunk covers the trailing bytes. The data chunk declares 640 bytes, but raw bytes
+    follow the data chunk within the RIFF envelope.
+    """
+    data = silent_pcm_samples(320)  # 640 bytes
+    trailing = b"\xca\xfe\xba\xbe\x01\x02"
+    physical = 44 + len(data) + len(trailing)  # 44 + 640 + 6 = 690
+    riff_size = physical - 8  # 682
+    # Build header manually with the oversized RIFF size
+    byte_rate = 16000 * 1 * 2
+    block_align = 2
+    buf = bytearray()
+    buf.extend(b"RIFF")
+    buf.extend(struct.pack("<I", riff_size))
+    buf.extend(b"WAVE")
+    # fmt chunk
+    buf.extend(b"fmt ")
+    buf.extend(struct.pack("<I", 16))
+    buf.extend(struct.pack("<H", 1))   # audio_format = PCM
+    buf.extend(struct.pack("<H", 1))   # channels
+    buf.extend(struct.pack("<I", 16000))  # sample_rate
+    buf.extend(struct.pack("<I", byte_rate))
+    buf.extend(struct.pack("<H", block_align))
+    buf.extend(struct.pack("<H", 16))  # bits_per_sample
+    # data chunk
+    buf.extend(b"data")
+    buf.extend(struct.pack("<I", len(data)))
+    buf.extend(data)
+    # trailing bytes (inside RIFF size declaration but after data chunk)
+    buf.extend(trailing)
+    return "wav-invalid-trailing-bytes", bytes(buf)
 
 
 def case_unsupported_format() -> tuple[str, bytes]:
@@ -268,12 +308,13 @@ CASES = (
     case_bad_riff,
     case_wrong_rate,
     case_truncated,
-    case_one_sample,
-    case_short_final_frame,
+    case_valid_one_sample,
+    case_valid_short_final_frame,
     case_bad_block_align,
     case_unknown_chunk,
     case_duplicate_chunk,
     case_reordered_chunks,
+    case_riff_size_mismatch,
     case_trailing_bytes,
     case_unsupported_format,
 )
