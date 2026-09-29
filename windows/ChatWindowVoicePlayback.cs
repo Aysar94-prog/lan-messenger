@@ -5,6 +5,9 @@ namespace LanMessenger;
 // 6): starting playback for a different key always stops whatever was playing first.
 sealed partial class ChatWindow
 {
+    // WhatsApp-style icon glyphs instead of text labels, matching Android 2.2.3's identical change.
+    const string PlayIcon="▶",PauseIcon="⏸";
+
     VoicePlayer? activePlayer;
     string? activePlayerKey;
     Action? activePlayerUiRefresh;
@@ -44,14 +47,30 @@ sealed partial class ChatWindow
         uiRefresh();
     }
 
-    // Seek is offered as fixed -10 s/+10 s steps rather than a drag scrubber — a deliberate
-    // scope simplification for this pass (still exercises the real seven-step VoiceSeek
-    // procedure via VoicePlayer.Seek, just without scrubber UI/event-handling risk).
-    void SeekActivePlayer(string key,long deltaMs)
+
+    // A draggable WhatsApp-style scrubber, matching Android 2.2.x's SeekBar. VoicePlayer.Seek(long)
+    // already takes an absolute position, so the bar's Value maps onto it directly. The bar's own
+    // Tag doubles as a "user is dragging" flag: UpdateSeekBar must not fight the user's mouse by
+    // snapping the position back on every tick while a drag is in progress.
+    TrackBar BuildSeekBar(string key)
     {
-        if(activePlayerKey!=key||activePlayer==null)return;
-        var newMs=Math.Max(0,activePlayer.PositionNs/1_000_000+deltaMs);
-        try{activePlayer.Seek(newMs);}catch{}
+        var bar=new TrackBar{Minimum=0,Maximum=1,TickStyle=TickStyle.None,Width=180,Height=30,AccessibleName="Seek within this voice message"};
+        bar.Tag=false;
+        bar.MouseDown+=(_,_)=>bar.Tag=true;
+        bar.MouseUp+=(_,_)=>{
+            bar.Tag=false;
+            if(activePlayerKey==key&&activePlayer!=null)try{activePlayer.Seek(bar.Value);}catch{}
+        };
+        return bar;
+    }
+
+    void UpdateSeekBar(string key,TrackBar bar,long durationMs)
+    {
+        if(bar.IsDisposed||bar.Tag is true)return;
+        var max=(int)Math.Max(1,durationMs);
+        if(bar.Maximum!=max)bar.Maximum=max;
+        var pos=activePlayerKey==key&&activePlayer!=null?(int)Math.Min(max,activePlayer.PositionNs/1_000_000):0;
+        bar.Value=Math.Max(bar.Minimum,Math.Min(bar.Maximum,pos));
     }
 
     // Called from the existing 1 s timer tick so the active player's row (elapsed time, and

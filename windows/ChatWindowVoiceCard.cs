@@ -53,15 +53,27 @@ sealed partial class ChatWindow
             case VoiceCardState.Playable:
                 var duration=validation?.Info!.DurationMs??0;
                 var playKey="msg:"+message.From+"/"+message.Id;
+                row.FlowDirection=FlowDirection.TopDown;
+                var controlsRow=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink};
                 var durationLabel=MessageLabel(VoicePlaybackText(playKey,duration,""),11,Ink,width-220,true);
                 durationLabel.AccessibleRole=AccessibleRole.StatusBar;durationLabel.AccessibleName=durationLabel.Text;
-                row.Controls.Add(durationLabel);
-                var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true,AccessibleName="Play or pause this voice message"};
-                void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,duration,"");durationLabel.AccessibleName=durationLabel.Text;playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
-                playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadAttachment(message)),Refresh);row.Controls.Add(playBtn);
-                var back=new Button{Text="-10s",AutoSize=true,AccessibleName="Rewind 10 seconds"};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
-                var fwd=new Button{Text="+10s",AutoSize=true,AccessibleName="Forward 10 seconds"};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
-                var saveBtn=new Button{Text="Save",AutoSize=true,AccessibleName="Save this voice message to a file"};saveBtn.Click+=(_,_)=>SaveAttachment(message);row.Controls.Add(saveBtn);
+                controlsRow.Controls.Add(durationLabel);
+                // After a clip finishes, activePlayer.Playing reads false (VoicePlayer clears it
+                // the moment the last buffer completes), so this always re-settles on the Play
+                // icon rather than staying stuck on Pause — both here and in Refresh() below.
+                var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?PauseIcon:PlayIcon,AutoSize=true,AccessibleName="Play or pause this voice message"};
+                var seekBar=BuildSeekBar(playKey);
+                void Refresh(){
+                    if(durationLabel.IsDisposed||playBtn.IsDisposed)return;
+                    durationLabel.Text=VoicePlaybackText(playKey,duration,"");durationLabel.AccessibleName=durationLabel.Text;
+                    playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?PauseIcon:PlayIcon;
+                    UpdateSeekBar(playKey,seekBar,duration);
+                }
+                playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadAttachment(message)),Refresh);controlsRow.Controls.Add(playBtn);
+                var saveBtn=new Button{Text="Save",AutoSize=true,AccessibleName="Save this voice message to a file"};saveBtn.Click+=(_,_)=>SaveAttachment(message);controlsRow.Controls.Add(saveBtn);
+                row.Controls.Add(controlsRow);
+                row.Controls.Add(seekBar);
+                Refresh();
                 break;
             case VoiceCardState.Invalid:
                 // Falls back to the ordinary attachment treatment, backed by whatever copy is

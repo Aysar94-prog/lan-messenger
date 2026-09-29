@@ -253,25 +253,31 @@ class Check
     await Wait(()=>engine.Messages(second.Id).Count(IsVoice)==2,"Second voice message arrives");
     await Wait(()=>engine.Messages(second.Id).Where(IsVoice).All(engine.HasAttachment),"Second voice message auto-downloads");
     Call("RestoreWindow",second.Id);Call("Render");feedPanel.PerformLayout();
+    const string PlayIcon="▶",PauseIcon="⏸"; // matches ChatWindowVoicePlayback.cs's icon glyphs exactly.
     Button[] VoicePlayButtons()=>feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().Where(b=>b.AccessibleName=="Play or pause this voice message").OrderBy(b=>b.Top).ToArray();
     var playButtons=VoicePlayButtons();
     if(playButtons.Length!=2)throw new Exception("Expected 2 voice Play buttons, found "+playButtons.Length);
     playButtons[0].PerformClick();
-    if(playButtons[0].Text!="Pause")throw new Exception("First voice card did not start playing");
+    if(playButtons[0].Text!=PauseIcon)throw new Exception("First voice card did not start playing");
     Console.WriteLine("PASS: clicking Play on a received voice card starts real playback");
     await Task.Delay(300);
     playButtons[1].PerformClick();
-    if(playButtons[1].Text!="Pause")throw new Exception("Second voice card did not start playing");
-    if(playButtons[0].Text!="Play")throw new Exception("First voice card kept showing Pause after a different card took over playback");
+    if(playButtons[1].Text!=PauseIcon)throw new Exception("Second voice card did not start playing");
+    if(playButtons[0].Text!=PlayIcon)throw new Exception("First voice card kept showing Pause after a different card took over playback");
     Console.WriteLine("PASS: starting a second voice card stops the first (one active player app-wide) and its row updates immediately");
     playButtons[1].PerformClick();
-    if(playButtons[1].Text!="Play")throw new Exception("Clicking Play on the already-active card did not pause it");
+    if(playButtons[1].Text!=PlayIcon)throw new Exception("Clicking Play on the already-active card did not pause it");
     Console.WriteLine("PASS: clicking Play again on the active card pauses it (toggle behavior)");
     playButtons[1].PerformClick();
-    if(playButtons[1].Text!="Pause")throw new Exception("Clicking Play on a paused active card did not resume it");
+    if(playButtons[1].Text!=PauseIcon)throw new Exception("Clicking Play on a paused active card did not resume it");
     Console.WriteLine("PASS: clicking Play again on a paused card resumes it");
-    var seekButtons=feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().Where(b=>b.AccessibleName=="Forward 10 seconds").ToArray();
-    seekButtons.Last().PerformClick(); // seeks past this short clip's own end; must not throw or crash.
+    // Seek is now a draggable TrackBar (ChatWindowVoicePlayback.cs's BuildSeekBar), not fixed-step
+    // buttons -- simulate a drag-release the same way a real one fires: set Value, then invoke the
+    // protected OnMouseUp so the MouseUp handler (which is where BuildSeekBar actually calls
+    // VoicePlayer.Seek) runs, exactly as it would from a real mouse release.
+    var seekBar=feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<TrackBar>().Where(b=>b.AccessibleName=="Seek within this voice message").Last();
+    seekBar.Value=seekBar.Maximum; // seeks past this short clip's own end; must not throw or crash.
+    typeof(Control).GetMethod("OnMouseUp",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(seekBar,new object[]{new MouseEventArgs(MouseButtons.Left,1,0,0,0)});
     Console.WriteLine("PASS: seeking the active voice card does not crash");
     // ============ Voice Messages (Phase 2), WT03: lifecycle-safe-stop UI scenarios ============
     string? RecordingDraftId()=>(string?)type.GetField("recordingDraftId",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(form);
