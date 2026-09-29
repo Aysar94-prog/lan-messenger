@@ -179,14 +179,17 @@ final class VoiceUi {
     if (recordingHere) {
       activity.attachmentDraft.setPadding(activity.dp(10), activity.dp(6), activity.dp(10), activity.dp(6));
       activity.attachmentDraft.setBackground(activity.bg(Color.rgb(255, 235, 235)));
-      activity.attachmentDraft.addView(activity.label(formatElapsed(System.currentTimeMillis() - activity.recordingStartedAtMs), 15));
-      Button stop = activity.button("Stop"); stop.setOnClickListener(v -> stopVoiceRecording(activity)); activity.attachmentDraft.addView(stop);
+      android.widget.TextView clockLabel = activity.label(formatElapsed(System.currentTimeMillis() - activity.recordingStartedAtMs), 15);
+      clockLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE); // proactively announced as it ticks, unlike Windows' documented W09 limitation here.
+      activity.attachmentDraft.addView(clockLabel);
+      Button stop = activity.button("Stop"); stop.setContentDescription("Stop recording"); stop.setOnClickListener(v -> stopVoiceRecording(activity)); activity.attachmentDraft.addView(stop);
     } else if (draft != null) {
       activity.attachmentDraft.setPadding(activity.dp(10), activity.dp(6), activity.dp(10), activity.dp(6));
       activity.attachmentDraft.setBackground(activity.bg(Color.rgb(235, 240, 250)));
       boolean sendable = e != null && e.voiceDraftSendable(draft.id);
       String playKey = "draft:" + draft.id; final String dId = draft.id; final long durationMs = draft.durationMs;
       android.widget.TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"), 14);
+      durationLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
       activity.attachmentDraft.addView(durationLabel);
       LinearLayout row = new LinearLayout(activity); row.setOrientation(LinearLayout.HORIZONTAL);
       Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
@@ -199,8 +202,8 @@ final class VoiceUi {
       row.addView(play);
       Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
       Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
-      Button delete = activity.button("Delete"); delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
-      if (sendable) { Button send = activity.button("Send"); send.setOnClickListener(v -> sendVoiceDraftClicked(activity, dId)); row.addView(send); }
+      Button delete = activity.button("Delete"); delete.setContentDescription("Delete this recording"); delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
+      if (sendable) { Button send = activity.button("Send"); send.setContentDescription("Send this voice message"); send.setOnClickListener(v -> sendVoiceDraftClicked(activity, dId)); row.addView(send); }
       activity.attachmentDraft.addView(row);
     }
   }

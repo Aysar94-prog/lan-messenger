@@ -71,12 +71,15 @@ final class VoiceCard {
       case FETCHING: {
         long[] progress = activity.transferProgress.get(m.id);
         String pct = progress != null && progress[1] > 0 ? " " + (progress[0] * 100 / progress[1]) + "%" : "";
-        row.addView(activity.label("Voice message · Retrieving…" + pct, 15));
+        TextView fetchingLabel = activity.label("Voice message · Retrieving…" + pct, 15);
+        fetchingLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        row.addView(fetchingLabel);
         break;
       }
       case PLAYABLE: {
         String playKey = "msg:" + m.from + "/" + m.id;
         TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, readDurationMs(e, m)), 15);
+        durationLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
         row.addView(durationLabel);
         Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
         play.setContentDescription("Play or pause this voice message");
@@ -88,7 +91,7 @@ final class VoiceCard {
         row.addView(play);
         Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
         Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
-        Button save = activity.button("Save"); save.setOnClickListener(v -> AttachmentFlow.exportFile(activity, m)); row.addView(save);
+        Button save = activity.button("Save"); save.setContentDescription("Save this voice message to a file"); save.setOnClickListener(v -> AttachmentFlow.exportFile(activity, m)); row.addView(save);
         break;
       }
       case INVALID: {
