@@ -41,6 +41,9 @@ public class MainActivity extends Activity {
   // second permanently-visible button to an already-crowded action row for a state that's only
   // ever active while that panel is showing anyway.
   Button recordVoice;
+  // Voice Messages (Phase 1 / Android), A08: exactly one active player app-wide (contract.md
+  // Decision 6). See VoicePlayback.java for the actual logic.
+  VoicePlayer activePlayer; String activePlayerKey; Runnable activePlayerUiRefresh;
   final Map<String,TextView> progressLabels=new HashMap<>();
   static final long THUMBNAIL_PREVIEW_CAP=20*1024*1024;
   // (bytesDone, bytesTotal) per in-flight message id — transient, never persisted.
@@ -62,7 +65,7 @@ public class MainActivity extends Activity {
   };
   PeerEngine engine(){return host==null?null:host.engine;}
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
-  final Runnable tick=new Runnable(){public void run(){VoiceUi.tickVoiceRecording(MainActivity.this);render();if(active)ui.postDelayed(this,1000);}};
+  final Runnable tick=new Runnable(){public void run(){VoiceUi.tickVoiceRecording(MainActivity.this);if(activePlayerUiRefresh!=null)activePlayerUiRefresh.run();render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
   TextView label(String text,int size){TextView t=new TextView(this);t.setText(text);t.setTextColor(ink);t.setTextSize(size);t.setPadding(0,dp(6),0,dp(6));return t;}
   LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
@@ -89,7 +92,7 @@ public class MainActivity extends Activity {
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
   void saveDraft(){if(selected!=null&&composer!=null)drafts.put(selected,composer.getText().toString());}
-  void showPeople(){saveDraft();if(recordingConversation!=null)VoiceUi.stopVoiceRecording(this);AttachmentFlow.clearPendingAttachment(this);selected=null;composer=null;lastSignature="";frame();
+  void showPeople(){saveDraft();if(recordingConversation!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);AttachmentFlow.clearPendingAttachment(this);selected=null;composer=null;lastSignature="";frame();
     LinearLayout headerBar=new LinearLayout(this);headerBar.setOrientation(LinearLayout.HORIZONTAL);headerBar.setGravity(android.view.Gravity.CENTER_VERTICAL);headerBar.setBackgroundColor(headerDark);headerBar.setPadding(dp(18),dp(14),dp(18),dp(14));
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
     Button menuButton=PeopleListView.barButton(this,"☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->PeopleListView.openMenu(this));headerBar.addView(menuButton);
@@ -110,7 +113,7 @@ public class MainActivity extends Activity {
   }
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
-  void showChat(String id){saveDraft();if(recordingConversation!=null&&!recordingConversation.equals(id))VoiceUi.stopVoiceRecording(this);if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
+  void showChat(String id){saveDraft();if(recordingConversation!=null&&!recordingConversation.equals(id))VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
     PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
       if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
@@ -387,7 +390,7 @@ public class MainActivity extends Activity {
   // Backgrounding forces a safe stop, same as Windows' hide-to-tray/conversation-switch triggers:
   // recording is a foreground-UI activity here (no foreground-service microphone type declared),
   // so it cannot continue meaningfully once the Activity leaves the foreground.
-  @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);saveDraft();}
+  @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);saveDraft();}
    // stopVoiceRecording's real work runs on its own background thread and is not awaited here --
    // unlike Windows' FormClosed (which really does end the whole process), destroying this
    // Activity does not by itself kill the process (MessengerService keeps it alive as a
@@ -395,7 +398,7 @@ public class MainActivity extends Activity {
    // case. If it doesn't, ReconcileVoiceDrafts (A02) safely diagnoses the leftover
    // Recording-state entry as Invalid the next time the registry is reconciled -- acceptable,
    // matching Windows' own documented limitation here.
-   @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
+   @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
   @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
     super.onRequestPermissionsResult(requestCode,permissions,results);
     if(requestCode==VoiceUi.RECORD_AUDIO_REQUEST){

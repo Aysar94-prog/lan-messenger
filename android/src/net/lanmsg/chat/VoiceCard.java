@@ -5,7 +5,6 @@ import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 // Voice Messages (Phase 1 / Android), A07: Candidate/Fetching/Playable/Invalid marked
 // content/Unavailable receiver cards, per tests/voice_messages/validation-contract.md's Receiver
@@ -13,11 +12,9 @@ import android.widget.Toast;
 // classifies as a genuine voice Candidate -- see MainActivity's render() gate, mirroring
 // windows/ChatWindowVoiceCard.cs (W07) and its MessageCard gate exactly.
 //
-// Play/seek/Save-via-playback are a stub here (Toast "not implemented yet") pending A08
-// (AudioTrack player) -- this matches Windows' *original* W07 scope (before its later W08
-// commit wired the real player into the same file), not the current post-W08 state of that
-// file. Save/Export still works via the existing destination-picker path (AttachmentFlow),
-// since that's a distinct, already-built action, not a playback feature.
+// Play/seek are wired to the real VoicePlayer (A08) via VoicePlayback, the shared one-active-
+// player controller. Save/Export uses the existing destination-picker path (AttachmentFlow),
+// a distinct, already-built action, not a playback feature.
 final class VoiceCard {
   private VoiceCard() {}
   static final String CANDIDATE = "Candidate", FETCHING = "Fetching", PLAYABLE = "Playable", INVALID = "Invalid", UNAVAILABLE = "Unavailable";
@@ -43,6 +40,14 @@ final class VoiceCard {
   }
   private static boolean anyGroupMatches(PeerEngine e, String groupId) { for (PeerEngine.Group g : e.groups()) if (g.id.equals(groupId)) return true; return false; }
   private static boolean anyPeerMatches(PeerEngine e, String peerId) { for (PeerEngine.Peer p : e.peers()) if (p.id.equals(peerId)) return true; return false; }
+
+  // Only reached from the PLAYABLE branch, where classify() has already confirmed validation
+  // passes -- re-validating here (rather than threading the VoiceWavValidation through) is a
+  // deliberate, cheap defense-in-depth re-check, same reasoning as classify() itself re-checking
+  // on every call instead of trusting a cached result.
+  private static long readDurationMs(PeerEngine e, PeerEngine.Message m) {
+    try { return VoiceWav.validate(e.readAttachment(m)).info.durationMs; } catch (Exception ex) { return 0; }
+  }
 
   // Builds the card's voice-specific content into `card`; the caller still adds the caption text
   // afterward, same as any other attachment message.
@@ -70,8 +75,19 @@ final class VoiceCard {
         break;
       }
       case PLAYABLE: {
-        row.addView(activity.label("Voice message", 15));
-        Button play = activity.button("Play"); play.setOnClickListener(v -> Toast.makeText(activity, "Playback is not implemented yet.", Toast.LENGTH_SHORT).show()); row.addView(play);
+        String playKey = "msg:" + m.from + "/" + m.id;
+        TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, readDurationMs(e, m)), 15);
+        row.addView(durationLabel);
+        Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+        play.setContentDescription("Play or pause this voice message");
+        Runnable refresh = () -> {
+          durationLabel.setText(VoicePlayback.playbackText(activity, playKey, readDurationMs(e, m)));
+          play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+        };
+        play.setOnClickListener(v -> VoicePlayback.togglePlayback(activity, playKey, () -> { try { return e.readAttachment(m); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh));
+        row.addView(play);
+        Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
+        Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
         Button save = activity.button("Save"); save.setOnClickListener(v -> AttachmentFlow.exportFile(activity, m)); row.addView(save);
         break;
       }
