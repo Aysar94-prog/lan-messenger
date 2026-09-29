@@ -61,18 +61,28 @@ Windows 2.1.0 interoperates with Android 2.1.1, and both remain wire-compatible 
 | Keep complete UI trees for multiple active chats | Not implemented | Not implemented |
 | Daily aggregate upload tiers: unlimited below 2 GiB, then 30/20/10 MiB/s at 2/5/10 GiB | Not implemented by earlier Android-only scope | Implemented |
 | Comprehensive anti-flood policy | Not implemented beyond basic connection/transfer limits | Not implemented beyond basic limits and daily upload policy |
-| Voice messages: record, send, receive and play short voice clips (reuses the existing encrypted Normal attachment store; no new wire frame) | Implemented in source (Phase 2, W01-W10, WT01+WT06); WT02-WT05 and manual acceptance not yet done | Phase 1 developed concurrently by another agent in this repository; not yet reflected in this comparison — see `android/STATUS.md` for its own current state |
+| Voice messages: record, send, receive and play short voice clips (reuses the existing encrypted Normal attachment store; no new wire frame) | Implemented in source (Phase 2, W01-W11, WT01-WT06 all written; WT04's exact admission-ordering edge case untested) | Implemented in source (Phase 1, A01-A11, AT01/AT02/AT06; AT04 partial, same untested edge case as Windows; AT03/AT05 not attempted, no confirmed audio device in this environment) |
 
 Automatic ordinary images are the exception to destination selection and use an app-private cache. Fast image offers remain manual.
 
 Offline automation (not device acceptance): Android SDK source compilation and full `tests/run.ps1` (including Windows native UI and cross-platform `tests/offline_lifecycle.py`) passed with SDK 9 MSBuild and in-workspace test output. The loopback runner checks accepted idle socket closure, Offline gating, delayed avatar/group work, interrupted Fast/ordinary/cache transfers, partial stability, integrity and duplicate-free retry. One earlier full-suite 16-member capability stress failure passed on isolated rerun and final full rerun. A 2.1.1 APK has since been built, signed and independently verified (see Current releases above). Windows source-only Offline controls have no Windows 2.1.0 package acceptance; Android 2.1.1 APK device/emulator acceptance is **Pending-Unavailable**. Historical Android source-based two-device Offline checks passed but do not constitute 2.1.1 APK acceptance; remote peers age out after approximately 12 seconds, not instantaneously.
 
-Voice messages (Windows Phase 2, in source, not released): record/send/receive/play short voice
-clips per `plan-v003` — see [windows/STATUS.md](windows/STATUS.md) for the full write-up. Build
-and the new WT01/WT06 automated checks pass; manual two-device acceptance and Windows WT02-WT05
-remain outstanding. **Platform-local only; interoperability between the Windows and Android
-implementations has not yet been verified** (Phase 3 of the plan, not yet started) — this row
-will be revised once both platform exit gates and the integration phase complete.
+Voice messages (in source on both platforms, not released): record/send/receive/play short voice
+clips per `plan-v003` — see [windows/STATUS.md](windows/STATUS.md) and
+[android/STATUS.md](android/STATUS.md) for the full write-ups. Both platforms' implementation
+tasks (W01-W11 / A01-A11) are code-complete and pass their full local regression suites with
+zero regressions; both used real compile/build verification throughout, not blind ports. A real
+duplicate-Send bug in the draft registry's crash-boundary reconciliation was found during the
+Android verification pass and fixed on **both** platforms in the same session (see either
+status file's A05/W02 entry). Remaining on both: the scheduler's exact 3-consecutive-voice-then-
+1-image admission-ordering (WT04/AT04's untested edge case, deliberately not forced black-box
+against real async timing), device-lifecycle interaction tests needing real/simulated audio
+hardware (Windows got WT03/WT05 coverage because its sandboxed environment happened to expose a
+real `waveIn`/`waveOut` device; no Android equivalent has been confirmed here), and manual
+two-device acceptance on physical hardware. **Platform-local only; interoperability between the
+Windows and Android implementations has not yet been verified** (Phase 3 of the plan, not yet
+started) — this row will be revised once both platform exit gates and the integration phase
+complete.
 
 ## Performance and compatibility limits
 

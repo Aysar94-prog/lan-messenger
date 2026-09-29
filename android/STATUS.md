@@ -1,5 +1,64 @@
 # Android status
 
+## Voice Messages implemented in source (Phase 1 / A01-A11, not a release)
+
+Android Phase 1 of the shared Voice Messages feature (`plan-v003`, tracked at
+[PLAN-VOICE-MESSAGES-ANDROID.md](../PLAN-VOICE-MESSAGES-ANDROID.md)): record, send, receive and
+play short voice clips, reusing the existing encrypted Normal attachment store with a
+`voice-<message-id>.lanvoice.wav` marker filename — no new LM4 wire frame, matching the Windows
+implementation exactly (see [Windows status](../windows/STATUS.md)). Fixed format: RIFF/WAVE,
+16 kHz mono 16-bit PCM, 640-byte/20 ms frames, max 300 s/9.6 MB. Picked up after another agent
+(a concurrently running opencode/OAK session) spent several hours hardening the shared I01-I04
+contract layer (`tests/voice_messages/check_contract.py`, `validation-contract.md`) but had not
+yet written any Android production code.
+
+`AudioRecord`/`AudioTrack` capture/playback (one dedicated thread per adapter blocking in
+`read()`/`write()` — architecturally simpler than the Windows `winmm` P/Invoke adapters, which
+need to guard against an OS-invoked native callback on an arbitrary thread; Android's model has
+no such callback to race against); a durable, encrypted, capped (10-entry) draft registry with
+startup reconciliation (including a real duplicate-Send bug found and fixed on **both**
+platforms during the Android verification pass — see below); transactional Send; Candidate/
+Fetching/Playable/Invalid/Unavailable receiver cards; one active inline player app-wide with
+seven-step seeking (±10 s buttons) and no plaintext playback file; audio-focus handling (an
+Android-specific addition beyond Windows' equivalent task, which has no system-wide audio
+session model); voice folded into the existing automatic-media scheduler under the shared nine
+fixed rules; accessibility coverage that in one respect **exceeds** the Windows implementation
+(`setAccessibilityLiveRegion` proactively announces ticking labels to TalkBack — Windows'
+equivalent task explicitly could not achieve this without a custom `AccessibleObject` subclass,
+and accepted it as a documented limitation instead).
+
+**A01-A11 (all 11 implementation tasks) are code-complete.** Build/verification: this sandboxed
+environment has a real Android SDK (`android.jar`, `build-tools 35.0.0`, `d8`, and the existing
+signing key), so every task was verified by running the actual `javac -source 8 -target 8` +
+`d8` steps `android/build.ps1` uses directly against every production source file — real
+compile+dex confidence throughout, not a blind port, the same rigor Windows only got once its
+own build was unblocked mid-session. `android/build.ps1` itself was **not** run directly for
+this work (its own known pre-existing issue — `$ErrorActionPreference='Stop'` aborting on
+javac's benign deprecation note on stderr, documented further down this file — predates Voice
+Messages and is unrelated to it); the equivalent javac/d8 steps were run manually instead, same
+as every prior release's verification in this file already had to work around.
+
+AT01 (`tests/VoiceMessagesCheck.java`, real production classes against the shared manifest) and
+AT02 (`tests/voice_drafts_android.py`, 8 real crash-boundary scenarios including actual process
+kills and on-disk corruption) both pass. AT04 is partial (`tests/voice_scheduler_android.py`,
+real end-to-end automatic-download scheduling, plus a deterministic fairness-counter unit test)
+— the scheduler's exact admission-ordering edge case is untested for the same black-box-timing-
+fragility reason recorded on the Windows side. AT06 (architecture-boundary + canonical-fixture-
+source checks, `tests/voice_architecture_check.py`, now covering both platforms in one script)
+passes, and the **complete `tests/run.ps1` regression suite passed clean, zero regressions**
+from any A01-A10 change. **AT03 and AT05 (permission/lifecycle edge cases needing real
+`AudioRecord`/`AudioTrack` device behavior, and one-player-enforcement/export/accessibility UI
+interaction tests) were not attempted** — Windows only got its equivalent WT03/WT05 coverage
+because its sandboxed environment happened to expose a real `waveIn`/`waveOut` device; no
+equivalent has been confirmed for Android's audio stack here, and Android's `android.jar` is a
+compile-only stub that cannot actually execute real device code even where it links. **Manual
+two-device acceptance on physical hardware is Pending, cannot be performed by an agent** —
+same limitation already recorded throughout this file for every other Android feature.
+
+This is **platform-local only; interoperability with the Windows Phase 2 work (developed
+concurrently in this same repository) has not yet been verified** — that is Phase 3 of the
+plan, not yet started.
+
 ## Offline controls (G1–G3) — built as 2.1.1 local APK
 
 `PeerEngine.goOffline()` stops a reusable session while retaining identity, contacts, groups, local history, cached attachments, partial transfers and queued direct/group sends; `close()` remains terminal (G1). G2 moves sole engine ownership into a bindable service, reads a separate persisted default-Online request before startup (independent of people-list filters), and shares notification/people-menu transitions. Offline is a strict no-LAN boundary: no discovery/listening/connections, Refresh/Add by IP, verification, group capability queries or remote downloads. Refresh/Add by IP are disabled while Offline; verification explains that Online is required. An interrupted transfer retains progress for resume after reconnect; remote peers turn gray after approximately 12 seconds. Offline demotes the connected-device foreground service and releases the multicast lock; chats/profile/queued sends remain accessible while the Activity stays bound. Explicit Offline and engine-load/network-bind failures clear the started-service lifetime, so an actual-Offline service is bound-only and may be destroyed after unbind while the persisted Online request remains available for Retry online. Foreground and multicast lock are held only during networking. `START_NOT_STICKY` avoids OS-driven background restarts; Activity startup reads the persisted preference and requests Online explicitly when selected, otherwise only binds locally. Service/UI behavior has **not** been exercised on a device or emulator. No LM4 wire/compatibility change.
@@ -52,6 +111,7 @@ Reviewed 2026-09-28. Current Android local APK build: **2.1.1**, versionCode 26.
 - Java/C# engine interoperability, resume/disconnect, integrity, and daily-policy tests passed.
 - A 1025 MiB Fast test passed on a computer with a 64 MiB Java test heap; that is not a physical-phone benchmark.
 - Real-device acceptance is pending for destination chooser, file opening, camera, background behavior, and Wi-Fi throughput.
+- Voice Messages (Phase 1): `VoiceMessages.java` (transport-independent PCM/WAV/marker/seek core), `VoiceDrafts.java` (draft registry + `sendVoiceDraft`, static methods on `PeerEngine`), `VoiceRecorder.java`/`VoicePlayer.java` (`AudioRecord`/`AudioTrack` adapters), `VoiceUi.java` (own-draft record/send UI), `VoiceCard.java` (receiver cards), `VoicePlayback.java` (shared one-active-player controller), `TransferManager.java` (`queueAutomaticMedia`, the renamed/extended scheduler). Tests: `tests/VoiceMessagesCheck.java` (AT01), `tests/voice_drafts_android.py` (AT02), `tests/voice_scheduler_android.py` + `tests/VoiceSchedulerCheck.java` (AT04, partial), `tests/voice_architecture_check.py` (AT06). Progress tracker: [PLAN-VOICE-MESSAGES-ANDROID.md](../PLAN-VOICE-MESSAGES-ANDROID.md).
 - UI/cache: `src/net/lanmsg/chat/MainActivity.java` (`showMembers()`'s sync status, `confirmDeleteConversation`'s Leave-group wording and its `showTransferOwnershipPicker`, the Hide-groups filter and the "Leaving…"/"Leaving — waiting for…" rendering in `render()`). Side menu: `PeopleListView.java` (`readHideGroups`/`setHideGroups`). SAF/service: `MessengerService.java`. Direct transfer: `DirectFileTransfer.java`, `DownloadDestination.java`. Legacy encrypted path: `ResumableTransfer.java`, `ResumeStore.java`. Upload tiers: `DailyUploadPolicy.java`. Groups (live membership, `CAPS`, `addMember`, migration, `memberAckedVersion`, ownership transfer): `GroupSync.java`/`PeerEngine.java`.
 - Current Android package: `D:/LAN-Messenger/outputs/LanMessenger-2.1.1.apk`; install over the existing app without uninstalling, after checking `outputs/SHA256SUMS-Android-2.1.1.txt`. The 2.1.0 APK is the prior package, retained for reference; test outputs: `D:/LAN-Messenger/outputs/.build/release-tests-087`.
 - Last Android code commit: `7d9d99c`; the people side menu, delete-conversation/delete-app-data, forget-notice/group-re-invite, the 2.0.0 group-membership foundation + (later removed) join-request layer, the 2.0.1 join-request removal + Leave-group relabel, and the 2.1.0 group ownership-transfer feature committed locally on `master`, not pushed.
