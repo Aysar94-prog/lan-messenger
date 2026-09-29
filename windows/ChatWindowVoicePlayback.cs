@@ -12,8 +12,13 @@ sealed partial class ChatWindow
     void StopActivePlayer()
     {
         if(activePlayer==null)return;
-        var p=activePlayer;activePlayer=null;activePlayerKey=null;activePlayerUiRefresh=null;
+        var p=activePlayer;var oldRefresh=activePlayerUiRefresh;activePlayer=null;activePlayerKey=null;activePlayerUiRefresh=null;
         try{p.Dispose();}catch{}
+        // Without this, the row we just stopped keeps showing "Pause" (and a frozen elapsed
+        // position) until something unrelated forces a full re-render — Render()'s signature
+        // diff is keyed on message content, never on playback state, so nothing else would ever
+        // correct it. Found by WT05's real one-active-player test switching between two cards.
+        oldRefresh?.Invoke();
     }
 
     // Starts playback for `key`, or toggles Play/Pause if `key` is already the active player.
