@@ -185,16 +185,27 @@ final class VoiceUi {
       activity.attachmentDraft.setPadding(activity.dp(10), activity.dp(6), activity.dp(10), activity.dp(6));
       activity.attachmentDraft.setBackground(activity.bg(Color.rgb(235, 240, 250)));
       boolean sendable = e != null && e.voiceDraftSendable(draft.id);
-      activity.attachmentDraft.addView(activity.label(formatDuration(draft.durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"), 14));
+      String playKey = "draft:" + draft.id; final String dId = draft.id; final long durationMs = draft.durationMs;
+      android.widget.TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"), 14);
+      activity.attachmentDraft.addView(durationLabel);
       LinearLayout row = new LinearLayout(activity); row.setOrientation(LinearLayout.HORIZONTAL);
-      Button delete = activity.button("Delete"); final String dId = draft.id; delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
+      Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+      play.setContentDescription("Play or pause this recording");
+      Runnable refresh = () -> {
+        durationLabel.setText(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"));
+        play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+      };
+      play.setOnClickListener(v -> { PeerEngine engine = activity.engine(); if (engine == null) return; VoicePlayback.togglePlayback(activity, playKey, () -> { try { return engine.readVoiceDraftWav(dId); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh); });
+      row.addView(play);
+      Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
+      Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
+      Button delete = activity.button("Delete"); delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
       if (sendable) { Button send = activity.button("Send"); send.setOnClickListener(v -> sendVoiceDraftClicked(activity, dId)); row.addView(send); }
       activity.attachmentDraft.addView(row);
     }
   }
 
   static String formatElapsed(long ms) { return "Recording…  " + formatClock(ms); }
-  static String formatDuration(long ms) { return "Voice message · " + formatClock(ms); }
   private static String formatClock(long ms) {
     long s = Math.max(0, ms / 1000);
     return s >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60);
