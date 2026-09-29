@@ -32,7 +32,12 @@ final class VoicePlayback {
   // `loadWav` decrypts and reads the content; it only runs when starting a NEW key, not on
   // every toggle.
   static void togglePlayback(MainActivity activity, String key, Supplier<byte[]> loadWav, Runnable uiRefresh) {
-    if (key.equals(activity.activePlayerKey) && activity.activePlayer != null) {
+    // A finished player (played all the way to the end) is deliberately NOT resumed in place --
+    // reusing its AudioTrack past that point was confirmed unreliable on a real device even with
+    // a careful stop()+flush()+play() reset (see VoicePlayer.isFinished()'s comment). Falling
+    // through to the same "different key" path below, which builds a brand-new VoicePlayer, is
+    // exactly what leaving and re-entering the conversation already did to make replay work.
+    if (key.equals(activity.activePlayerKey) && activity.activePlayer != null && !activity.activePlayer.isFinished()) {
       VoicePlayer p = activity.activePlayer;
       try { if (p.isPlaying()) p.pause(); else p.resume(); } catch (Exception ex) { activity.problem(ex); }
       uiRefresh.run();

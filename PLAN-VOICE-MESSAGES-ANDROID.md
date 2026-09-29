@@ -129,6 +129,22 @@ removes the race rather than narrowing its window. Verified through the real And
 0 errors. Packaged as **Android 2.2.5** (versionCode 32), same signer as every prior release.
 Still awaiting the user's re-test.
 
+**Fifth pass — abandon in-place AudioTrack reuse entirely**: the user tested 2.2.5 and reported
+the exact same failure ("it play once... why i need to leave conversation to play rec again").
+Three consecutive attempts at reusing the same drained `AudioTrack` (position-reset alone,
+`stop()`+`flush()` outside the lock, the same reset correctly sequenced inside the lock) all
+failed on this device. The one thing that reliably worked the whole time was leaving the
+conversation and returning, because that path discards the old player and builds an entirely new
+`VoicePlayer`/`AudioTrack`. Rather than keep guessing at AudioTrack-reuse fixes, `VoicePlayer`
+now exposes `isFinished()`, and `VoicePlayback.togglePlayback` checks it: a finished player falls
+through to the same code path that builds a fresh player for a different message, so tapping Play
+on a finished voice message now does in-app exactly what leaving/re-entering used to do.
+`resume()` reverts to a plain pause/resume toggle — the dataEnd()/track-reset responsibility
+moved to the caller entirely. Verified through the real Android toolchain, 0 errors. Packaged as
+**Android 2.2.6** (versionCode 33), same signer as every prior release. This is the first fix in
+this chain built on a mechanism already independently confirmed to work on the user's own device,
+rather than a new theory about the failure — still awaiting the user's re-test to confirm.
+
 Genuinely remaining, not something further agent work in this sandboxed environment can close:
 **AT03/AT05** (need real or simulated `AudioRecord`/`AudioTrack` device behavior — no equivalent
 to Windows' confirmed real `waveIn`/`waveOut` device has been found here, and Android's

@@ -60,6 +60,15 @@ public final class VoicePlayer {
   public boolean isPlaying() { synchronized (lock) { return playing && !closed; } }
   public long positionNs() { synchronized (lock) { return (playPosition - info.dataOffset) / VoiceWav.BLOCK_ALIGN * 62500; } }
 
+  // True once playback has run to the very end and hasn't been seeked/replayed since. Reusing
+  // the same underlying AudioTrack past this point (stop()+flush()+play(), even done carefully
+  // under the lock to avoid the write-thread race a previous attempt had) was confirmed unreliable
+  // on a real device -- it either silently produced no audio, or produced a truncated fragment.
+  // Leaving the conversation and coming back always worked, because that path builds a brand-new
+  // VoicePlayer/AudioTrack from scratch -- so VoicePlayback.togglePlayback uses this flag to do
+  // exactly that in place, instead of trying to rewind this same instance.
+  public boolean isFinished() { synchronized (lock) { return !closed && !playing && playPosition >= dataEnd(); } }
+
   public void play() throws IOException {
     synchronized (lock) {
       if (closed) throw new IllegalStateException("Player already disposed.");
@@ -80,33 +89,18 @@ public final class VoicePlayer {
     abandonFocus();
   }
 
+  // Resumes a paused-mid-playback player. Never called on a finished player -- VoicePlayback.
+  // togglePlayback routes that case through isFinished() to a brand-new VoicePlayer instead (see
+  // that flag's comment for why several in-place-reuse attempts here didn't hold up on a real
+  // device). No dataEnd()/track reset needed here any more as a result.
   public void resume() throws IOException {
     synchronized (lock) {
       if (closed || track == null) return;
       if (!requestFocusLocked()) throw new IOException("Could not get audio playback focus.");
-      // Without this, clicking Play again after a clip finishes silently does nothing: position
-      // is still at dataEnd(), so the write loop immediately re-idles instead of restarting.
-      // play() already had this reset; resume() (used by togglePlayback for the same active key,
-      // which is exactly the "press Play again after it finished" case) needed it too, to let a
-      // voice message be replayed any number of times.
-      if (playPosition >= dataEnd()) {
-        playPosition = info.dataOffset; epoch++;
-        // A plain play() on a track that naturally drained (buffer underrun, never explicitly
-        // stopped) doesn't reliably resume producing audio on every device -- confirmed on a
-        // real device after the position-reset above alone wasn't enough. stop()+flush() forces
-        // the track back to a clean, known state, exactly like seek()'s own pause+flush.
-        //
-        // This whole reset MUST finish, and play() MUST already have been called, before
-        // notifyAll() below wakes the write thread -- otherwise the write thread can race ahead,
-        // write a chunk into the track, and then have this very flush() wipe it out (or race
-        // against this play() call), which is exactly what caused audio to start and then stop
-        // immediately on a real device with the previous (racy) version of this fix.
-        try { track.stop(); track.flush(); } catch (Exception ignored) {}
-      }
-      try { track.play(); } catch (Exception ex) { throw new IOException("Could not resume playback.", ex); }
       playing = true;
       lock.notifyAll();
     }
+    track.play();
   }
 
   // Contract.md's seven-step seek procedure, steps 5-7: invalidates output already queued from
