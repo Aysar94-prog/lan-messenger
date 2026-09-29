@@ -20,18 +20,57 @@ final class TransferManager {
   static File segmentPath(PeerEngine e,PeerEngine.Message m,int part)throws IOException{return new File(partsPath(e,m),part+".sec");}
   static boolean hasAttachment(PeerEngine e,PeerEngine.Message m){try{return !m.fileName.isEmpty()&&(DownloadDestination.get(e,m).complete||AttachmentStore.attachmentPath(e,m).exists()||sourcePath(e,m).exists()||new File(partsPath(e,m),"complete").exists());}catch(Exception ex){return false;}}
   static boolean retained(PeerEngine e,PeerEngine.Message m){synchronized(e){if(e.hidden.contains(m.from+"/"+m.id)||(m.ttlEligible&&System.currentTimeMillis()>m.time+PeerEngine.GROUP_TTL_MS))return false;for(PeerEngine.Message row:e.messages)if(row.from.equals(m.from)&&row.id.equals(m.id))return true;return false;}}
-  static void queueImageDownloads(PeerEngine e){
-    if(!e.running)return;java.util.ArrayList<PeerEngine.Message> images=new java.util.ArrayList<>();
-    synchronized(e){for(PeerEngine.Message m:e.messages)if(!m.from.equals(e.id)&&PeerEngine.isImageAttachment(m))images.add(m.copy());}
-    for(PeerEngine.Message m:images){
+  // Voice Messages (Phase 1 / Android), A06: extends the former queueImageDownloads into the
+  // fixed automatic-media scheduler, mirroring windows/Transfers.cs's QueueAutomaticMedia (W06)
+  // exactly. Rules 1-3: user-initiated work is a separate, ungated path (downloadAttachment
+  // called directly from the UI never touches imageSlots), so it is never delayed by this
+  // scheduler. Among automatic work, voice is considered before image by default (rule 2/3);
+  // rule 4 overrides that after three consecutive automatic voice admissions while an eligible
+  // image is waiting. Rule 5: already-running downloads hold their semaphore permit
+  // independently and are never touched here. Rule 7: the fairness counter only moves on an
+  // actual successful admission (a claimed add to the attempts set), never on a scan, rejection,
+  // duplicate, or unreachable offer. Rule 9: eligibility is recomputed fresh from current
+  // message/retention state on every call (including the first call after restart), so there is
+  // nothing extra to reconstruct.
+  static void queueAutomaticMedia(PeerEngine e){
+    if(!e.running)return;
+    java.util.ArrayList<PeerEngine.Message> snapshot=new java.util.ArrayList<>();
+    synchronized(e){for(PeerEngine.Message m:e.messages)if(!m.from.equals(e.id))snapshot.add(m.copy());}
+    java.util.ArrayList<PeerEngine.Message> images=new java.util.ArrayList<>();
+    java.util.ArrayList<PeerEngine.Message> voices=new java.util.ArrayList<>();
+    for(PeerEngine.Message m:snapshot){
       String key=m.from+"/"+m.id;
-      if(hasAttachment(e,m)||downloading(e,m)||e.imageAttempts.contains(key)||!retained(e,m))continue;
-      boolean reachable=false;for(PeerEngine.Peer p:e.peers())if(p.trusted()&&p.online()&&(p.id.equals(m.from)||(!m.groupId.isEmpty()&&GroupSync.allowedGroup(e,m.groupId,p.id)))){reachable=true;break;}
-      if(!reachable)continue;if(!e.imageSlots.tryAcquire())break;
-      if(!e.imageAttempts.add(key)){e.imageSlots.release();continue;}
-      Thread worker=new Thread(()->{try{downloadAttachment(e,m);}catch(Exception ignored){}finally{e.imageSlots.release();e.notifyChanged();}},"lan-image-download");worker.setDaemon(true);worker.start();
+      if(PeerEngine.isImageAttachment(m)){if(!e.imageAttempts.contains(key)&&candidateReady(e,m))images.add(m);}
+      else if(isVoiceCandidate(m)){if(!e.voiceAttempts.contains(key)&&candidateReady(e,m))voices.add(m);}
+    }
+    int vi=0,ii=0;
+    while(vi<voices.size()||ii<images.size()){
+      boolean admitVoice;
+      synchronized(e.schedulerGate){
+        if(vi>=voices.size())admitVoice=false;
+        else if(ii>=images.size())admitVoice=true;
+        else admitVoice=e.consecutiveAutoVoiceAdmissions<3;
+      }
+      PeerEngine.Message chosen=admitVoice?voices.get(vi++):images.get(ii++);
+      boolean isVoice=isVoiceCandidate(chosen);
+      java.util.Set<String> attempts=isVoice?e.voiceAttempts:e.imageAttempts;
+      String key=chosen.from+"/"+chosen.id;
+      if(!e.imageSlots.tryAcquire())break;
+      if(!attempts.add(key)){e.imageSlots.release();continue;}
+      synchronized(e.schedulerGate){if(isVoice)e.consecutiveAutoVoiceAdmissions++;else e.consecutiveAutoVoiceAdmissions=0;}
+      final PeerEngine.Message m=chosen;
+      Thread worker=new Thread(()->{try{downloadAttachment(e,m);}catch(Exception ignored){}finally{e.imageSlots.release();e.notifyChanged();}},"lan-automatic-download");worker.setDaemon(true);worker.start();
     }
   }
+  static boolean candidateReady(PeerEngine e,PeerEngine.Message m){
+    if(hasAttachment(e,m)||downloading(e,m)||!retained(e,m))return false;
+    for(PeerEngine.Peer p:e.peers())if(p.trusted()&&p.online()&&(p.id.equals(m.from)||(!m.groupId.isEmpty()&&GroupSync.allowedGroup(e,m.groupId,p.id))))return true;
+    return false;
+  }
+  // Fast-store voice attachments never exist (SendVoiceDraft/sendVoiceDraft always uses Normal
+  // storage, contract.md Decision 2), so a marker-filename check alone is sufficient here --
+  // matches windows/Transfers.cs's identical reasoning.
+  static boolean isVoiceCandidate(PeerEngine.Message m){return VoiceMarker.tryParse(m.fileName)!=null;}
   static boolean downloading(PeerEngine e,PeerEngine.Message m){return e.downloads.containsKey(m.from+"/"+m.id);}
   static void cancelDownload(PeerEngine e,PeerEngine.Message m){String key=m.from+"/"+m.id;e.downloads.computeIfPresent(key,(k,value)->false);Socket socket=e.downloadSockets.get(key);if(socket!=null)try{socket.close();}catch(IOException ignored){}}
   static void deleteTransfer(PeerEngine e,PeerEngine.Message m){cancelDownload(e,m);e.downloadNotes.remove(m.from+"/"+m.id);try{DownloadDestination.forget(e,m);AttachmentStore.attachmentPath(e,m).delete();new File(AttachmentStore.attachmentPath(e,m)+".resume").delete();sourcePath(e,m).delete();deleteParts(e,m);}catch(Exception ignored){}}

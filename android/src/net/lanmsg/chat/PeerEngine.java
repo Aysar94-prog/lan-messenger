@@ -293,7 +293,7 @@ public final class PeerEngine implements Closeable {
   }
   public synchronized int unread(String conversation){int n=0;for(Message m:messages)if(m.to.equals(id)&&m.status.equals("Received")&&(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)))n++;return n;}
   final java.util.concurrent.atomic.AtomicLong queueEpoch=new java.util.concurrent.atomic.AtomicLong();
-  void flush(){if(!running)return;TransferManager.queueImageDownloads(this);for(Peer p:peers())startDelivery(p);}
+  void flush(){if(!running)return;TransferManager.queueAutomaticMedia(this);for(Peer p:peers())startDelivery(p);}
   void startDelivery(Peer p){long session=generation;if(!running||workerSession.get()!=null&&workerSession.get()!=session||sending.putIfAbsent(p.id,session)!=null)return;try{outgoing.execute(()->{workerSession.set(session);long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&session==generation&&observed!=queueEpoch.get());}finally{sending.remove(p.id,session);if(running&&session==generation&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id,session);}}
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
@@ -414,6 +414,15 @@ public final class PeerEngine implements Closeable {
   boolean retained(Message m){return TransferManager.retained(this,m);}
   final Semaphore imageSlots=new Semaphore(2);
   final Set<String> imageAttempts=ConcurrentHashMap.newKeySet();
+  // Voice Messages (Phase 1 / Android), A06: the same imageSlots capacity pool now also admits
+  // automatic Voice Message retrieval, per tests/voice_messages/validation-contract.md's fixed
+  // scheduler admission rules -- mirrors windows/Transfers.cs (W06) exactly. voiceAttempts
+  // mirrors imageAttempts (in-memory only, reset on restart -- rule 9's "reconstructs eligible
+  // automatic work... without duplicating" is satisfied structurally by re-scanning current
+  // message/retention state on every call, same as imageAttempts already did before this).
+  final Set<String> voiceAttempts=ConcurrentHashMap.newKeySet();
+  final Object schedulerGate=new Object();
+  int consecutiveAutoVoiceAdmissions;
   public static boolean isImageAttachment(Message m){String name=m.fileName.toLowerCase(Locale.ROOT);int dot=name.lastIndexOf('.');return dot>=0&&Arrays.asList(".jpg",".jpeg",".png",".gif",".bmp",".webp",".tif",".tiff",".heic",".heif",".avif").contains(name.substring(dot));}
   public boolean downloading(Message m){return TransferManager.downloading(this,m);}
   public void cancelDownload(Message m){TransferManager.cancelDownload(this,m);}
