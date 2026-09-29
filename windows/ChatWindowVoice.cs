@@ -135,20 +135,31 @@ sealed partial class ChatWindow
             row.Controls.Add(clockLabel);
             attachmentDraft.Controls.Add(row);
         }else if(draft!=null){
-            attachmentDraft.Visible=true;pendingAttachmentRow.Height=70;
-            var row=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
+            attachmentDraft.Visible=true;pendingAttachmentRow.Height=90;
+            var row=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true};
             var playKey="draft:"+draft.Id;
             var durationLabel=MessageLabel(VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages"),10,Ink,240,true);
             durationLabel.AccessibleRole=AccessibleRole.StatusBar;durationLabel.AccessibleName=durationLabel.Text;
             row.Controls.Add(durationLabel);
-            var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?"Pause":"Play",AutoSize=true,AccessibleName="Play or pause this recording"};
-            void Refresh(){if(durationLabel.IsDisposed||playBtn.IsDisposed)return;durationLabel.Text=VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages");durationLabel.AccessibleName=durationLabel.Text;playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?"Pause":"Play";}
-            playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadVoiceDraftWav(draft.Id)),Refresh);row.Controls.Add(playBtn);
-            var back=new Button{Text="-10s",AutoSize=true,AccessibleName="Rewind 10 seconds"};back.Click+=(_,_)=>{SeekActivePlayer(playKey,-10000);Refresh();};row.Controls.Add(back);
-            var fwd=new Button{Text="+10s",AutoSize=true,AccessibleName="Forward 10 seconds"};fwd.Click+=(_,_)=>{SeekActivePlayer(playKey,10000);Refresh();};row.Controls.Add(fwd);
-            var deleteBtn=new Button{Text="Delete",AutoSize=true,AccessibleName="Delete this recording"};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);row.Controls.Add(deleteBtn);
-            if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true,AccessibleName="Send this voice message"};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);row.Controls.Add(sendBtn);}
-            StyleButtons(row);
+            var controlsRow=new FlowLayoutPanel{FlowDirection=FlowDirection.LeftToRight,WrapContents=false,AutoSize=true};
+            // After a clip finishes, activePlayer.Playing reads false (cleared the moment the
+            // last buffer completes), so this always re-settles on the Play icon, never stays
+            // stuck on Pause — both here and in Refresh() below.
+            var playBtn=new Button{Text=activePlayerKey==playKey&&activePlayer!.Playing?PauseIcon:PlayIcon,AutoSize=true,AccessibleName="Play or pause this recording"};
+            var seekBar=BuildSeekBar(playKey);
+            void Refresh(){
+                if(durationLabel.IsDisposed||playBtn.IsDisposed)return;
+                durationLabel.Text=VoicePlaybackText(playKey,draft.DurationMs,engine.VoiceDraftSendable(draft.Id)?"":"  ·  This conversation can no longer receive messages");durationLabel.AccessibleName=durationLabel.Text;
+                playBtn.Text=activePlayerKey==playKey&&activePlayer!=null&&activePlayer.Playing?PauseIcon:PlayIcon;
+                UpdateSeekBar(playKey,seekBar,draft.DurationMs);
+            }
+            playBtn.Click+=(_,_)=>TogglePlayback(playKey,()=>LoadVoiceContent(engine.ReadVoiceDraftWav(draft.Id)),Refresh);controlsRow.Controls.Add(playBtn);
+            var deleteBtn=new Button{Text="Delete",AutoSize=true,AccessibleName="Delete this recording"};deleteBtn.Click+=(_,_)=>DeleteVoiceDraftClicked(draft.Id);controlsRow.Controls.Add(deleteBtn);
+            if(engine.VoiceDraftSendable(draft.Id)){var sendBtn=new Button{Text="Send",AutoSize=true,AccessibleName="Send this voice message"};sendBtn.Click+=(_,_)=>SendVoiceDraftClicked(draft.Id);controlsRow.Controls.Add(sendBtn);}
+            StyleButtons(controlsRow);
+            row.Controls.Add(controlsRow);
+            row.Controls.Add(seekBar);
+            Refresh();
             attachmentDraft.Controls.Add(row);
         }else{
             attachmentDraft.Visible=false;pendingAttachmentRow.Height=0;

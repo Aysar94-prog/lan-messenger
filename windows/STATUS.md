@@ -45,47 +45,69 @@ Messages Phase 2 work described in the section above (record/send/receive/play, 
 steps, one active inline player app-wide). No wire/storage change from 2.1.0; every other 2.1.0
 capability (group ownership transfer, 2.0.1 carryover) is unchanged.
 
-**Two real bugs found from actual device testing of the first 2.2.0 build, fixed same day:**
+**Real bugs and UX changes from actual device testing of the first 2.2.0 build, fixed same day:**
 
-1. **Choppy recorded audio.** `VoiceRecorder.cs`'s native waveIn buffer-ready callback dispatched
-   each filled buffer independently to the thread pool (`ThreadPool.QueueUserWorkItem`), with no
-   ordering guarantee between them — but `VoicePcmAssembler.Push` is a strictly sequential PCM
-   stream, so two buffers processed out of order (a real possibility once more than one pool
-   thread is picking up work concurrently) scrambles the recorded audio. Fixed by routing every
-   buffer through one dedicated FIFO processing thread instead (mirroring the pattern already
-   used on Android's `VoiceRecorder`/`VoicePlayer`), with careful `Stop()`/`Dispose()` draining so
-   neither the tail of a recording gets silently dropped nor native buffer memory gets freed
-   while the processing thread might still be using it. `VoicePlayer.cs`'s equivalent playback
-   callback does not have this problem (its buffer refill is order-independent by construction),
-   so it was left unchanged.
+1. **Choppy recorded audio — round 1.** `VoiceRecorder.cs`'s native waveIn buffer-ready callback
+   dispatched each filled buffer independently to the thread pool
+   (`ThreadPool.QueueUserWorkItem`), with no ordering guarantee between them — but
+   `VoicePcmAssembler.Push` is a strictly sequential PCM stream, so two buffers processed out of
+   order scrambles the recorded audio. Fixed by routing every buffer through one dedicated FIFO
+   processing thread instead (mirroring the pattern already used on Android's
+   `VoiceRecorder`/`VoicePlayer`), with careful `Stop()`/`Dispose()` draining so neither the tail
+   of a recording gets silently dropped nor native buffer memory gets freed while the processing
+   thread might still be using it.
 2. **Sender sees their own sent voice message as a plain file.** `ChatWindowMessages.cs`'s
    `MessageCard` gate dropped the `!mine` condition, mirroring Android 2.2.2's identical fix — the
-   sender now sees a proper voice-message player (duration, Play/Pause, ±10s, Save) for a message
-   they just sent, reversing the original W07 design choice (documented in
-   `ChatWindowVoiceCard.cs`'s header comment) per the same user expectation that drove the Android
-   change.
+   sender now sees a proper voice-message player for a message they just sent, reversing the
+   original W07 design choice. **Confirmed fixed by the user.**
+3. **Choppy audio — round 2, the real root cause, in playback rather than capture.** After round
+   1's recorder fix, the user reported the audio was still cutting out. `VoicePlayer.cs`'s
+   `FillQueueLocked` refilled the fixed 4-slot native buffer pool by iterating the list from the
+   start on every call, tracking only a *count* of in-flight buffers (`buffersInFlight`) rather
+   than which specific slot was actually free — after more than one buffer had completed, this
+   could pick a slot that was still genuinely queued/playing in the driver and overwrite it with
+   fresh data mid-flight, corrupting live audio output. This is the bug round 1 should have looked
+   for but didn't (the initial diagnosis wrongly assumed playback's buffer refill was inherently
+   order-independent and therefore safe — true for *which chunk of `wav` comes next*, false for
+   *which native buffer slot is safe to reuse*). Fixed by giving each buffer slot its own explicit
+   `Busy` flag, checked by `FillQueueLocked` and cleared by the completion callback (and defensively
+   by `Seek()`, in case a driver doesn't fire a completion callback for every buffer a
+   `waveOutReset` flushes).
+4. **WhatsApp-style icon buttons and a real seek bar**, matching Android 2.2.3/2.2.x: Play/Pause
+   buttons now show `▶`/`⏸` glyphs (`ChatWindowVoicePlayback.cs`'s `PlayIcon`/`PauseIcon`) instead
+   of text, and the fixed ±10s buttons are replaced by a draggable `TrackBar` scrubber
+   (`BuildSeekBar`/`UpdateSeekBar`) wired to `VoicePlayer.Seek(long)`'s existing absolute-position
+   API, in both `ChatWindowVoiceCard.cs`'s received Playable row and `ChatWindowVoice.cs`'s
+   own-draft preview row. Since the button's icon always reflects `VoicePlayer.Playing`'s live
+   state (already `false` the instant a clip finishes), it settles back on `▶` on its own — no
+   separate "stuck on Pause" bug existed here to fix, but this was explicitly called out by the
+   user as a requirement given Android's history with exactly that bug.
 
 `dotnet build windows/LanMessenger.csproj -c Release` passed (0 errors, the one pre-existing
 benign `CS1998` warning in `ChatWindowVoice.cs` noted above). Published framework-dependent via
 `dotnet publish -c Release -o outputs/LanMessenger-Windows-2.2.0` (matching every prior Windows
 release's shape — requires .NET Desktop Runtime 9) and zipped: `outputs/LanMessenger-Windows-2.2.0.zip`
-(2,848,507 bytes, SHA-256 `e9382d8e…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`). Full
-`tests/run.ps1` run against this exact build exited 0: every native Windows UI test passed,
-including the Voice Messages ones (first/second voice message arrival and auto-download, Play
-starting real playback, one-active-player enforcement across cards, pause/resume toggle, seek not
-crashing, force-stop-and-finalize on conversation switch/tray-close/Offline). The pre-existing
-`CsharpHarness --voice-device-check`'s "double `Dispose()` after `Stop()`" case caught a real
-non-idempotency bug in the recorder fix's first draft (`BlockingCollection.Dispose()` isn't
-itself safe to call twice) before it shipped — exactly what that test exists to catch. One
-unrelated,
-pre-existing flake reproduced in isolation during this pass: `tests/group_membership.py`'s
-16-member stress scenario hit a TLS handshake failure under heavy concurrent load — the same
-documented environmental contention noted throughout this file's history, not a regression. As
-noted above, W11's manual two-device physical acceptance is still **Pending** — this release has
-not been exercised on real Windows hardware beyond the automated build/test suite (the choppy-
-audio and sender-rendering fixes above came from the user's own device testing of the 2.2.0
-build, not from this automated suite, which is exactly the class of bug this Pending note has
-always been flagging as a real risk).
+(2,849,138 bytes, SHA-256 `40a7f09b…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt` —
+superseded twice; see `PLAN-VOICE-MESSAGES-WINDOWS.md` for every intermediate hash). The native
+`tests/WindowsUi` suite needed updating alongside round 4: it asserted the literal strings
+`"Play"`/`"Pause"` and clicked a `"Forward 10 seconds"`-named button, both now gone — updated to
+check the `▶`/`⏸` glyphs and to drive the new `TrackBar` via `Control.OnMouseUp` (simulating a
+real drag-release, the same event `BuildSeekBar`'s handler is wired to). With that update, a full
+run against this exact build passed every native Windows UI test, including every Voice Messages
+one (arrival/auto-download, Play starting real playback, one-active-player enforcement,
+pause/resume toggle, seek not crashing, force-stop-and-finalize on conversation
+switch/tray-close/Offline), plus the voice-specific `CsharpHarness` checks (`--voice-check`,
+`--voice-device-check`, `--voice-scheduler-check`, `--voice-draft-reconcile-check`) run directly —
+the pre-existing `--voice-device-check` "double `Dispose()` after `Stop()`" case caught a real
+non-idempotency bug in round 1's recorder fix (`BlockingCollection.Dispose()` isn't itself safe to
+call twice) before it shipped. The full `tests/run.ps1` suite's own 16-member `group_membership.py`
+stress scenario hit its already-documented, environmental TLS-handshake flake partway through
+(reproduced in isolation, unrelated to any of this work) before ever reaching the native UI suite
+in this pass — the voice-specific and native-UI checks above were run directly instead, rather
+than waiting through the full suite's own long tail. As noted above, W11's manual two-device
+physical acceptance is still **Pending** — three of the four items above came from the user's own
+device testing of earlier 2.2.0 builds, not from any automated suite, which is exactly the class
+of bug that Pending note has always been flagging as a real risk.
 
 ## Implemented
 

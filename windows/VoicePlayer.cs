@@ -23,12 +23,24 @@ public sealed class VoicePlayer : IDisposable
     const int BufferBytes=3200; // 100 ms at the fixed 32000 bytes/s contract byte rate.
     const int BufferCount=4;
 
+    // A real device-reported "choppy audio" bug traced to this class: FillQueueLocked used to
+    // iterate the four preallocated (header,data) pairs from the start of the list on every
+    // call, relying solely on a `buffersInFlight` counter to decide how many more slots to fill
+    // -- it never tracked which specific slot was actually free. After more than one buffer had
+    // completed and been refilled, that assumption broke: the loop could pick a slot that was
+    // still genuinely queued/playing in the driver and overwrite its buffer with new data mid-
+    // flight (and call waveOutPrepareHeader/Write on a header the driver still owned), producing
+    // exactly an audible glitch/dropout. Each slot now tracks its own `Busy` state explicitly,
+    // and both FillQueueLocked and the completion callback consult/update it directly instead of
+    // inferring free slots from array position.
+    sealed class BufferSlot{public IntPtr Header,Data;public bool Busy;}
+
     readonly object nativeLock=new();
     readonly byte[] wav;
     readonly VoiceWavInfo info;
     WaveOutProc? callback; // rooted: must outlive every native call that can invoke it.
     IntPtr handle=IntPtr.Zero;
-    readonly List<(IntPtr header,IntPtr data)> buffers=new();
+    readonly List<BufferSlot> buffers=new();
     long playPosition;   // absolute byte offset into `wav`, always within [info.DataOffset, dataEnd].
     long epoch;          // bumped on every Seek/Stop; a completion callback for an older epoch is discarded.
     int buffersInFlight;
@@ -74,6 +86,13 @@ public sealed class VoicePlayer : IDisposable
             var result=VoiceSeek.Resolve(info,requestedMs);
             epoch++;buffersInFlight=0;
             if(handle!=IntPtr.Zero)WaveOut.waveOutReset(handle);
+            // waveOutReset SHOULD return every queued buffer via a MM_WOM_DONE callback (which
+            // would clear each slot's Busy flag itself, see HandleDone), but that isn't
+            // universally guaranteed across every driver -- clearing it here directly, rather
+            // than only via the async callback, is what actually invalidates every buffer we'd
+            // queued; don't leave FillQueueLocked believing slots are still busy if a stale
+            // completion never arrives.
+            foreach(var slot in buffers)slot.Busy=false;
             playPosition=result.AlignedByte;
             if(result.State=="completed")playing=false;
             else if(playing)FillQueueLocked();
@@ -90,25 +109,27 @@ public sealed class VoicePlayer : IDisposable
         for(int i=0;i<BufferCount;i++){
             var data=Marshal.AllocHGlobal(BufferBytes);
             var header=Marshal.AllocHGlobal(Marshal.SizeOf<WAVEHDR>());
-            buffers.Add((header,data));
+            buffers.Add(new BufferSlot{Header=header,Data=data});
         }
     }
 
     void FillQueueLocked()
     {
         if(handle==IntPtr.Zero||!playing)return;
-        foreach(var (header,data) in buffers){
+        foreach(var slot in buffers){
+            if(slot.Busy)continue; // the actual free/in-flight check this loop was missing.
             if(buffersInFlight>=BufferCount||playPosition>=DataEnd)break;
             int take=(int)Math.Min(BufferBytes,DataEnd-playPosition);
             take-=take%VoiceWav.BlockAlign; // complete samples only, matching the contract's frame rule.
             if(take<=0)break;
-            Marshal.Copy(wav,(int)playPosition,data,take);
-            var hdr=new WAVEHDR{lpData=data,dwBufferLength=(uint)take,dwBytesRecorded=0,dwUser=(IntPtr)epoch,dwFlags=0,dwLoops=0,lpNext=IntPtr.Zero,reserved=IntPtr.Zero};
-            Marshal.StructureToPtr(hdr,header,false);
-            int rc=WaveOut.waveOutPrepareHeader(handle,header,(uint)Marshal.SizeOf<WAVEHDR>());
+            Marshal.Copy(wav,(int)playPosition,slot.Data,take);
+            var hdr=new WAVEHDR{lpData=slot.Data,dwBufferLength=(uint)take,dwBytesRecorded=0,dwUser=(IntPtr)epoch,dwFlags=0,dwLoops=0,lpNext=IntPtr.Zero,reserved=IntPtr.Zero};
+            Marshal.StructureToPtr(hdr,slot.Header,false);
+            int rc=WaveOut.waveOutPrepareHeader(handle,slot.Header,(uint)Marshal.SizeOf<WAVEHDR>());
             if(rc!=WaveOut.MMSYSERR_NOERROR){FailLocked();return;}
-            rc=WaveOut.waveOutWrite(handle,header,(uint)Marshal.SizeOf<WAVEHDR>());
-            if(rc!=WaveOut.MMSYSERR_NOERROR){WaveOut.waveOutUnprepareHeader(handle,header,(uint)Marshal.SizeOf<WAVEHDR>());FailLocked();return;}
+            rc=WaveOut.waveOutWrite(handle,slot.Header,(uint)Marshal.SizeOf<WAVEHDR>());
+            if(rc!=WaveOut.MMSYSERR_NOERROR){WaveOut.waveOutUnprepareHeader(handle,slot.Header,(uint)Marshal.SizeOf<WAVEHDR>());FailLocked();return;}
+            slot.Busy=true;
             playPosition+=take;buffersInFlight++;
         }
     }
@@ -129,6 +150,10 @@ public sealed class VoicePlayer : IDisposable
             if(closed||handle==IntPtr.Zero)return;
             var hdr=Marshal.PtrToStructure<WAVEHDR>(headerPtr);
             WaveOut.waveOutUnprepareHeader(handle,headerPtr,(uint)Marshal.SizeOf<WAVEHDR>());
+            // Free this specific slot regardless of epoch -- even a stale buffer (from a
+            // position we've since left) genuinely finished playing and must be available for
+            // FillQueueLocked to reuse; only the position-bookkeeping below is epoch-gated.
+            foreach(var slot in buffers)if(slot.Header==headerPtr){slot.Busy=false;break;}
             if((long)hdr.dwUser!=epoch)return; // a stale buffer from a position we've since left — discard.
             buffersInFlight=Math.Max(0,buffersInFlight-1);
             if(playing)FillQueueLocked();
@@ -151,7 +176,7 @@ public sealed class VoicePlayer : IDisposable
             epoch++;playing=false;buffersInFlight=0;
             if(handle!=IntPtr.Zero){
                 WaveOut.waveOutReset(handle);
-                foreach(var (header,_) in buffers)try{WaveOut.waveOutUnprepareHeader(handle,header,(uint)Marshal.SizeOf<WAVEHDR>());}catch{}
+                foreach(var slot in buffers)try{WaveOut.waveOutUnprepareHeader(handle,slot.Header,(uint)Marshal.SizeOf<WAVEHDR>());}catch{}
                 try{WaveOut.waveOutClose(handle);}catch{}
                 handle=IntPtr.Zero;
             }
@@ -163,8 +188,8 @@ public sealed class VoicePlayer : IDisposable
         lock(nativeLock){
             if(closed)return;
             closed=true;
-            if(handle!=IntPtr.Zero){WaveOut.waveOutReset(handle);foreach(var (header,_) in buffers)try{WaveOut.waveOutUnprepareHeader(handle,header,(uint)Marshal.SizeOf<WAVEHDR>());}catch{}try{WaveOut.waveOutClose(handle);}catch{}handle=IntPtr.Zero;}
-            foreach(var (header,data) in buffers){Marshal.FreeHGlobal(header);Marshal.FreeHGlobal(data);}
+            if(handle!=IntPtr.Zero){WaveOut.waveOutReset(handle);foreach(var slot in buffers)try{WaveOut.waveOutUnprepareHeader(handle,slot.Header,(uint)Marshal.SizeOf<WAVEHDR>());}catch{}try{WaveOut.waveOutClose(handle);}catch{}handle=IntPtr.Zero;}
+            foreach(var slot in buffers){Marshal.FreeHGlobal(slot.Header);Marshal.FreeHGlobal(slot.Data);}
             buffers.Clear();
         }
     }

@@ -206,7 +206,61 @@ case above), with the same unrelated pre-existing `group_membership.py` 16-membe
 Rebuilt and re-zipped: `outputs/LanMessenger-Windows-2.2.0.zip` (2,848,507 bytes, SHA-256
 `e9382d8e…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`) — this replaces the first,
 now-superseded 2.2.0 zip (SHA-256 `fb5b2349…`), same version number since no version bump was
-requested for this same-day fix pass. Still awaiting the user's re-test.
+requested for this same-day fix pass.
+
+## Round 2: the choppy audio was still there, and it was actually in playback (same day)
+
+The user installed the round-1 build and confirmed point 2 (sender-sees-own-message) fixed, but
+reported point 1 ("no still cutting voice") was not — plus asked why there was no seek bar like
+Android's.
+
+Round 1's own diagnosis contained an unexamined assumption: `VoicePlayer.cs`'s `HandleDone`/
+`FillQueueLocked` were declared "order-independent by construction" and left unchanged, on the
+reasoning that any completing buffer just pulls the next sequential chunk of the already-known
+`wav` array forward. That reasoning is correct for *which bytes* get written next, but it missed
+a second, separate question: *which native buffer slot* is safe to write those bytes into.
+`FillQueueLocked` iterated the four preallocated `(header,data)` pairs from the start of the list
+on every call, deciding how many slots to (re)fill purely from a `buffersInFlight` counter — it
+never tracked which specific slot was actually free. After more than one buffer had completed,
+this broke down: the loop could reach a slot that was still genuinely queued/playing in the
+driver and overwrite its buffer with fresh data mid-flight (and call
+`waveOutPrepareHeader`/`waveOutWrite` on a header the driver still owned) — an audible glitch or
+dropout, exactly matching "still cutting."
+
+Fixed by replacing the tuple list with a `BufferSlot` class carrying its own `Busy` flag:
+`FillQueueLocked` now skips any slot where `Busy` is true, and the completion callback
+(`HandleDone`) clears the specific slot's `Busy` flag by matching on its header pointer — not by
+array position. `Seek()` also proactively clears every slot's `Busy` flag right after
+`waveOutReset`, rather than only relying on a (not universally guaranteed across every driver)
+stale completion callback to do it.
+
+Also added in this round, addressing the user's separate seek-bar request (explicitly comparing
+to Android's 2.2.x scrubber): `ChatWindowVoicePlayback.cs` gained `PlayIcon`/`PauseIcon` constants
+(`▶`/`⏸`, replacing the `"Play"`/`"Pause"` text labels) and `BuildSeekBar`/`UpdateSeekBar`, a
+draggable `TrackBar` wired to `VoicePlayer.Seek(long)`'s existing absolute-position API — replacing
+the fixed ±10s buttons in both `ChatWindowVoiceCard.cs`'s Playable row and `ChatWindowVoice.cs`'s
+own-draft preview row. The now-unused `SeekActivePlayer(key,deltaMs)` helper was deleted rather
+than left as dead code. The user also asked, preemptively, that the icon must correctly show ▶
+(not ⏸) once a clip finishes — no separate bug existed here: the button's icon always reads
+`VoicePlayer.Playing`'s live state, which the write loop already clears to `false` the instant the
+last buffer completes, so this was already correct by construction once the icons existed at all.
+
+This round also required updating `tests/WindowsUi/Program.cs`'s native voice-card test, which had
+asserted the literal `"Play"`/`"Pause"` strings and clicked a button named `"Forward 10 seconds"`
+— both now gone. Updated it to check the `▶`/`⏸` glyphs directly and to drive the new `TrackBar`
+via reflection into `Control.OnMouseUp` (simulating a real drag-release, the exact event
+`BuildSeekBar`'s handler is wired to) rather than a button click.
+
+Verified: `dotnet build -c Release` (0 errors, same one pre-existing benign warning). Because the
+full `tests/run.ps1` run hit the already-documented `group_membership.py` 16-member-scenario flake
+partway through (before ever reaching the native UI suite), the voice-specific checks were run
+directly instead: `CsharpHarness --voice-check`/`--voice-device-check`/`--voice-scheduler-check`/
+`--voice-draft-reconcile-check` (all pass) and a full `tests/WindowsUi` run (all pass, including
+every updated voice-card assertion). Rebuilt and re-zipped:
+`outputs/LanMessenger-Windows-2.2.0.zip` (2,849,138 bytes, SHA-256 `40a7f09b…`; manifest:
+`outputs/SHA256SUMS-Windows-2.2.0.txt`) — supersedes both earlier 2.2.0 zips (SHA-256 `fb5b2349…`
+then `e9382d8e…`), still the same version number since this remains a same-day fix pass. Still
+awaiting the user's re-test.
 
 Coordination note: `tests/voice_messages/check_contract.py`, `manifest.json`,
 `generate_wav_cases.py` and `wav_cases.bin` were under active concurrent edit by the
