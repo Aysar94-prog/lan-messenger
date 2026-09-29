@@ -50,13 +50,37 @@ final class VoicePlayback {
     uiRefresh.run();
   }
 
-  // Seek is offered as fixed -10 s/+10 s steps rather than a drag scrubber -- a deliberate scope
-  // simplification for this pass, matching Windows' identical W08 choice (still exercises the
-  // real seven-step VoiceSeek procedure via VoicePlayer.seek end to end).
   static void seekActivePlayer(MainActivity activity, String key, long deltaMs) {
     if (!key.equals(activity.activePlayerKey) || activity.activePlayer == null) return;
     long newMs = Math.max(0, activity.activePlayer.positionNs() / 1_000_000 + deltaMs);
     try { activity.activePlayer.seek(newMs); } catch (Exception ignored) {}
+  }
+
+  // A draggable WhatsApp-style scrubber, shared by VoiceCard's Playable row and VoiceUi's own-
+  // draft preview row. VoicePlayer.seek(long) already takes an absolute position (contract.md's
+  // seven-step procedure), so the bar's progress maps onto it directly -- no delta math needed.
+  // The bar's own tag doubles as a "user is dragging" flag: updateSeekBar must not fight the
+  // user's finger by snapping progress back to the live playback position on every tick while
+  // they're mid-drag, so it no-ops whenever the tag is true.
+  static android.widget.SeekBar buildSeekBar(MainActivity activity, String key) {
+    android.widget.SeekBar bar = new android.widget.SeekBar(activity);
+    bar.setMax(1);
+    bar.setTag(Boolean.FALSE);
+    bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+      public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {}
+      public void onStartTrackingTouch(android.widget.SeekBar sb) { sb.setTag(Boolean.TRUE); }
+      public void onStopTrackingTouch(android.widget.SeekBar sb) {
+        sb.setTag(Boolean.FALSE);
+        if (key.equals(activity.activePlayerKey) && activity.activePlayer != null) { try { activity.activePlayer.seek(sb.getProgress()); } catch (Exception ignored) {} }
+      }
+    });
+    return bar;
+  }
+
+  static void updateSeekBar(MainActivity activity, String key, android.widget.SeekBar bar, long durationMs) {
+    if (Boolean.TRUE.equals(bar.getTag())) return;
+    bar.setMax((int) Math.max(1, durationMs));
+    bar.setProgress(key.equals(activity.activePlayerKey) && activity.activePlayer != null ? (int) Math.min(durationMs, activity.activePlayer.positionNs() / 1_000_000) : 0);
   }
 
   static String playbackText(MainActivity activity, String key, long durationMs) {

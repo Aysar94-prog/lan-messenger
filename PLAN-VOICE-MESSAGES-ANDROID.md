@@ -63,6 +63,38 @@ Android toolchain again (`javac -source 8 -target 8` + `d8`), 0 errors. Packaged
 the real Android toolchain throughout, and the full `tests/run.ps1` regression suite passes
 clean with zero regressions. `android/STATUS.md` and `PROJECT_STATUS.md` are updated (A11).
 
+**Post-release UX fixes (found via real device testing of the 2.2.1 APK)**: the user reported
+three issues after using 2.2.1's voice messages on a real phone — (1) a finished voice message
+could not be replayed by pressing Play again, (2) they wanted a real drag-to-seek scrubber
+instead of fixed ±10s steps ("as whatsapp voice message"), and (3) the sender's own sent voice
+message rendered as a plain file instead of a player. All three are fixed:
+
+1. `VoicePlayer.resume()` was missing the end-of-track position reset that `play()` already had
+   (`if (playPosition >= dataEnd()) { playPosition = info.dataOffset; epoch++; }`).
+   `VoicePlayback.togglePlayback` always routes a second click on the same active key through
+   `resume()`, not `play()`, so a completed track could never actually restart — the write loop's
+   guard would immediately re-idle since position was never reset. This was the real bug behind
+   "can't repeat the voice."
+2. Added `VoicePlayback.buildSeekBar`/`updateSeekBar`, a draggable `SeekBar` wired to
+   `VoicePlayer.seek(long)`'s existing absolute-position API (already suitable for this — no delta
+   math needed). Replaces the ±10s buttons in both `VoiceCard.java`'s Playable row and
+   `VoiceUi.java`'s draft preview row; live position updates ride the existing 1s tick →
+   `activePlayerUiRefresh` mechanism, same as the duration label already did.
+3. `MainActivity.java`'s render() gate dropped the `!mine &&` condition, so a sender's own sent
+   voice message now goes through `VoiceCard.addVoiceCard` like any received one. This reverses
+   the original Phase-1 design choice documented in `VoiceCard.java`'s A07 header comment (itself
+   ported from Windows' `ChatWindowVoiceCard.cs` W07 comment) — done because the user explicitly
+   asked for WhatsApp-style behavior where the sender also sees a player. `VoiceCard.classify()`
+   needed no change: a sender's own message always already has the attachment locally right after
+   sending, so it resolves straight to `PLAYABLE`/`INVALID`, never touching the
+   Candidate/Fetching/Unavailable retrieval states that only apply to a peer's recording.
+
+Verified through the real Android toolchain (`javac -source 8 -target 8` + `d8`), 0 errors.
+Packaged as **Android 2.2.2** (versionCode 29). No device/emulator acceptance yet for this build —
+the fixes directly target the three issues the user reported, but retesting on the device is
+still outstanding. Android-only pass; Windows still deliberately does the opposite on all three
+points (`ChatWindowVoicePlayback.cs`/`ChatWindowVoiceCard.cs`) and parity has not been raised.
+
 Genuinely remaining, not something further agent work in this sandboxed environment can close:
 **AT03/AT05** (need real or simulated `AudioRecord`/`AudioTrack` device behavior — no equivalent
 to Windows' confirmed real `waveIn`/`waveOut` device has been found here, and Android's

@@ -160,8 +160,8 @@ final class VoiceUi {
 
   // Rebuilds attachmentDraft's contents for the recording/pending-draft state. A pending file
   // attachment (pendingAttachmentUri) always takes priority, matching how it already owns this
-  // panel. Play/±10s preview of a finalized draft is a stub pending A08 (AudioTrack player), same
-  // scope split as Windows' W04/W08 -- the draft itself is unaffected, still fully Delete/Sendable.
+  // panel. A finalized draft gets a real Play/seek-bar preview via VoicePlayer (A08)/VoicePlayback,
+  // same as a received Playable card -- the draft itself is unaffected, still fully Delete/Sendable.
   static void renderVoicePanel(MainActivity activity) {
     if (activity.attachmentDraft == null) return;
     if (activity.pendingAttachmentUri != null) return; // AttachmentFlow.renderPendingAttachment owns the panel here.
@@ -191,19 +191,21 @@ final class VoiceUi {
       android.widget.TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"), 14);
       durationLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
       activity.attachmentDraft.addView(durationLabel);
+      android.widget.SeekBar seekBar = VoicePlayback.buildSeekBar(activity, playKey);
+      activity.attachmentDraft.addView(seekBar);
       LinearLayout row = new LinearLayout(activity); row.setOrientation(LinearLayout.HORIZONTAL);
       Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
       play.setContentDescription("Play or pause this recording");
       Runnable refresh = () -> {
         durationLabel.setText(VoicePlayback.playbackText(activity, playKey, durationMs) + (sendable ? "" : "  ·  This conversation can no longer receive messages"));
         play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+        VoicePlayback.updateSeekBar(activity, playKey, seekBar, durationMs);
       };
       play.setOnClickListener(v -> { PeerEngine engine = activity.engine(); if (engine == null) return; VoicePlayback.togglePlayback(activity, playKey, () -> { try { return engine.readVoiceDraftWav(dId); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh); });
       row.addView(play);
-      Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
-      Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
       Button delete = activity.button("Delete"); delete.setContentDescription("Delete this recording"); delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
       if (sendable) { Button send = activity.button("Send"); send.setContentDescription("Send this voice message"); send.setOnClickListener(v -> sendVoiceDraftClicked(activity, dId)); row.addView(send); }
+      refresh.run();
       // Wrapped in a HorizontalScrollView, matching the existing composeActions row: with 5
       // buttons (Play/-10s/+10s/Delete/Send) this row can lay out past the visible width on a
       // typical phone, leaving the last one or two controls -- Send in particular -- unreachable.
