@@ -12,6 +12,7 @@ public class PeerHarness {
   java.util.concurrent.atomic.AtomicLong progress=new java.util.concurrent.atomic.AtomicLong(),firstProgress=new java.util.concurrent.atomic.AtomicLong(-1);
   java.util.concurrent.atomic.AtomicInteger regressions=new java.util.concurrent.atomic.AtomicInteger(),drops=new java.util.concurrent.atomic.AtomicInteger();
   java.util.concurrent.atomic.AtomicReference<String> downloadError=new java.util.concurrent.atomic.AtomicReference<>("");
+  HashMap<String,VoiceDraftWriter> voiceWriters=new HashMap<>();
   e.transferProgress=(mid,done,total)->{
     firstProgress.compareAndSet(-1,done);long before=progress.getAndSet(done);if(done<before)regressions.incrementAndGet();
     long crash=haltAt.get();if(crash>0&&done>=crash)Runtime.getRuntime().halt(0);
@@ -121,6 +122,23 @@ public class PeerHarness {
    if(a[0].equals("SEND"))e.queue(a[1],new String(Base64.getDecoder().decode(a[2]),StandardCharsets.UTF_8));
    if(a[0].equals("STATE")){for(PeerEngine.Peer p:e.peers()){System.out.println("P\t"+p.id+"\t"+p.online());for(PeerEngine.Message m:e.messages(p.id))System.out.println("M\t"+m.id+"\t"+m.from+"\t"+m.to+"\t"+m.status+"\t"+Base64.getEncoder().encodeToString(m.text.getBytes(StandardCharsets.UTF_8)));}}
    if(a[0].equals("STATE")){for(PeerEngine.Group g:e.groups()){System.out.println("G\t"+g.id+"\t"+PeerEngine.enc(g.name));for(PeerEngine.Message m:e.messages(g.id))print(m);}}
+   // Voice Messages (Phase 1 / Android), AT02: harness commands for the durable draft registry
+   // (VoiceDrafts.java, A02), mirroring tests/CsharpHarness/Program.cs's WT02 commands exactly so
+   // tests/voice_drafts.py can drive a 'java' peer with no changes.
+   if(a[0].equals("CREATEDRAFT"))System.out.println("DRAFT\t"+e.createVoiceDraft(a[1],a[2].equals("true")));
+   if(a[0].equals("OPENWRITER"))voiceWriters.put(a[1],e.openVoiceDraftWriter(a[1]));
+   if(a[0].equals("WRITEFRAME"))voiceWriters.get(a[1]).writeFrame(Base64.getDecoder().decode(a[2]));
+   if(a[0].equals("CLOSEWRITER")){voiceWriters.remove(a[1]).finish();}
+   if(a[0].equals("ABORTWRITER")){voiceWriters.remove(a[1]).abort();}
+   if(a[0].equals("FINALIZEDRAFT")){try{VoiceWavValidation v=e.finalizeVoiceDraft(a[1]);System.out.println("FINALIZE\t"+v.pass+"\t"+(v.failureReason==null?"":v.failureReason));}catch(Exception ex){System.out.println("FINALIZE\tERROR\t"+ex.getMessage());}}
+   if(a[0].equals("INVALIDATEDRAFT"))e.invalidateVoiceDraft(a[1]);
+   if(a[0].equals("DELETEDRAFT"))e.deleteVoiceDraft(a[1]);
+   if(a[0].equals("DRAFTSTATE")){PeerEngine.VoiceDraft d=e.getVoiceDraft(a[1]);System.out.println(d==null?"DRAFTSTATE\tNONE":"DRAFTSTATE\t"+d.state+"\t"+d.byteSize+"\t"+d.durationMs+"\t"+d.sendTransactionId);}
+   if(a[0].equals("DRAFTSFOR")){StringBuilder ids=new StringBuilder();for(PeerEngine.VoiceDraft d:e.voiceDraftsFor(a[1])){if(ids.length()>0)ids.append(',');ids.append(d.id);}System.out.println("DRAFTSFOR\t"+ids);}
+   if(a[0].equals("DRAFTSENDABLE"))System.out.println("DRAFTSENDABLE\t"+e.voiceDraftSendable(a[1]));
+   if(a[0].equals("SENDDRAFT"))e.sendVoiceDraft(a[1],a.length>2?new String(Base64.getDecoder().decode(a[2]),StandardCharsets.UTF_8):"");
+   if(a[0].equals("READDRAFTWAV")){try{byte[] wav=e.readVoiceDraftWav(a[1]);System.out.println("DRAFTWAV\t"+SecureIdentity.hash(wav)+"\t"+wav.length);}catch(Exception ex){System.out.println("DRAFTWAV\tERROR\t"+ex.getMessage());}}
+   if(a[0].equals("RECONCILEDRAFTS"))VoiceDrafts.reconcile(e);
    System.out.println("END");
   }catch(Exception x){System.out.println("ERROR\t"+x);System.out.println("END");}}
   e.close();

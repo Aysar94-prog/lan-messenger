@@ -75,6 +75,7 @@ public final class PeerEngine implements Closeable {
     } else {id=UUID.randomUUID().toString();name=cleanName(defaultName);}
     try{identity=new SecureIdentity(directory,id,protector);}catch(Exception e){throw new IOException("Could not open protected device identity",e);}
     purgeExpired();
+    VoiceDrafts.reconcile(this);
     save();save();
   }
   static String enc(String s){return Base64.getEncoder().encodeToString(s.getBytes(StandardCharsets.UTF_8));}
@@ -110,6 +111,7 @@ public final class PeerEngine implements Closeable {
     HashSet<String> loadedForgotten=new HashSet<>();HashMap<String,String> loadedPendingLeaves=new HashMap<>();
     LinkedHashMap<String,HashSet<String>> loadedDeparted=new LinkedHashMap<>();LinkedHashMap<String,HashMap<String,Integer>> loadedAcked=new LinkedHashMap<>();
     HashSet<String> loadedEverTransferred=new HashSet<>();HashSet<String> loadedPendingHandoff=new HashSet<>();
+    LinkedHashMap<String,VoiceDraft> loadedVoiceDrafts=new LinkedHashMap<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
@@ -136,6 +138,7 @@ public final class PeerEngine implements Closeable {
       else if(a[0].equals("T")&&a.length==2)loadedEverTransferred.add(a[1]);
       else if(a[0].equals("O")&&a.length==2)loadedPendingHandoff.add(a[1]);
       else if(a[0].equals("J")||a[0].equals("Q")){} // Removed join-request feature; tolerate old rows already on disk instead of failing to load.
+      else if(a[0].equals("R")&&a.length==10){VoiceDraft d=new VoiceDraft(a[1],a[2],a[3].equals("1"),Long.parseLong(a[4]),Long.parseLong(a[5]),a[6],Long.parseLong(a[7]),Long.parseLong(a[8]));d.sendTransactionId=a[9];loadedVoiceDrafts.put(a[1],d);}
       else throw new IOException("Invalid storage row");}
     groups.clear();for(Map.Entry<String,Group> kv:loadedGroups.entrySet()){if(loadedEverTransferred.contains(kv.getKey()))kv.getValue().everTransferredOwnership=true;groups.put(kv.getKey(),kv.getValue());}
     hidden.clear();hidden.addAll(loadedHidden);
@@ -143,6 +146,7 @@ public final class PeerEngine implements Closeable {
     departedHistory.clear();departedHistory.putAll(loadedDeparted);memberAcked.clear();memberAcked.putAll(loadedAcked);
     pendingOwnershipHandoff.clear();pendingOwnershipHandoff.addAll(loadedPendingHandoff);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
+    voiceDrafts.clear();voiceDrafts.putAll(loadedVoiceDrafts);
   }
   synchronized void save()throws IOException {
     StringBuilder text=new StringBuilder("LMSTORE4\t"+id+"\t"+enc(name)+"\n");
@@ -155,6 +159,7 @@ public final class PeerEngine implements Closeable {
     for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())for(Map.Entry<String,Integer> mv:kv.getValue().entrySet())text.append("V\t").append(kv.getKey()).append('\t').append(mv.getKey()).append('\t').append(mv.getValue()).append('\n');
     for(Group g:groups.values())if(g.everTransferredOwnership)text.append("T\t").append(g.id).append('\n');
     for(String groupId:pendingOwnershipHandoff)text.append("O\t").append(groupId).append('\n');
+    for(VoiceDraft d:voiceDrafts.values())text.append("R\t").append(d.id).append('\t').append(d.conversationId).append('\t').append(d.isGroup?"1":"0").append('\t').append(d.createdAt).append('\t').append(d.updatedAt).append('\t').append(d.state).append('\t').append(d.byteSize).append('\t').append(d.durationMs).append('\t').append(d.sendTransactionId).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -463,6 +468,29 @@ public final class PeerEngine implements Closeable {
     public final String id;public final boolean active;
     KnownMember(String i,boolean a){id=i;active=a;}
   }
+  // Voice Messages (Phase 1 / Android), A02: the durable application-private draft registry.
+  // Recording/playback device access (A03) and UI (A04) are separate, later tasks; this class
+  // only tracks draft metadata -- see VoiceDrafts.java for the encrypted PCM/WAV read/write,
+  // matching AttachmentStore.java's existing encryption construction (per-file random AES-256-
+  // CBC key/IV wrapped by the small, one-shot protector).
+  public static final class VoiceDraft {
+    public static final String RECORDING="Recording",FINALIZED="Finalized",INVALID="Invalid";
+    public final String id,conversationId;public final boolean isGroup;public final long createdAt;
+    public long updatedAt;public String state;public long byteSize,durationMs;public String sendTransactionId="";
+    VoiceDraft(String id,String conversationId,boolean isGroup,long createdAt,long updatedAt,String state,long byteSize,long durationMs){
+      this.id=id;this.conversationId=conversationId;this.isGroup=isGroup;this.createdAt=createdAt;this.updatedAt=updatedAt;this.state=state;this.byteSize=byteSize;this.durationMs=durationMs;
+    }
+    VoiceDraft copy(){VoiceDraft d=new VoiceDraft(id,conversationId,isGroup,createdAt,updatedAt,state,byteSize,durationMs);d.sendTransactionId=sendTransactionId;return d;}
+    // Age alone never silently deletes a valid finalized draft (Registry rule 5) -- this is
+    // purely an advisory read, never a trigger for automatic removal.
+    static final long STALE_REVIEW_AGE_MS=30L*24*60*60*1000;
+    public boolean isStale(long nowMs){return state.equals(FINALIZED)&&nowMs-updatedAt>=STALE_REVIEW_AGE_MS;}
+  }
+  public static final int VOICE_DRAFT_CAP=10;
+  static final byte[] VOICE_DRAFT_MAGIC="LMVOICE1".getBytes(StandardCharsets.US_ASCII);
+  final LinkedHashMap<String,VoiceDraft> voiceDrafts=new LinkedHashMap<>();
+  final HashSet<String> openVoiceDraftWriters=new HashSet<>();
+
   final LinkedHashMap<String,Group> groups=new LinkedHashMap<>();
   final HashSet<String> hidden=new HashSet<>();
   // Peer ids we've deleted and still owe a FORGET notice; groups we've left, keyed by the owner
@@ -496,6 +524,18 @@ public final class PeerEngine implements Closeable {
   public List<KnownMember> allKnownMembers(String groupId){return GroupSync.allKnownMembers(this,groupId);}
   public void addMember(String groupId,String memberId)throws IOException {GroupSync.addMember(this,groupId,memberId);}
   public void transferOwnership(String groupId,String newOwnerId)throws IOException {GroupSync.transferOwnership(this,groupId,newOwnerId);}
+  // Voice Messages (Phase 1 / Android), A02: thin delegating wrappers, matching the existing
+  // GroupSync/AttachmentStore/TransferManager pattern -- see VoiceDrafts.java for the real logic.
+  public List<VoiceDraft> voiceDraftsFor(String conversation){return VoiceDrafts.voiceDraftsFor(this,conversation);}
+  public VoiceDraft getVoiceDraft(String draftId){return VoiceDrafts.getVoiceDraft(this,draftId);}
+  public boolean voiceDraftSendable(String draftId){return VoiceDrafts.voiceDraftSendable(this,draftId);}
+  public String createVoiceDraft(String conversation,boolean isGroup)throws IOException {return VoiceDrafts.createVoiceDraft(this,conversation,isGroup);}
+  public VoiceDraftWriter openVoiceDraftWriter(String draftId)throws IOException {return VoiceDrafts.openVoiceDraftWriter(this,draftId);}
+  public VoiceWavValidation finalizeVoiceDraft(String draftId)throws IOException {return VoiceDrafts.finalizeVoiceDraft(this,draftId);}
+  public void invalidateVoiceDraft(String draftId){VoiceDrafts.invalidateVoiceDraft(this,draftId);}
+  public void deleteVoiceDraft(String draftId)throws IOException {VoiceDrafts.deleteVoiceDraft(this,draftId);}
+  public void sendVoiceDraft(String draftId,String caption)throws IOException {VoiceDrafts.sendVoiceDraft(this,draftId,caption);}
+  public byte[] readVoiceDraftWav(String draftId)throws IOException {return VoiceDrafts.readVoiceDraftWav(this,draftId);}
   // Owner-only view: the last MembersVersion a specific active member has acked, for the Members
   // screen's sync-status display -- -1 if never (they're not yet caught up to anything).
   public synchronized int memberAckedVersion(String groupId,String peerId){HashMap<String,Integer> m=memberAcked.get(groupId);return m!=null&&m.containsKey(peerId)?m.get(peerId):-1;}
@@ -515,6 +555,12 @@ public final class PeerEngine implements Closeable {
     queueContentStream(conversation,text,fileName,data,declaredSize,onProgress,true);
   }
   void queueContentStream(String conversation,String text,String fileName,InputStream data,long declaredSize,BiConsumer<Long,Long> onProgress,boolean dispatch)throws IOException {
+    queueContentStream(conversation,text,fileName,data,declaredSize,onProgress,dispatch,null);
+  }
+  // explicitId lets a caller (Voice Messages' SendVoiceDraft, A05) allocate the message id itself
+  // before importing content, so a marker filename embedding that same id can be computed first.
+  // null preserves every existing caller's random-UUID behavior unchanged.
+  void queueContentStream(String conversation,String text,String fileName,InputStream data,long declaredSize,BiConsumer<Long,Long> onProgress,boolean dispatch,String explicitId)throws IOException {
     text=text.trim();if(text.length()>2000||(data==null&&text.isEmpty()))throw new IOException("Messages must contain 1–2000 characters.");
     if(data!=null&&declaredSize>MAX_FILE_SIZE)throw new IOException("Files must be "+(MAX_FILE_SIZE/1024/1024)+" MB or smaller.");
     ArrayList<String> recipients=new ArrayList<>();String groupId="";
@@ -524,7 +570,7 @@ public final class PeerEngine implements Closeable {
       else if(peers.containsKey(conversation))recipients.add(conversation);
       else throw new IOException("Choose a conversation first.");
     }
-    String messageId=UUID.randomUUID().toString();long at=System.currentTimeMillis();String hash="";
+    String messageId=explicitId!=null?explicitId:UUID.randomUUID().toString();long at=System.currentTimeMillis();String hash="";
     if(data!=null){
       Message placeholder=new Message(messageId,id,recipients.get(0),text,at,"Queued",groupId,fileName,(int)declaredSize,"");
       hash=AttachmentStore.storeAttachmentStream(this,placeholder,data,declaredSize,onProgress);
