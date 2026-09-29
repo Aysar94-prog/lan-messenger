@@ -65,21 +65,27 @@ plan, not yet started.
 
 G3 automated check: fixed `goOffline()` for a unit test that intentionally exercises storage without starting the engine (executors are then absent). Cross-platform `tests/offline_lifecycle.py` checks accepted idle socket closure, Add-by-IP/refresh and remote-download gating, rejected discovery while Offline, delayed avatar sync, group capability refusal, Fast direct/ordinary direct/encrypted ordinary cache receiver interruption and Fast sender interruption, stable partial state, no premature completion marker, integrity and duplicate-free retry. `tests/android_service_lifecycle.py` guards the bound-only cleanup on engine-load failure, bind failure, and unbind while actual Offline. Android SDK compilation, APK packaging/signature verification, and Windows SDK 9 build passed after the final service-lifetime correction. Historical source-based physical checks passed on two Android devices for sender-side and receiver-side Offline transitions during transfer, Online resume, integrity, and duplicate avoidance. Historical source-based ADB checks confirmed no crash/ANR and no remaining Started service after removing the Offline Activity from Recents; reopening preserved local content and Online recovery succeeded. None of these device checks accepts the packaged 2.1.1 APK.
 
-Prior Android release (2026-09-27): **2.1.1**, versionCode 26. See the [platform comparison](../PROJECT_STATUS.md).
+Prior Android releases: **2.2.0** (2026-09-29, versionCode 27, the first release packaging the
+Voice Messages Phase 1 work), **2.1.1** (2026-09-27, versionCode 26). See the
+[platform comparison](../PROJECT_STATUS.md).
 
-Reviewed 2026-09-29. Current Android local APK build: **2.2.0**, versionCode 27 — the first
-release packaging the Voice Messages Phase 1 work above. `outputs/LanMessenger-2.2.0.apk`
-(127,319 bytes), SHA-256 `29c2e25d1a440c1df9e6ff2f81b944c4aa6663f02ba081f1379b25d62aa1bdaf`
-(manifest: `outputs/SHA256SUMS-Android-2.2.0.txt`). Signed with the original development key —
-confirmed byte-identical signer certificate (`keytool -printcert`, SHA-256
+Reviewed 2026-09-29. Current Android local APK build: **2.2.1**, versionCode 28 — a same-day
+fix for a real bug found via actual device testing of 2.2.0 (see the Voice Messages section
+above): the voice-draft preview row and the received-message Playable card row could lay out
+past the visible screen/bubble width with no scroll container, leaving the Send/Save button
+genuinely unreachable on a real phone. `outputs/LanMessenger-2.2.1.apk` (127,319 bytes),
+SHA-256 `bbc7ffbadb68842de749630e9586475028fc2e952abe09134db1d337a02b6cb3` (manifest:
+`outputs/SHA256SUMS-Android-2.2.1.txt`). Signed with the original development key — confirmed
+byte-identical signer certificate (`keytool -printcert`, SHA-256
 `7F:4A:07:94:3D:01:DA:12:66:E4:F2:D3:CE:75:71:65:C9:61:9C:9A:4E:F7:4E:74:1C:58:F8:EE:E0:8D:41:61`)
-to 2.1.1, so an existing install upgrades cleanly without uninstalling. `apksigner verify`
-confirms v2/v3 with one signer. Built by running `android/build.ps1`'s exact pipeline manually,
-command by command, rather than the script itself — its own known pre-existing issue
-(`$ErrorActionPreference='Stop'` aborting on javac's benign deprecation note on stderr, noted
-further down this file) predates Voice Messages and is unrelated to it; every tool, path and
-signing input was still the project's own, and `android/build.ps1` itself was not modified. No
-device or emulator acceptance has been performed for this APK.
+to 2.2.0/2.1.1, so an existing install upgrades cleanly without uninstalling. `apksigner verify`
+confirms v2/v3 with one signer. Built the same way as 2.2.0: `android/build.ps1`'s exact
+pipeline run manually, command by command, rather than the script itself — its own known
+pre-existing issue (`$ErrorActionPreference='Stop'` aborting on javac's benign deprecation note
+on stderr, noted further down this file) predates Voice Messages and is unrelated to it; every
+tool, path and signing input was still the project's own, and `android/build.ps1` itself was
+not modified. No further device or emulator acceptance has been performed for this specific
+build beyond the manual testing that found the bug it fixes.
 
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 

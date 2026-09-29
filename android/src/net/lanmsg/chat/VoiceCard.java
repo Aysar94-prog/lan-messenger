@@ -3,6 +3,7 @@ package net.lanmsg.chat;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -111,6 +112,14 @@ final class VoiceCard {
         break;
       }
     }
-    card.addView(row);
+    // Wrapped in a HorizontalScrollView, matching MainActivity's composeActions row: a card is
+    // narrower than the full screen (bounded by maxBubble), and the Playable row alone has a
+    // duration label plus 4 buttons -- without this, the last one or two controls (typically
+    // Save) can be laid out past the visible width and become unreachable, a real bug found
+    // during manual device testing after A08 shipped this row without it.
+    HorizontalScrollView scroll = new HorizontalScrollView(activity);
+    scroll.setHorizontalScrollBarEnabled(false);
+    scroll.addView(row);
+    card.addView(scroll);
   }
 }

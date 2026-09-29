@@ -204,7 +204,14 @@ final class VoiceUi {
       Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
       Button delete = activity.button("Delete"); delete.setContentDescription("Delete this recording"); delete.setOnClickListener(v -> deleteVoiceDraftClicked(activity, dId)); row.addView(delete);
       if (sendable) { Button send = activity.button("Send"); send.setContentDescription("Send this voice message"); send.setOnClickListener(v -> sendVoiceDraftClicked(activity, dId)); row.addView(send); }
-      activity.attachmentDraft.addView(row);
+      // Wrapped in a HorizontalScrollView, matching the existing composeActions row: with 5
+      // buttons (Play/-10s/+10s/Delete/Send) this row can lay out past the visible width on a
+      // typical phone, leaving the last one or two controls -- Send in particular -- unreachable.
+      // A real bug found during manual device testing after A08 shipped this row without it.
+      android.widget.HorizontalScrollView scroll = new android.widget.HorizontalScrollView(activity);
+      scroll.setHorizontalScrollBarEnabled(false);
+      scroll.addView(row);
+      activity.attachmentDraft.addView(scroll);
     }
   }
 
