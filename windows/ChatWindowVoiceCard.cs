@@ -1,8 +1,12 @@
 namespace LanMessenger;
 // Voice Messages (Phase 2 / Windows), W07: Candidate/Fetching/Playable/Invalid marked
-// content/Unavailable receiver cards, per tests/voice_messages/contract.md's Receiver
-// states table. Called only for received (non-mine) messages whose filename parses as a
-// voice marker — see ChatWindowMessages.cs MessageCard.
+// content/Unavailable cards, per tests/voice_messages/contract.md's Receiver states table,
+// reused for the SENDER's own sent voice message too (see ChatWindowMessages.cs MessageCard's
+// gate, which routes any message whose filename classifies as a voice Candidate through here
+// regardless of `mine`). A sender's own message always already has the attachment locally
+// right after sending, so ClassifyVoiceMessage resolves straight to Playable/Invalid without
+// ever touching the Candidate/Fetching/Unavailable retrieval states, which only apply to a
+// peer's recording.
 sealed partial class ChatWindow
 {
     enum VoiceCardState { Candidate,Fetching,Playable,Invalid,Unavailable }

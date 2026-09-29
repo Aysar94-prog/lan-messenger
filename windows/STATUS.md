@@ -43,18 +43,49 @@ G3 automated check: cross-platform `tests/offline_lifecycle.py` covers accepted 
 Reviewed 2026-09-29. Release: **2.2.0** — the first Windows release to package the Voice
 Messages Phase 2 work described in the section above (record/send/receive/play, ±10s seek
 steps, one active inline player app-wide). No wire/storage change from 2.1.0; every other 2.1.0
-capability (group ownership transfer, 2.0.1 carryover) is unchanged. `dotnet build
-windows/LanMessenger.csproj -c Release` passed (0 errors, the one pre-existing benign
-`CS1998` warning in `ChatWindowVoice.cs` noted above). Published framework-dependent via `dotnet
-publish -c Release -o outputs/LanMessenger-Windows-2.2.0` (matching every prior Windows release's
-shape — requires .NET Desktop Runtime 9) and zipped: `outputs/LanMessenger-Windows-2.2.0.zip`
-(2,847,939 bytes, SHA-256 `fb5b2349…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`). Full
-`tests/run.ps1` run for this release exited 0: every native Windows UI test passed, including the
-Voice Messages ones (first/second voice message arrival and auto-download, Play starting real
-playback, one-active-player enforcement across cards, pause/resume toggle, seek not crashing,
-force-stop-and-finalize on conversation switch/tray-close/Offline). As noted above, W11's manual
-two-device physical acceptance is still **Pending** — this release has not been exercised on real
-Windows hardware beyond the automated build/test suite.
+capability (group ownership transfer, 2.0.1 carryover) is unchanged.
+
+**Two real bugs found from actual device testing of the first 2.2.0 build, fixed same day:**
+
+1. **Choppy recorded audio.** `VoiceRecorder.cs`'s native waveIn buffer-ready callback dispatched
+   each filled buffer independently to the thread pool (`ThreadPool.QueueUserWorkItem`), with no
+   ordering guarantee between them — but `VoicePcmAssembler.Push` is a strictly sequential PCM
+   stream, so two buffers processed out of order (a real possibility once more than one pool
+   thread is picking up work concurrently) scrambles the recorded audio. Fixed by routing every
+   buffer through one dedicated FIFO processing thread instead (mirroring the pattern already
+   used on Android's `VoiceRecorder`/`VoicePlayer`), with careful `Stop()`/`Dispose()` draining so
+   neither the tail of a recording gets silently dropped nor native buffer memory gets freed
+   while the processing thread might still be using it. `VoicePlayer.cs`'s equivalent playback
+   callback does not have this problem (its buffer refill is order-independent by construction),
+   so it was left unchanged.
+2. **Sender sees their own sent voice message as a plain file.** `ChatWindowMessages.cs`'s
+   `MessageCard` gate dropped the `!mine` condition, mirroring Android 2.2.2's identical fix — the
+   sender now sees a proper voice-message player (duration, Play/Pause, ±10s, Save) for a message
+   they just sent, reversing the original W07 design choice (documented in
+   `ChatWindowVoiceCard.cs`'s header comment) per the same user expectation that drove the Android
+   change.
+
+`dotnet build windows/LanMessenger.csproj -c Release` passed (0 errors, the one pre-existing
+benign `CS1998` warning in `ChatWindowVoice.cs` noted above). Published framework-dependent via
+`dotnet publish -c Release -o outputs/LanMessenger-Windows-2.2.0` (matching every prior Windows
+release's shape — requires .NET Desktop Runtime 9) and zipped: `outputs/LanMessenger-Windows-2.2.0.zip`
+(2,848,507 bytes, SHA-256 `e9382d8e…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`). Full
+`tests/run.ps1` run against this exact build exited 0: every native Windows UI test passed,
+including the Voice Messages ones (first/second voice message arrival and auto-download, Play
+starting real playback, one-active-player enforcement across cards, pause/resume toggle, seek not
+crashing, force-stop-and-finalize on conversation switch/tray-close/Offline). The pre-existing
+`CsharpHarness --voice-device-check`'s "double `Dispose()` after `Stop()`" case caught a real
+non-idempotency bug in the recorder fix's first draft (`BlockingCollection.Dispose()` isn't
+itself safe to call twice) before it shipped — exactly what that test exists to catch. One
+unrelated,
+pre-existing flake reproduced in isolation during this pass: `tests/group_membership.py`'s
+16-member stress scenario hit a TLS handshake failure under heavy concurrent load — the same
+documented environmental contention noted throughout this file's history, not a regression. As
+noted above, W11's manual two-device physical acceptance is still **Pending** — this release has
+not been exercised on real Windows hardware beyond the automated build/test suite (the choppy-
+audio and sender-rendering fixes above came from the user's own device testing of the 2.2.0
+build, not from this automated suite, which is exactly the class of bug this Pending note has
+always been flagging as a real risk).
 
 ## Implemented
 

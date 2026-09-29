@@ -137,16 +137,76 @@ Release`, matching the shape of every prior Windows release exactly (`LanMesseng
 `.pdb`, `BouncyCastle.Cryptography.dll`, `.deps.json`/`.runtimeconfig.json` — requires .NET
 Desktop Runtime 9, no self-contained/RID bundling). Zipped as
 `outputs/LanMessenger-Windows-2.2.0.zip` (2,847,939 bytes, SHA-256 `fb5b2349…`; manifest:
-`outputs/SHA256SUMS-Windows-2.2.0.txt`). Full `tests/run.ps1` run for this exact release exited 0,
-including every native Windows UI test for Voice Messages: first/second voice message arrival and
-auto-download, clicking Play on a received card starting real playback, one active player app-wide
-(starting a second card stops the first, row updates immediately), pause/resume toggle, seek not
-crashing, and force-stop-and-finalize of an active recording on conversation switch, tray-close,
-and going Offline. WT02-WT05 remain unwritten and W11's manual two-device physical acceptance
-remains Pending — this packaging step did not add or skip any verification, it just makes the
-already-tested W01-W10/WT01/WT06 work installable for the first time. No wire or storage change
-from 2.1.0, so this interoperates with every 2.1.0-and-newer Android build at the pre-Voice-
-Messages feature level; actual cross-platform voice send/receive (Phase 3) is still unverified.
+`outputs/SHA256SUMS-Windows-2.2.0.txt` — superseded once, see below). Full `tests/run.ps1` run for
+the first packaged build exited 0, including every native Windows UI test for Voice Messages:
+first/second voice message arrival and auto-download, clicking Play on a received card starting
+real playback, one active player app-wide (starting a second card stops the first, row updates
+immediately), pause/resume toggle, seek not crashing, and force-stop-and-finalize of an active
+recording on conversation switch, tray-close, and going Offline. WT02-WT05 remain unwritten and
+W11's manual two-device physical acceptance remains Pending — this packaging step did not add or
+skip any verification, it just makes the already-tested W01-W10/WT01/WT06 work installable for the
+first time. No wire or storage change from 2.1.0, so this interoperates with every 2.1.0-and-newer
+Android build at the pre-Voice-Messages feature level; actual cross-platform voice send/receive
+(Phase 3) is still unverified.
+
+## Two real bugs found from actual device testing of the first 2.2.0 build (same day)
+
+The user installed the first 2.2.0 build and reported two issues:
+
+1. **"The sound in the recording is choppy."** Root cause: `VoiceRecorder.cs`'s native waveIn
+   buffer-ready callback (`NativeCallback`) dispatched each filled buffer independently via
+   `ThreadPool.QueueUserWorkItem`, matching the class header's own "minimum possible work on the
+   callback thread" rule — but with no ordering guarantee between those queued work items. winmm
+   calls `NativeCallback` strictly in the order buffers actually filled, but `HandleData` running
+   on two different pool threads can race for `nativeLock` in either order, and
+   `VoicePcmAssembler.Push` is a strictly sequential PCM stream — a buffer processed out of order
+   scrambles the recorded audio. `VoicePlayer.cs`'s equivalent `HandleDone` callback does not have
+   this problem (its `FillQueueLocked` refill is order-independent — any completing buffer just
+   pulls the next sequential chunk of the already-known-complete `wav` array forward), so it was
+   left unchanged; this was specific to the assembler's incremental, order-dependent construction
+   during live capture.
+
+   Fixed by adding a `BlockingCollection<IntPtr> pendingBuffers` and one dedicated
+   `processingThread` that consumes it FIFO — `NativeCallback` now just enqueues (still minimal
+   work, no lock, same deadlock-avoidance property as before), and `HandleData` always runs in the
+   exact order the audio was captured. This mirrors the "one dedicated thread owns all device I/O"
+   pattern Android's `VoiceRecorder`/`VoicePlayer` already used for the same reason.
+
+   Getting `Stop()`/`Dispose()` right took real care: `waveInStop`/`waveInReset` synchronously
+   flush every still-queued buffer back through `NativeCallback` before returning, so the last one
+   or two buffers of *every* recording normally arrive after `stopped` is already `true` — the
+   `HandleData` guard was changed from `if(stopped||failed||handle==IntPtr.Zero)return;` to
+   `if(failed||handle==IntPtr.Zero)return;` (with `stopped` only gating whether to bother
+   re-queuing the buffer back to the device) so those final buffers still get pushed into the
+   assembler instead of silently truncating every recording's tail. `Stop()` now calls a shared
+   `DrainAndClose()` (`CompleteAdding()` + `processingThread.Join()` + a final locked
+   `CloseNativeLocked()`) *outside* `nativeLock` — doing this while still holding the lock would
+   deadlock against `HandleData`, which also needs it — so that native buffer memory is only freed
+   after the processing thread has provably finished touching it. `Dispose()` reuses the same
+   `DrainAndClose()` so it works correctly even when called without a prior `Stop()` (a
+   cancel/failure path). The pre-existing `CsharpHarness --voice-device-check`'s "double
+   `Dispose()` after `Stop()`" case caught a real bug in this fix's first draft — `Dispose()`
+   wasn't itself idempotent, because `BlockingCollection.Dispose()` throws on a second call — fixed
+   with an explicit `disposed` guard field before it ever shipped.
+
+2. **"For sender there is now [sic] record play it showed as a file sent after sending."** Same
+   design choice as Android had, and the same fix: `ChatWindowMessages.cs`'s `MessageCard` gate
+   dropped its `!mine` condition, so the sender's own sent voice message now routes through
+   `AddVoiceCard` like a received one, reversing the original W07 design choice (documented in
+   `ChatWindowVoiceCard.cs`'s header comment, itself mirrored from `windows/STATUS.md`'s original
+   entry) — a sender's own message always already has the attachment locally right after sending,
+   so `ClassifyVoiceMessage` resolves straight to Playable/Invalid without touching any of the
+   Candidate/Fetching/Unavailable states that only apply to a peer's recording, so no change was
+   needed there.
+
+Verified: `dotnet build -c Release` (0 errors, the one pre-existing benign warning), full
+`tests/run.ps1` exited 0 against the fixed build (including the voice-device-check regression
+case above), with the same unrelated pre-existing `group_membership.py` 16-member-scenario flake
+(TLS handshake failure under load) reproduced in isolation — documented, not a regression.
+Rebuilt and re-zipped: `outputs/LanMessenger-Windows-2.2.0.zip` (2,848,507 bytes, SHA-256
+`e9382d8e…`; manifest: `outputs/SHA256SUMS-Windows-2.2.0.txt`) — this replaces the first,
+now-superseded 2.2.0 zip (SHA-256 `fb5b2349…`), same version number since no version bump was
+requested for this same-day fix pass. Still awaiting the user's re-test.
 
 Coordination note: `tests/voice_messages/check_contract.py`, `manifest.json`,
 `generate_wav_cases.py` and `wav_cases.bin` were under active concurrent edit by the
