@@ -171,7 +171,16 @@ final class VoiceDrafts {
   static void reconcile(PeerEngine e) throws IOException {
     synchronized (e) {
       boolean changed = false;
+      List<String> toDelete = new ArrayList<>();
       for (PeerEngine.VoiceDraft d : e.voiceDrafts.values()) {
+        // Crash-outcome 8: step 9 (durable queued message) already completed before the crash;
+        // only step 10 (registry cleanup) is left. Complete it now -- leaving the entry as an
+        // ordinary Finalized/sendable draft would let the user click Send again and duplicate a
+        // message that already went out, violating "reconciliation must never produce a
+        // duplicate Send of the same draft" (Draft state recovery item 5). sendTransactionId is
+        // set at step 7, before the message id could exist in the message list, so a match here
+        // can only mean step 9 truly succeeded.
+        if (!d.sendTransactionId.isEmpty() && hasSentMessage(e, d.sendTransactionId)) { toDelete.add(d.id); continue; }
         if (d.state.equals(PeerEngine.VoiceDraft.RECORDING)) { d.state = PeerEngine.VoiceDraft.INVALID; d.updatedAt = System.currentTimeMillis(); changed = true; continue; }
         if (!d.state.equals(PeerEngine.VoiceDraft.FINALIZED)) continue;
         try {
@@ -180,8 +189,13 @@ final class VoiceDrafts {
           if (!validation.pass) { d.state = PeerEngine.VoiceDraft.INVALID; d.updatedAt = System.currentTimeMillis(); changed = true; }
         } catch (Exception ex) { d.state = PeerEngine.VoiceDraft.INVALID; d.updatedAt = System.currentTimeMillis(); changed = true; }
       }
-      if (changed) e.save();
+      for (String id : toDelete) { e.voiceDrafts.remove(id); try { voiceDraftPath(e, id).delete(); } catch (IOException ignored) {} }
+      if (changed || !toDelete.isEmpty()) e.save();
     }
+  }
+  private static boolean hasSentMessage(PeerEngine e, String messageId) {
+    for (PeerEngine.Message m : e.messages) if (m.from.equals(e.id) && m.id.equals(messageId)) return true;
+    return false;
   }
 
   // Ten-step durable write order, steps 7-10: allocate the message id and final marked filename

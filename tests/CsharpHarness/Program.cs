@@ -7,6 +7,7 @@ using System.Text;
 if(args.Length==2&&args[0]=="--voice-check"){Environment.ExitCode=VoiceMessagesCheck.Run(args[1]);return;}
 if(args.Length==1&&args[0]=="--voice-device-check"){Environment.ExitCode=VoiceDeviceLifecycleCheck.Run();return;}
 if(args.Length==1&&args[0]=="--voice-scheduler-check"){Environment.ExitCode=VoiceSchedulerCheck.Run();return;}
+if(args.Length==1&&args[0]=="--voice-draft-reconcile-check"){Environment.ExitCode=VoiceDraftReconcileCheck.Run();return;}
 var voiceWriters=new Dictionary<string,VoiceDraftWriter>();
 try {
 using var engine=new PeerEngine(args[0],args[1],new TestProtector(args[0]));int notifications=0;engine.Received+=m=>Interlocked.Increment(ref notifications);engine.Start(args[2],int.Parse(args[3]),int.Parse(args[4]));Console.WriteLine("READY\t"+engine.Id);

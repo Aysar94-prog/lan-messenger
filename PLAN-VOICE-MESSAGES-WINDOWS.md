@@ -6,6 +6,25 @@ agent's Phase 1 (Android) work per the plan's explicit "either order or in paral
 (I01-I04 are already frozen: see `tests/voice_messages/contract.md`, `pcm-contract.md`,
 `vectors/manifest.json`).
 
+**Post-completion bug fix (found during the Android A05 verification pass, fixed on both
+platforms in the same session)**: `VoiceDraft.SendTransactionId` (set by
+`MarkVoiceDraftSendTransaction` at step 7 of the ten-step order) was written to the registry but
+never actually *read* by `ReconcileVoiceDrafts` — meaning crash-outcome 8 (the message was
+durably queued at step 9, but the crash landed before step 10 removed the registry entry) was
+not handled: the stale draft would resurface after restart as an ordinary Finalized/sendable
+draft, and clicking Send again would duplicate an already-sent message. This violated the
+contract's explicit "reconciliation must never produce a duplicate Send of the same draft"
+(Draft state recovery item 5). Fixed in `windows/VoiceDrafts.cs`'s `ReconcileVoiceDrafts`: any
+Finalized draft whose `SendTransactionId` matches an existing self-authored message id is now
+completed (registry entry removed, plaintext best-effort deleted) instead of left as a normal
+draft. New deterministic regression test `tests/CsharpHarness/VoiceDraftReconcileCheck.cs`
+(`--voice-draft-reconcile-check`, wired into `run.ps1`), using the same never-`Start()`,
+reflection-seeded-state technique as `VoiceSchedulerCheck.cs` — both the fix (crash-outcome-8
+draft removed) and the control case (a draft with a send transaction but no matching message yet
+is left alone) pass. The identical bug existed in `android/src/net/lanmsg/chat/VoiceDrafts.java`
+(a faithful port carries faithful bugs) and was fixed there too — see
+`PLAN-VOICE-MESSAGES-ANDROID.md`'s A05 entry.
+
 **Build blocker RESOLVED** (previously: `dotnet build` failed in this sandboxed shell with
 NU1101 on `Microsoft.NETCore.App.Ref` etc.). `dotnet build windows/LanMessenger.csproj -c
 Debug --configfile NuGet.Config` now succeeds cleanly (0 errors, 1 pre-existing unrelated

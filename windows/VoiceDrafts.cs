@@ -170,7 +170,16 @@ public sealed partial class PeerEngine
     {
         lock(gate){
             var updates=new Dictionary<string,VoiceDraft>();
+            var toDelete=new List<string>();
             foreach(var d in voiceDrafts.Values){
+                // Crash-outcome 8: step 9 (durable queued message) already completed before the
+                // crash; only step 10 (registry cleanup) is left. Complete it now — leaving the
+                // entry as an ordinary Finalized/sendable draft would let the user click Send
+                // again and duplicate a message that already went out, violating "reconciliation
+                // must never produce a duplicate Send of the same draft" (Draft state recovery
+                // item 5). SendTransactionId is set at step 7, before the message id could exist
+                // in `messages`, so a match here can only mean step 9 truly succeeded.
+                if(d.SendTransactionId.Length>0&&messages.Any(m=>m.From==Id&&m.Id==d.SendTransactionId)){toDelete.Add(d.Id);continue;}
                 if(d.State==VoiceDraftState.Recording){updates[d.Id]=d with{State=VoiceDraftState.Invalid,UpdatedAt=Now};continue;}
                 if(d.State!=VoiceDraftState.Finalized)continue;
                 var path=VoiceDraftPath(d.Id);
@@ -180,7 +189,8 @@ public sealed partial class PeerEngine
                     if(!validation.Pass)updates[d.Id]=d with{State=VoiceDraftState.Invalid,UpdatedAt=Now};
                 }catch{updates[d.Id]=d with{State=VoiceDraftState.Invalid,UpdatedAt=Now};}
             }
-            if(updates.Count==0)return;
+            foreach(var id in toDelete){voiceDrafts.Remove(id);try{File.Delete(VoiceDraftPath(id));}catch{}}
+            if(updates.Count==0&&toDelete.Count==0)return;
             foreach(var kv in updates)voiceDrafts[kv.Key]=kv.Value;
             Save();
         }
