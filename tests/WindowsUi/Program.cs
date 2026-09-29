@@ -238,6 +238,41 @@ class Check
     var hintCount=((Control)Field("feed")).Controls.Cast<Control>().Count(c=>c.Text=="A fresh start. Send a message or share a file.");
     if(hintCount!=1)throw new Exception("Empty-chat hint repeated "+hintCount+" times");
     Console.WriteLine("PASS: empty-chat hint remains single after redraw and chat switching");
+    // ============ Voice Messages (Phase 2), WT05: one-active-player enforcement, real playback ============
+    async Task<string> SendVoiceFrom(PeerEngine sender,string to){
+      var draft=sender.CreateVoiceDraft(to,false);
+      using(var writer=sender.OpenVoiceDraftWriter(draft)){for(int i=0;i<40;i++)await writer.WriteFrame(new byte[640]);await writer.CloseAsync();}
+      var validation=sender.FinalizeVoiceDraft(draft);if(!validation.Pass)throw new Exception("Voice draft failed to finalize: "+validation.FailureReason);
+      await sender.SendVoiceDraft(draft);return draft;
+    }
+    bool IsVoice(PeerEngine.Message m)=>m.FileName.EndsWith(".lanvoice.wav");
+    await SendVoiceFrom(second,engine.Id);
+    await Wait(()=>engine.Messages(second.Id).Count(IsVoice)==1,"First voice message arrives");
+    await Wait(()=>engine.Messages(second.Id).Where(IsVoice).All(engine.HasAttachment),"First voice message auto-downloads");
+    await SendVoiceFrom(second,engine.Id);
+    await Wait(()=>engine.Messages(second.Id).Count(IsVoice)==2,"Second voice message arrives");
+    await Wait(()=>engine.Messages(second.Id).Where(IsVoice).All(engine.HasAttachment),"Second voice message auto-downloads");
+    Call("RestoreWindow",second.Id);Call("Render");feedPanel.PerformLayout();
+    Button[] VoicePlayButtons()=>feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().Where(b=>b.AccessibleName=="Play or pause this voice message").OrderBy(b=>b.Top).ToArray();
+    var playButtons=VoicePlayButtons();
+    if(playButtons.Length!=2)throw new Exception("Expected 2 voice Play buttons, found "+playButtons.Length);
+    playButtons[0].PerformClick();
+    if(playButtons[0].Text!="Pause")throw new Exception("First voice card did not start playing");
+    Console.WriteLine("PASS: clicking Play on a received voice card starts real playback");
+    await Task.Delay(300);
+    playButtons[1].PerformClick();
+    if(playButtons[1].Text!="Pause")throw new Exception("Second voice card did not start playing");
+    if(playButtons[0].Text!="Play")throw new Exception("First voice card kept showing Pause after a different card took over playback");
+    Console.WriteLine("PASS: starting a second voice card stops the first (one active player app-wide) and its row updates immediately");
+    playButtons[1].PerformClick();
+    if(playButtons[1].Text!="Play")throw new Exception("Clicking Play on the already-active card did not pause it");
+    Console.WriteLine("PASS: clicking Play again on the active card pauses it (toggle behavior)");
+    playButtons[1].PerformClick();
+    if(playButtons[1].Text!="Pause")throw new Exception("Clicking Play on a paused active card did not resume it");
+    Console.WriteLine("PASS: clicking Play again on a paused card resumes it");
+    var seekButtons=feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().Where(b=>b.AccessibleName=="Forward 10 seconds").ToArray();
+    seekButtons.Last().PerformClick(); // seeks past this short clip's own end; must not throw or crash.
+    Console.WriteLine("PASS: seeking the active voice card does not crash");
     ((Button)Field("connection")).PerformClick();
     if(engine.Running||engine.NetworkState!="Offline"||((Button)Field("connection")).Text!="Go online"||((ToolStripMenuItem)Field("trayConnection")).Text!="Go online"||File.ReadAllText((string)Field("preferencePath")).Trim()!="Offline")throw new Exception("Offline UI control or preference failed");
     Call("RestoreWindow",remote.Id);((TextBox)Field("composer")).Text="Queued while explicitly offline";await CallAsync("Send");
