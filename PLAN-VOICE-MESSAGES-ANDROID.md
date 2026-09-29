@@ -45,6 +45,20 @@ confidence, not a blind port. Real device/emulator runtime behavior (actual mic 
 permission prompts, rotation, process death, `AudioRecord` device quirks) is still unverified
 and flagged honestly as such in the table above throughout.
 
+**Post-release bug fix (found via real device testing of the 2.2.0 APK, the first actual
+device feedback this phase has had)**: the voice-draft preview row (`VoiceUi.java`,
+Play/-10s/+10s/Delete/Send) and the received-message Playable card row (`VoiceCard.java`,
+duration/Play/-10s/+10s/Save) were both plain horizontal `LinearLayout`s with no scroll/wrap
+container — unlike the pre-existing `composeActions` row in `MainActivity.java`, which is
+wrapped in a `HorizontalScrollView` for exactly this reason. With 4-5 buttons in a row this
+laid out past the visible screen/bubble width on a real phone, leaving the last control or two
+— **Send** in particular — genuinely unreachable, not merely a cosmetic issue. This is exactly
+the class of bug the "compile+dex verified; device runtime unverified" caveat recorded
+throughout A03/A04/A08/A09 was flagging as a real risk, not a formality. Fixed by wrapping both
+rows in a `HorizontalScrollView`, matching the established pattern. Verified through the real
+Android toolchain again (`javac -source 8 -target 8` + `d8`), 0 errors. Packaged as **Android
+2.2.1** (versionCode 28) so the fix can actually be tested on the same device that found the bug.
+
 **A01-A11 all done.** Android Phase 1's implementation tasks are code-complete, verified through
 the real Android toolchain throughout, and the full `tests/run.ps1` regression suite passes
 clean with zero regressions. `android/STATUS.md` and `PROJECT_STATUS.md` are updated (A11).
