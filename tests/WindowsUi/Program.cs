@@ -273,8 +273,35 @@ class Check
     var seekButtons=feedPanel.Controls.Cast<Control>().SelectMany(AllControls).OfType<Button>().Where(b=>b.AccessibleName=="Forward 10 seconds").ToArray();
     seekButtons.Last().PerformClick(); // seeks past this short clip's own end; must not throw or crash.
     Console.WriteLine("PASS: seeking the active voice card does not crash");
+    // ============ Voice Messages (Phase 2), WT03: lifecycle-safe-stop UI scenarios ============
+    string? RecordingDraftId()=>(string?)type.GetField("recordingDraftId",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(form);
+    Call("RestoreWindow",second.Id);Call("Render");
+    ((Button)Field("recordVoice")).PerformClick();
+    if(RecordingDraftId()==null)throw new Exception("Recording did not start (conversation-switch scenario)");
+    await Task.Delay(1000); // let the real waveIn device deliver some actual frames.
+    Call("RestoreWindow",groupId); // switch conversation while recording is active.
+    if(RecordingDraftId()!=null)throw new Exception("Switching conversations did not force-stop the active recording");
+    if(((Button)Field("stopRecording")).Visible||!((Button)Field("recordVoice")).Visible)throw new Exception("Record/Stop button visibility did not revert after a switch-forced stop");
+    // StopVoiceRecording is `async void`: recordingDraftId clears synchronously, but finalizing
+    // the draft (CloseAsync + FinalizeVoiceDraft) completes on a later continuation.
+    await Wait(()=>engine.VoiceDraftsFor(second.Id).Any(d=>d.State==VoiceDraftState.Finalized),"switching conversations force-stops an active recording and finalizes it");
+    Call("RestoreWindow",second.Id);Call("Render");
+    ((Button)Field("recordVoice")).PerformClick();
+    if(RecordingDraftId()==null)throw new Exception("Recording did not start (hide-to-tray scenario)");
+    await Task.Delay(500);
+    form.Close(); // hide-to-tray (CloseReason.UserClosing while !exiting): must force-stop before hiding.
+    if(form.Visible)throw new Exception("Close during recording did not hide to tray as usual");
+    if(RecordingDraftId()!=null)throw new Exception("Closing the window (hide-to-tray) did not force-stop the active recording");
+    Console.WriteLine("PASS: closing the window to the tray force-stops an active recording");
+    Call("RestoreWindow",second.Id);Call("Render");
+    ((Button)Field("recordVoice")).PerformClick();
+    if(RecordingDraftId()==null)throw new Exception("Recording did not start (Offline-transition scenario)");
+    await Task.Delay(500);
     ((Button)Field("connection")).PerformClick();
     if(engine.Running||engine.NetworkState!="Offline"||((Button)Field("connection")).Text!="Go online"||((ToolStripMenuItem)Field("trayConnection")).Text!="Go online"||File.ReadAllText((string)Field("preferencePath")).Trim()!="Offline")throw new Exception("Offline UI control or preference failed");
+    await Task.Delay(1500); // the 1 s timer.Tick drives TickVoiceRecording, not the Offline click itself.
+    if(RecordingDraftId()!=null)throw new Exception("Going Offline did not force-stop the active recording");
+    Console.WriteLine("PASS: going Offline force-stops an active recording");
     Call("RestoreWindow",remote.Id);((TextBox)Field("composer")).Text="Queued while explicitly offline";await CallAsync("Send");
      if(!engine.Messages(remote.Id).Any(m=>m.Text=="Queued while explicitly offline"&&m.Status=="Queued"))throw new Exception("Offline UI blocked queued message");
      Console.WriteLine("PASS: toolbar and tray synchronize Offline, persist it, and keep local queued sends usable");
