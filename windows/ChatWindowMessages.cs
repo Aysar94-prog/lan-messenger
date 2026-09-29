@@ -35,7 +35,14 @@ sealed partial class ChatWindow
         // attempt (see PLAN-VOICE-MESSAGES-WINDOWS.md's W06 note); the id-match half of
         // Classify still correctly routes a mismatched marker straight to the ordinary
         // attachment branch below, matching marker-mismatched in the shared fixture manifest.
-        else if(!mine&&VoiceMarker.Classify(message.FileName,"Normal",message.Id)==VoiceMarkerClassification.Candidate&&AddVoiceCard(card,message,width))
+        //
+        // Routed for the sender's own sent message too (no `!mine` gate), matching Android
+        // 2.2.2's identical change: the sender should see a proper voice-message player, not a
+        // generic file entry, for a message they just sent. ClassifyVoiceMessage needs no
+        // change for this — the sender's own message always already has the attachment locally
+        // right after sending, so it resolves straight to Playable/Invalid, never touching the
+        // Candidate/Fetching/Unavailable retrieval states that only apply to a peer's recording.
+        else if(VoiceMarker.Classify(message.FileName,"Normal",message.Id)==VoiceMarkerClassification.Candidate&&AddVoiceCard(card,message,width))
         {
             if(message.Text.Length>0)card.Controls.Add(MessageLabel(message.Text,12,Ink,width-24));
         }

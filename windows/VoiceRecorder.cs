@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 namespace LanMessenger;
 
@@ -12,11 +13,12 @@ namespace LanMessenger;
 // - All native waveIn* calls are serialized under `nativeLock`.
 // - The callback delegate is rooted as an instance field so it cannot be collected while
 //   winmm.dll still holds a function pointer to it.
-// - The native callback itself does the minimum possible (capture the header pointer and
-//   queue real work on the thread pool) rather than doing any processing, buffer requeueing,
-//   or taking `nativeLock` on the callback thread — avoids the classic MM callback deadlock
-//   where the callback blocks on a lock the stopping thread already holds while inside
-//   waveInStop/waveInReset.
+// - The native callback itself does the minimum possible (capture the header pointer and hand
+//   it to a single dedicated processing thread via a FIFO queue — see pendingBuffers below for
+//   why this must be one dedicated thread, not the thread pool) rather than doing any
+//   processing, buffer requeueing, or taking `nativeLock` on the callback thread — avoids the
+//   classic MM callback deadlock where the callback blocks on a lock the stopping thread
+//   already holds while inside waveInStop/waveInReset.
 // - Start()/Stop()/Dispose() are idempotent: calling any of them more than once, or Stop()
 //   before Start(), is a safe no-op rather than a crash.
 // - Buffers are native (unmanaged) memory, never pinned managed arrays, so there is nothing
@@ -36,6 +38,17 @@ public sealed class VoiceRecorder : IDisposable
     IntPtr handle=IntPtr.Zero;
     readonly List<(IntPtr header,IntPtr data)> buffers=new();
     bool started,stopped,failed;
+
+    // winmm invokes NativeCallback once per buffer, strictly in the order buffers actually
+    // filled -- but dispatching each one independently via ThreadPool.QueueUserWorkItem (the
+    // original design here) throws that ordering away: two queued work items can run on
+    // different pool threads and race for nativeLock in either order. assembler.Push(pcm) is a
+    // strictly sequential PCM stream, so a buffer processed out of order scrambles the recorded
+    // audio -- this was the real cause of a real "recording sounds choppy" bug report. Routing
+    // every buffer through this single dedicated thread, FIFO, guarantees HandleData always runs
+    // in the same order the audio was actually captured.
+    readonly BlockingCollection<IntPtr> pendingBuffers=new();
+    Thread? processingThread;
 
     public bool Recording{get{lock(nativeLock)return started&&!stopped&&!failed;}}
 
@@ -57,6 +70,15 @@ public sealed class VoiceRecorder : IDisposable
             }catch{CloseNativeLocked();throw;}
             started=true;
         }
+        processingThread=new Thread(ProcessingLoop){IsBackground=true,Name="voice-recorder"};
+        processingThread.Start();
+    }
+
+    // The single consumer of pendingBuffers -- see that field's comment for why this must be
+    // exactly one dedicated thread rather than the thread pool.
+    void ProcessingLoop()
+    {
+        foreach(var headerPtr in pendingBuffers.GetConsumingEnumerable())HandleData(headerPtr);
     }
 
     void AllocateAndQueueBufferLocked()
@@ -79,23 +101,37 @@ public sealed class VoiceRecorder : IDisposable
     void NativeCallback(IntPtr hwi,uint uMsg,IntPtr dwInstance,IntPtr dwParam1,IntPtr dwParam2)
     {
         if(uMsg!=WaveIn.MM_WIM_DATA)return;
-        var headerPtr=dwParam1;
-        ThreadPool.QueueUserWorkItem(_=>HandleData(headerPtr));
+        // Enqueue, don't process here (still the "minimum possible work" rule the class header
+        // describes) -- but unlike a raw ThreadPool hand-off, adding to this queue preserves the
+        // exact order winmm called us in, for the single ProcessingLoop consumer to honor.
+        try{pendingBuffers.Add(dwParam1);}catch(InvalidOperationException){} // CompleteAdding already called; a very last in-flight callback racing teardown -- safe to drop.
     }
 
     void HandleData(IntPtr headerPtr)
     {
         List<VoicePcmFrame> frames;
         lock(nativeLock){
-            if(stopped||failed||handle==IntPtr.Zero)return; // torn down already; nothing left to do safely.
+            // `handle==IntPtr.Zero` (native buffer memory already freed by CloseNativeLocked) is
+            // the only condition that makes touching headerPtr unsafe. `stopped` alone is NOT
+            // one: waveInStop/waveInReset synchronously flush every still-pending buffer back to
+            // us via NativeCallback before Stop() proceeds to drain this queue (see Stop()'s
+            // DrainAndClose call, which deliberately waits for this very processing loop to empty
+            // the queue before it ever touches native memory) -- so the last one or two buffers
+            // of a recording normally arrive with `stopped` already true, and must still be
+            // pushed into the assembler or the tail of every recording gets silently truncated.
+            if(failed||handle==IntPtr.Zero)return;
             var hdr=Marshal.PtrToStructure<WAVEHDR>(headerPtr);
-            if(hdr.dwBytesRecorded==0){RequeueLocked(headerPtr);return;}
+            if(hdr.dwBytesRecorded==0){if(!stopped)RequeueLocked(headerPtr);return;}
             var pcm=new byte[hdr.dwBytesRecorded];
             Marshal.Copy(hdr.lpData,pcm,0,(int)hdr.dwBytesRecorded);
             try{frames=assembler.Push(pcm);}
             catch(InvalidOperationException){FailLocked();return;} // e.g. the 9,600,000-byte cap.
             if(assembler.TerminallyFailed){FailLocked();return;}
-            RequeueLocked(headerPtr);
+            // Once stopped, the device is being torn down regardless -- requeuing a buffer back
+            // to it would be pointless, and calling waveInAddBuffer on an already-reset handle
+            // can itself return an error, which would incorrectly flip this into a failure state
+            // for what was actually a perfectly normal stop.
+            if(!stopped)RequeueLocked(headerPtr);
         }
         foreach(var frame in frames)FrameReady?.Invoke(frame);
     }
@@ -122,12 +158,30 @@ public sealed class VoiceRecorder : IDisposable
         lock(nativeLock){
             if(!started||stopped)return null;
             stopped=true;
+            // waveInStop+waveInReset synchronously flushes every still-queued buffer back to us
+            // through NativeCallback (which needs no lock, so this still succeeds even though we
+            // hold nativeLock here) before either call returns.
             if(!failed&&handle!=IntPtr.Zero){WaveIn.waveInStop(handle);WaveIn.waveInReset(handle);}
-            CloseNativeLocked();
+        }
+        // Outside the lock: DrainAndClose() waits for ProcessingLoop to actually push every one
+        // of those just-flushed final buffers into the assembler (HandleData needs nativeLock
+        // too) before it frees any native buffer memory. Doing this inline, still holding
+        // nativeLock, would deadlock ProcessingLoop against this very thread.
+        DrainAndClose();
+        lock(nativeLock){
             if(failed)return (null,VoicePcmEvent.DeviceFailure);
             try{return assembler.End();}
             catch(InvalidOperationException){return (null,VoicePcmEvent.DeviceFailure);}
         }
+    }
+
+    // Shared by Stop() and Dispose(); safe to call from either, and safe if called by both (each
+    // of CompleteAdding/Join/CloseNativeLocked is independently idempotent).
+    void DrainAndClose()
+    {
+        pendingBuffers.CompleteAdding();
+        processingThread?.Join();
+        lock(nativeLock)CloseNativeLocked();
     }
 
     void CloseNativeLocked()
@@ -141,12 +195,23 @@ public sealed class VoiceRecorder : IDisposable
         buffers.Clear();
     }
 
+    bool disposed;
+
+    // Safe even if Stop() was never called (e.g. a failure/cancel path that disposes directly):
+    // stops the device first if that hasn't happened yet, then reuses the exact same
+    // drain-before-close sequence Stop() uses. Also safe to call more than once itself --
+    // DrainAndClose()'s own steps tolerate a repeat call, but pendingBuffers.Dispose() does not
+    // (BlockingCollection throws ObjectDisposedException on a second Dispose()), so this needs
+    // its own explicit guard rather than relying on DrainAndClose()'s idempotency alone.
     public void Dispose()
     {
         lock(nativeLock){
+            if(disposed)return;
+            disposed=true;
             if(!stopped&&started){stopped=true;if(!failed&&handle!=IntPtr.Zero){try{WaveIn.waveInStop(handle);WaveIn.waveInReset(handle);}catch{}}}
-            CloseNativeLocked();
         }
+        if(started)DrainAndClose();
+        pendingBuffers.Dispose();
     }
 }
 
