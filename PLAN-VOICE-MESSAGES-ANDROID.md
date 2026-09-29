@@ -105,6 +105,17 @@ only the visible glyph changed. No layout, wire, or storage change; verified thr
 Android toolchain, 0 errors. Packaged as **Android 2.2.3** (versionCode 30), same signer as every
 prior release. No device/emulator acceptance yet for this build.
 
+**Second replay-bug fix**: the user actually installed and tested 2.2.3 on a real device and
+confirmed the UI correctly detects completion (the Play button does flip back to ▶) but tapping
+it again still produced no audio, meaning the 2.2.2 `VoicePlayer.resume()` position-reset fix
+alone wasn't the whole story. Root cause, only observable on real hardware: a plain
+`AudioTrack.play()` call after the track naturally drained (buffer underrun, never explicitly
+`stop()`ped) doesn't reliably resume producing audio on every device. Fixed by having `resume()`
+do `track.stop()`+`track.flush()` before `track.play()` whenever it's restarting from the end —
+the same clean-reset pattern `seek()` already used for its own pause+flush. Verified through the
+real Android toolchain, 0 errors. Packaged as **Android 2.2.4** (versionCode 31), same signer as
+every prior release. Still awaiting the user's re-test on the same device that surfaced this.
+
 Genuinely remaining, not something further agent work in this sandboxed environment can close:
 **AT03/AT05** (need real or simulated `AudioRecord`/`AudioTrack` device behavior — no equivalent
 to Windows' confirmed real `waveIn`/`waveOut` device has been found here, and Android's

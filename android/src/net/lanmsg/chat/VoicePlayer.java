@@ -81,6 +81,7 @@ public final class VoicePlayer {
   }
 
   public void resume() throws IOException {
+    boolean restartTrack;
     synchronized (lock) {
       if (closed || track == null) return;
       if (!requestFocusLocked()) throw new IOException("Could not get audio playback focus.");
@@ -89,10 +90,17 @@ public final class VoicePlayer {
       // play() already had this reset; resume() (used by togglePlayback for the same active key,
       // which is exactly the "press Play again after it finished" case) needed it too, to let a
       // voice message be replayed any number of times.
-      if (playPosition >= dataEnd()) { playPosition = info.dataOffset; epoch++; }
+      restartTrack = playPosition >= dataEnd();
+      if (restartTrack) { playPosition = info.dataOffset; epoch++; }
       playing = true;
       lock.notifyAll();
     }
+    // A plain play() on a track that naturally drained (buffer underrun, never explicitly
+    // stopped) doesn't reliably resume producing audio on every device -- confirmed on a real
+    // device after the position-reset fix above alone wasn't enough. stop()+flush() forces the
+    // track back to a clean, known state before feeding it fresh data, exactly like seek()
+    // already does for its own pause+flush before continuing.
+    if (restartTrack) { try { track.stop(); track.flush(); } catch (Exception ignored) {} }
     track.play();
   }
 
