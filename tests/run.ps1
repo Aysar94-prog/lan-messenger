@@ -38,6 +38,8 @@ try {
   Check-Result
   python tests/voice_scheduler_android.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
   Check-Result
+  python tests/voice_interop.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot
+  Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.AttachmentRangeTest
   Check-Result
   & "$JdkRoot\bin\java.exe" -cp "$TestRoot\java" net.lanmsg.chat.TransferWatchdogTest
