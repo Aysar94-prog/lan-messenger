@@ -84,6 +84,12 @@ public final class VoicePlayer {
     synchronized (lock) {
       if (closed || track == null) return;
       if (!requestFocusLocked()) throw new IOException("Could not get audio playback focus.");
+      // Without this, clicking Play again after a clip finishes silently does nothing: position
+      // is still at dataEnd(), so the write loop immediately re-idles instead of restarting.
+      // play() already had this reset; resume() (used by togglePlayback for the same active key,
+      // which is exactly the "press Play again after it finished" case) needed it too, to let a
+      // voice message be replayed any number of times.
+      if (playPosition >= dataEnd()) { playPosition = info.dataOffset; epoch++; }
       playing = true;
       lock.notifyAll();
     }

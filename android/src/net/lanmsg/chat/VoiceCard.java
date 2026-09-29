@@ -8,14 +8,17 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 // Voice Messages (Phase 1 / Android), A07: Candidate/Fetching/Playable/Invalid marked
-// content/Unavailable receiver cards, per tests/voice_messages/validation-contract.md's Receiver
-// state and fallback rules. Called only for received (non-mine) messages whose filename
-// classifies as a genuine voice Candidate -- see MainActivity's render() gate, mirroring
-// windows/ChatWindowVoiceCard.cs (W07) and its MessageCard gate exactly.
+// content/Unavailable cards, per tests/voice_messages/validation-contract.md's Receiver state
+// and fallback rules, reused for the SENDER's own sent voice message too -- see MainActivity's
+// render() gate, which routes any message whose filename classifies as a voice Candidate through
+// here regardless of `mine`. A sender's own message always already has the attachment locally
+// right after sending, so classify() resolves straight to PLAYABLE/INVALID without ever touching
+// the Candidate/Fetching/Unavailable retrieval states -- those only apply to a peer's recording.
 //
 // Play/seek are wired to the real VoicePlayer (A08) via VoicePlayback, the shared one-active-
-// player controller. Save/Export uses the existing destination-picker path (AttachmentFlow),
-// a distinct, already-built action, not a playback feature.
+// player controller, including a draggable seek bar (WhatsApp-style scrubbing, not fixed steps).
+// Save/Export uses the existing destination-picker path (AttachmentFlow), a distinct, already-
+// built action, not a playback feature.
 final class VoiceCard {
   private VoiceCard() {}
   static final String CANDIDATE = "Candidate", FETCHING = "Fetching", PLAYABLE = "Playable", INVALID = "Invalid", UNAVAILABLE = "Unavailable";
@@ -79,20 +82,27 @@ final class VoiceCard {
       }
       case PLAYABLE: {
         String playKey = "msg:" + m.from + "/" + m.id;
-        TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, readDurationMs(e, m)), 15);
+        long durationMs = readDurationMs(e, m);
+        row.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout controls = new LinearLayout(activity); controls.setOrientation(LinearLayout.HORIZONTAL); controls.setGravity(Gravity.CENTER_VERTICAL);
+        TextView durationLabel = activity.label(VoicePlayback.playbackText(activity, playKey, durationMs), 15);
         durationLabel.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        row.addView(durationLabel);
+        controls.addView(durationLabel);
         Button play = activity.button(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
         play.setContentDescription("Play or pause this voice message");
+        android.widget.SeekBar seekBar = VoicePlayback.buildSeekBar(activity, playKey);
+        seekBar.setLayoutParams(new LinearLayout.LayoutParams(activity.dp(220), LinearLayout.LayoutParams.WRAP_CONTENT));
         Runnable refresh = () -> {
-          durationLabel.setText(VoicePlayback.playbackText(activity, playKey, readDurationMs(e, m)));
+          durationLabel.setText(VoicePlayback.playbackText(activity, playKey, durationMs));
           play.setText(playKey.equals(activity.activePlayerKey) && activity.activePlayer != null && activity.activePlayer.isPlaying() ? "Pause" : "Play");
+          VoicePlayback.updateSeekBar(activity, playKey, seekBar, durationMs);
         };
         play.setOnClickListener(v -> VoicePlayback.togglePlayback(activity, playKey, () -> { try { return e.readAttachment(m); } catch (Exception ex) { throw new RuntimeException(ex); } }, refresh));
-        row.addView(play);
-        Button back = activity.button("-10s"); back.setContentDescription("Rewind 10 seconds"); back.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, -10000); refresh.run(); }); row.addView(back);
-        Button fwd = activity.button("+10s"); fwd.setContentDescription("Forward 10 seconds"); fwd.setOnClickListener(v -> { VoicePlayback.seekActivePlayer(activity, playKey, 10000); refresh.run(); }); row.addView(fwd);
-        Button save = activity.button("Save"); save.setContentDescription("Save this voice message to a file"); save.setOnClickListener(v -> AttachmentFlow.exportFile(activity, m)); row.addView(save);
+        controls.addView(play);
+        Button save = activity.button("Save"); save.setContentDescription("Save this voice message to a file"); save.setOnClickListener(v -> AttachmentFlow.exportFile(activity, m)); controls.addView(save);
+        row.addView(controls);
+        row.addView(seekBar);
+        refresh.run();
         break;
       }
       case INVALID: {
