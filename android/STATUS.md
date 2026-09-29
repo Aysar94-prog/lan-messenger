@@ -145,6 +145,26 @@ and is already in the PLAYING state — eliminating the race rather than just na
 Verified through the real Android toolchain, 0 errors. Packaged as **Android 2.2.5**
 (versionCode 32), same signer as every prior release. Still awaiting the user's re-test.
 
+**Fifth pass — stop reusing the drained AudioTrack at all (2026-09-29, same day)**: the user
+tested 2.2.5 and reported the same failure ("it play once... why i need to leave conversation to
+play rec again"). Three straight attempts at reusing the same `AudioTrack` past natural
+completion (position reset alone, then `stop()`+`flush()` outside the lock, then the same reset
+correctly ordered inside the lock) all failed on this device — strong evidence this specific
+`AudioTrack` cannot be reliably revived after it drains, at least on this hardware/OS combo,
+regardless of how carefully the reset is sequenced. The one thing that *always* worked was
+leaving the conversation and coming back, because that path throws away the old player entirely
+and builds a brand-new `VoicePlayer`/`AudioTrack` from scratch. So instead of continuing to fight
+the reuse case, `VoicePlayer` now exposes `isFinished()` (`!playing && playPosition >= dataEnd()`)
+and `VoicePlayback.togglePlayback` checks it: a finished player is never resumed in place — it
+falls through to the same "different key" branch that already builds a fresh player, i.e. tapping
+Play again on a finished voice message now does in-app exactly what leaving and re-entering used
+to do, with no navigation needed. `resume()` itself is back to a plain pause/resume toggle (no
+`dataEnd()`/track reset left in it — that responsibility moved to the caller). Verified through
+the real Android toolchain, 0 errors. Packaged as **Android 2.2.6** (versionCode 33), same signer
+as every prior release. Still awaiting the user's re-test, but this is the first fix in this
+chain built on a mechanism (fresh player construction) already independently confirmed to work
+on the user's own device, rather than on a new theory about the failure.
+
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 
 ## Implemented
