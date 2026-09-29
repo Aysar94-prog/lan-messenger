@@ -1,4 +1,4 @@
-# LAN Messenger — Android 2.2.3 / Windows 2.1.0
+# LAN Messenger — Android 2.2.4 / Windows 2.1.0
 
 Current releases are **Android 2.2.1** (versionCode 28) and **Windows 2.1.0**. The platforms release independently; see [PROJECT_STATUS.md](PROJECT_STATUS.md) for the actual per-feature comparison. Android 2.2.1 APK automated verification passed, but device acceptance remains pending. Android 2.2's headline addition is Voice Messages (Phase 1, in source — platform-local only, not yet interoperability-tested with the Windows side); see [PROJECT_STATUS.md](PROJECT_STATUS.md)'s Feature comparison for the current state on both platforms. 2.2.1 is a same-day fix for a real bug found via device testing of 2.2.0: the voice Send/Save button could lay out off-screen with no way to scroll to it.
 
@@ -45,7 +45,7 @@ Uses binary units: 1 GiB = 1024³ bytes; 1 MiB/s = 1024² bytes per second. The 
 
 Profile displays today's uploaded amount and current cap. The encrypted counter persists separately from conversations, resets when the local calendar advances to a new day, and is not reset by clearing chat or normal restart. Clock rollback does not grant another allowance. Usage is checkpointed at 4 MiB or one second of active upload and flushed after transfers/on service close; abrupt process/power failure may lose up to approximately 4 MiB since the last checkpoint. No disk write per network packet.
 
-This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install the current LanMessenger-2.2.3.apk over the existing app without uninstalling.
+This is Android-only, local-device enforcement, not a centrally managed account quota or protection against a modified/rooted app. Windows remains uncapped; the approved daily upload policy is Android-only. No other proposed anti-flood rules were added in this release. Install the current LanMessenger-2.2.4.apk over the existing app without uninstalling.
 
 ## Sending files
 
@@ -70,11 +70,11 @@ Android keeps Send visible next to scrollable attachment actions. Unknown-size o
 
 ## Install and update
 
-Android: install LanMessenger-2.2.3.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data. The prior LanMessenger-2.2.2.apk, LanMessenger-2.2.1.apk, LanMessenger-2.2.0.apk and LanMessenger-2.1.1.apk are preserved in outputs/. Verify the APK against `outputs/SHA256SUMS-Android-2.2.3.txt` before installing.
+Android: install LanMessenger-2.2.4.apk on both phones over the existing app signed by the original development key. Do not uninstall if you want to preserve data. The prior LanMessenger-2.2.3.apk, LanMessenger-2.2.2.apk, LanMessenger-2.2.1.apk, LanMessenger-2.2.0.apk and LanMessenger-2.1.1.apk are preserved in outputs/. Verify the APK against `outputs/SHA256SUMS-Android-2.2.4.txt` before installing.
 
 Windows: Exit through the tray menu, extract LanMessenger-Windows-2.1.0.zip and run LanMessenger.exe with its companion files. Requires .NET Desktop Runtime 9.
 
-Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 2.1.0 and Android 2.2.3 interoperate, and remain wire-compatible with the 2.0.x pair for any group that has never had its membership changed and never had its ownership transferred (2.0.0's join-request wire frames are simply never answered by 2.1.0, same tolerance as any frame an older/newer build doesn't understand). Android 2.2.0's Voice Messages addition uses no new wire frame and does not affect this compatibility. 2.2.2 and 2.2.3 are client-local UI/playback changes only, also with no wire-frame impact. Do not downgrade.
+Identities, verification, contacts, groups, local history and old downloaded attachments remain. Existing file queues become manual offers. Older clients cannot push unsolicited file bodies into 0.8.0. Direct text retains LM4 framing. Current direct-to-destination manual downloads require 0.8.7 or later at both ends; Windows 2.1.0 and Android 2.2.4 interoperate, and remain wire-compatible with the 2.0.x pair for any group that has never had its membership changed and never had its ownership transferred (2.0.0's join-request wire frames are simply never answered by 2.1.0, same tolerance as any frame an older/newer build doesn't understand). Android 2.2.0's Voice Messages addition uses no new wire frame and does not affect this compatibility. 2.2.2, 2.2.3 and 2.2.4 are client-local UI/playback changes only, also with no wire-frame impact. Do not downgrade.
 
 ## Pair, chat and groups
 

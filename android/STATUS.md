@@ -119,6 +119,19 @@ through the real Android toolchain (`javac -source 8 -target 8` + `d8`), 0 error
 **Android 2.2.3** (versionCode 30). Same signer as every prior release. No device/emulator
 acceptance yet for this build.
 
+**Second replay-bug fix (2026-09-29, same day)**: after actually installing and testing 2.2.3 on
+a real device, the user confirmed the UI correctly detects completion (the button does flip back
+to `▶`) but tapping it again still produces no audio — so the 2.2.2 `VoicePlayer.resume()`
+position-reset fix alone was not sufficient. Root cause: a plain `AudioTrack.play()` call after
+the track naturally drained (buffer underrun, never explicitly `stop()`ped) does not reliably
+resume producing audio on every device — this is a known `AudioTrack` streaming-mode quirk, only
+observable on real hardware, not from source review. Fixed by having `resume()` call
+`track.stop()`+`track.flush()` before `track.play()` whenever it's restarting from the end (the
+same clean-reset pattern `seek()` already used for its own pause+flush). Verified through the
+real Android toolchain, 0 errors. Packaged as **Android 2.2.4** (versionCode 31), same signer as
+every prior release. Still no device/emulator acceptance recorded here for this specific build —
+depends on the user re-testing on the same device that surfaced the underlying quirk.
+
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 
 ## Implemented
