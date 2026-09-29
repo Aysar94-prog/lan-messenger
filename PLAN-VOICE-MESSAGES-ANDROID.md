@@ -116,6 +116,19 @@ the same clean-reset pattern `seek()` already used for its own pause+flush. Veri
 real Android toolchain, 0 errors. Packaged as **Android 2.2.4** (versionCode 31), same signer as
 every prior release. Still awaiting the user's re-test on the same device that surfaced this.
 
+**Fourth pass — race condition in the third fix**: the user tested 2.2.4 and reported a new
+symptom, "press the button but it stop[s] immediately" — audio now starts, unlike before, but
+cuts off right away. Root cause: 2.2.4's `stop()`+`flush()`+`play()` reset ran *outside*
+`synchronized(lock)`, after `notifyAll()` had already woken the write thread. The write thread
+could race ahead of the main thread — write a fresh chunk into the track — right as (or just
+before) `flush()` ran, wiping that data out (or racing `play()` itself); the audible symptom is
+exactly "plays a fragment, then silence." Fixed by moving the whole `stop()`/`flush()`/`play()`
+sequence inside the synchronized block, strictly before `notifyAll()`, so the write thread cannot
+wake up until the track has already been reset and is already in the PLAYING state — this
+removes the race rather than narrowing its window. Verified through the real Android toolchain,
+0 errors. Packaged as **Android 2.2.5** (versionCode 32), same signer as every prior release.
+Still awaiting the user's re-test.
+
 Genuinely remaining, not something further agent work in this sandboxed environment can close:
 **AT03/AT05** (need real or simulated `AudioRecord`/`AudioTrack` device behavior — no equivalent
 to Windows' confirmed real `waveIn`/`waveOut` device has been found here, and Android's

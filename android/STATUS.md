@@ -132,6 +132,19 @@ real Android toolchain, 0 errors. Packaged as **Android 2.2.4** (versionCode 31)
 every prior release. Still no device/emulator acceptance recorded here for this specific build —
 depends on the user re-testing on the same device that surfaced the underlying quirk.
 
+**Third replay-bug fix (race condition in the second fix, 2026-09-29, same day)**: the user
+tested 2.2.4 and reported a new symptom — pressing Play now starts audio and then "stops
+immediately", rather than the earlier silent no-op. Root cause: `resume()`'s `stop()`+`flush()`+
+`play()` sequence ran *outside* the `synchronized(lock)` block, after `notifyAll()` had already
+woken the write thread. The write thread could race ahead — write a fresh chunk into the track —
+before (or while) `flush()` ran on another thread, wiping out (or racing against) that write; the
+audible result is exactly "plays a fragment, then goes silent." Fixed by moving the entire
+`stop()`/`flush()`/`play()` reset sequence *inside* the synchronized block, strictly before
+`notifyAll()`, so the write thread can only ever wake up after the track has already been reset
+and is already in the PLAYING state — eliminating the race rather than just narrowing it.
+Verified through the real Android toolchain, 0 errors. Packaged as **Android 2.2.5**
+(versionCode 32), same signer as every prior release. Still awaiting the user's re-test.
+
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 
 ## Implemented
