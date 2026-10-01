@@ -128,20 +128,36 @@ public final class CallProtocol {
     catch (Exception e) { return false; }
   }
 
-  /** Returns the allowed sender for a given message type in a given state,
-   *  or null if the type is not valid in that state. */
+  /** Returns the role permitted to have sent an incoming frame of {@code type}, or null if that
+   *  frame is not admissible in this state.  Null means "ignore the frame".
+   *
+   *  <p>This is evaluated on the machine <em>receiving</em> the frame, so {@code state} is the
+   *  local state and {@code isCaller} is the <em>local</em> role; the sender therefore holds the
+   *  opposite role.
+   *
+   *  <p>This table used to be written from the sender's point of view, which silently discarded
+   *  RINGING, ACCEPT, BUSY and ANSWER on the caller and OFFER on the callee: each of those checks
+   *  asked whether the <em>local</em> machine was in the state the <em>remote</em> sender would
+   *  have been in.  No call could ever get past ringing, and because the caller simply stops
+   *  hearing anything it reported "No answer" after the timeout rather than failing loudly. */
   public static String allowedSender(String type, State state, boolean isCaller) {
+    // Role the peer must hold for this frame: the opposite of the local role.
+    String remote = isCaller ? "callee" : "caller";
     switch (type) {
-      case INVITE:      return state == State.Idle ? "caller" : null;
-      case RINGING:     return state == State.IncomingRinging ? "callee" : null;
-      case ACCEPT:      return state == State.IncomingRinging ? "callee" : null;
+      // Caller -> callee: only an idle device can be invited.
+      case INVITE:      return state == State.Idle && !isCaller ? "caller" : null;
+      // Callee -> caller: the caller's local state while the callee rings, answers or is busy.
+      case RINGING:     return state == State.OutgoingRinging && isCaller ? "callee" : null;
+      case ACCEPT:      return state == State.OutgoingRinging && isCaller ? "callee" : null;
+      case BUSY:        return state == State.OutgoingRinging && isCaller ? "callee" : null;
+      // Either side may decline while ringing, including during glare when both are ringing.
       case DECLINE:     return (state == State.IncomingRinging || state == State.OutgoingRinging)
-                               ? (isCaller ? "caller" : "callee") : null;
-      case BUSY:        return state == State.IncomingRinging ? "callee" : null;
-      case CANCEL:      return (state == State.OutgoingRinging || state == State.IncomingRinging)
-                               ? "caller" : null;
-      case OFFER:       return state == State.Connecting && isCaller ? "caller" : null;
-      case ANSWER:      return state == State.Connecting && !isCaller ? "callee" : null;
+                               ? "both" : null;
+      // Caller -> callee: the callee rings before the caller abandons the attempt.
+      case CANCEL:      return state == State.IncomingRinging && !isCaller ? "caller" : null;
+      // SDP offer travels caller -> callee; answer travels callee -> caller.
+      case OFFER:       return state == State.Connecting && !isCaller ? "caller" : null;
+      case ANSWER:      return state == State.Connecting && isCaller ? "callee" : null;
       case ICE:         return state.active() ? "both" : null;
       case MEDIA_READY: return state.active() ? "both" : null;
       case HANGUP:      return !state.terminal() ? "both" : null;

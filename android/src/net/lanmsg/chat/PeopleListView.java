@@ -48,6 +48,14 @@ final class PeopleListView {
       // setChecked runs before the listener is attached, so building the menu never reports a change.
       incomingCalls.setOnCheckedChangeListener((view,checked)->activity.setAllowIncomingCalls(checked));
       panel.addView(incomingCalls,new LinearLayout.LayoutParams(-1,-2));
+      // If this device may not post notifications, an incoming call cannot be announced at all:
+      // the platform silently discards the ringing notification, so the caller's phone rings out
+      // and reports "No answer" with no clue why. This is the one place the user can act on it.
+      // The switch is left enabled, because this device can still place outgoing calls.
+      if(!activity.canPostNotifications()){
+        TextView noNotifications=activity.label("This device is not allowed to show notifications, so incoming calls cannot be announced here. Enable notifications for LAN Messenger in Android settings, otherwise an incoming call rings out on the other phone with no explanation.",13);
+        noNotifications.setTextColor(Color.rgb(211,47,47));panel.addView(noNotifications);
+      }
       // A corrupt or unreadable settings file disables admission and says so. The message names
       // the recoverable action, because the user cannot tell a refused call from an off switch.
       String settingsError=service.callSettingsError();
