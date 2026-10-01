@@ -1,0 +1,39 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R5-01",
+      "Severity": "Minor",
+      "Section": "Shared quality-indicator contract \u2014 Statistics and sampling",
+      "Problem": "Loss and jitter are computed only from local inbound audio counters. Degradation on the outbound direction, where the peer hears choppy audio from us, is therefore invisible locally unless the peer\u0027s own indicator fires. The same user-facing hint can then appear on one side only, which makes the explanation confusing. WebRTC also exposes remote-inbound-rtp (fractionLost, jitter, roundTripTime derived from RTCP receiver reports) without any new signaling.",
+      "RequiredOutcome": "Optionally include remote-inbound-rtp loss and jitter as a second input where the adapter exposes it, or state explicitly that the indicator reflects only what this device receives. BTQ01 should include a one-direction impairment case either way.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R5-02",
+      "Severity": "Suggestion",
+      "Section": "Incoming-call preference contract",
+      "Problem": "When incoming calls are disabled, the invitation is declined with the ordinary DECLINE, so the caller cannot tell \u0027not accepting calls\u0027 apart from a human decline, and may redial repeatedly. This is a deliberate privacy choice, but the user-facing behavior on the caller side is not described in the plan\u0027s UI tasks.",
+      "RequiredOutcome": "Note in A08/W08 that the caller sees the normal \u0027Declined\u0027 outcome, and consider whether the per-peer invitation rate limit already covers repeated redial into a disabled callee.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-03",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The incoming-call preference contract defines a persisted \u0027Allow incoming calls\u0027 setting that is independent of Online. It is checked before RINGING, notifications, audio ownership and media initialization, and responds with the existing DECLINE. The contract also covers toggle, Accept and glare serialization plus corrupt- and failed-save handling. Tasks A03d/AT01d (service-owned) and W03c/WT01c exist, the setting is exposed in A08 (PeopleListView, which exists in the source) and W09 (tray), and BT01 tests it cross-platform. Outgoing calls and messaging are explicitly unchanged."
+    },
+    {
+      "FindingId": "U-04",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The Android proximity contract uses a service-owned PROXIMITY_SCREEN_OFF_WAKE_LOCK only while Connected on a confirmed earpiece route, with optional hardware. It is released immediately, without the wait-for-no-proximity flag, on route change, terminal state, Offline or cleanup. Speaker, Bluetooth and wired routes are excluded, and a proximity-induced Activity pause does not end the call. A07p/AT02p cover physical near/far, stuck-screen and unsupported-sensor checks, and A11 audits the optional capability and permission."
+    },
+    {
+      "FindingId": "U-05",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The shared quality-indicator contract defines about one-per-second bounded sampling, delta-based rolling loss, jitter and RTT with unit normalization, baseline resets, and stale or missing data treated as Unknown. It sets explicit enter and recover thresholds with hysteresis and never infers microphone state from silence. BQ01 provides shared fixtures, A07q/AT02q and W07q/WT02q implement it per platform, A09/W08 add the UI, and BTQ01 calibrates against the real adapters before release enablement."
+    }
+  ],
+  "BlockedReason": null
+}

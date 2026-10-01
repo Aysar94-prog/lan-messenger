@@ -25,6 +25,10 @@ final class VoicePlayback {
     Runnable oldRefresh = activity.activePlayerUiRefresh;
     activity.activePlayer = null; activity.activePlayerKey = null; activity.activePlayerUiRefresh = null;
     p.dispose();
+    // A05: the playback device is gone, so the claim goes with it. Guarded by the expected owner
+    // so this cannot release a claim a voice call has since taken.
+    AudioOwnership owner = AudioOwnership.of(activity.host);
+    if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_PLAYBACK);
     if (oldRefresh != null) oldRefresh.run();
   }
 
@@ -52,8 +56,19 @@ final class VoicePlayback {
     player.completedListener = () -> activity.ui.post(() -> { if (key.equals(activity.activePlayerKey)) uiRefresh.run(); });
     player.failureListener = () -> activity.ui.post(() -> { if (key.equals(activity.activePlayerKey)) { Toast.makeText(activity, "The playback device failed.", Toast.LENGTH_SHORT).show(); stopActivePlayer(activity); } });
     player.focusLostListener = () -> activity.ui.post(() -> { if (key.equals(activity.activePlayerKey)) uiRefresh.run(); });
+    // A05: a ringing or connected call owns the audio device, so playback cannot start. This is a
+    // refusal, not a queue: the user retries after the call, and the message stays unplayed.
+    AudioOwnership owner = AudioOwnership.of(activity.host);
+    if (owner != null && !owner.claimPlayback()) {
+      try { player.dispose(); } catch (Exception ignored) {}
+      Toast.makeText(activity, "Finish the call before playing voice messages.", Toast.LENGTH_SHORT).show();
+      return;
+    }
     try { player.play(); }
-    catch (Exception ex) { try { player.dispose(); } catch (Exception ignored) {} activity.problem(ex); return; }
+    catch (Exception ex) {
+      if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_PLAYBACK);
+      try { player.dispose(); } catch (Exception ignored) {} activity.problem(ex); return;
+    }
     activity.activePlayer = player; activity.activePlayerKey = key; activity.activePlayerUiRefresh = uiRefresh;
     uiRefresh.run();
   }

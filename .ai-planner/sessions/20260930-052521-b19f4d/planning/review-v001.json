@@ -1,0 +1,47 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Major",
+      "Section": "Android Phase A0 / A2 (dependency integration), android/build.ps1",
+      "Problem": "The Android plan assumes an Android WebRTC library can be added like a normal dependency, but the app has no Gradle build. android/build.ps1 runs javac directly (-source 8 -target 8, with a -bootclasspath of android.jar plus core-lambda-stubs), then d8, and then \u0060aapt package -M AndroidManifest.xml\u0060 without resources. It adds only classes.dex to the APK. It cannot resolve Maven/AAR dependencies, has no classpath entry for third-party jars, and never packages native libraries (lib/\u003Cabi\u003E/*.so). Every Android WebRTC stack needs native libraries, for example libjingle_peerconnection_so.so. A0 only says to \u0027record ... reproducible build requirements\u0027, and no phase has a task to change build.ps1 or name it. As written, A0\u0027s prototype and A2\u0027s AndroidCallMediaSession cannot be built or shipped with the current pipeline. Also, APK signing and upgrade compatibility depend on this same script.",
+      "RequiredOutcome": "Add an explicit Android build-pipeline task, in A0 or a new A0.5, with acceptance criteria: (1) vendor a pinned WebRTC artifact with a recorded source and checksum, and extract its classes.jar and native .so files for the chosen ABIs (at least arm64-v8a and armeabi-v7a; x86_64 optional for emulator); (2) extend build.ps1 so javac/d8 get the library on the classpath and the .so files are added under lib/\u003Cabi\u003E/ before zipalign; check the -source/-target 8 settings and d8 memory limits (-Xmx384m) against the library; (3) keep the existing signing-key flow unchanged and verify that the new APK installs as an upgrade over the current release; (4) check the library\u0027s manifest/permission and ProGuard needs, since there is no merge step; (5) record the APK size change. Later Android phases should depend on this task.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Minor",
+      "Section": "Windows Phase W0 / W4 (network reachability)",
+      "Problem": "WebRTC media uses ephemeral UDP host-candidate ports. Today the app uses only UDP 43871 discovery and TCP 43872/temporary TCP data ports, and README states that the app never changes firewall settings. Inbound UDP media to Windows may be blocked by Windows Defender Firewall if the existing program rule is TCP-only or port-scoped, or on a Public network profile. The plan never tests this.",
+      "RequiredOutcome": "Add a W0/W4 test for an incoming Android-to-Windows call with Windows Firewall enabled, on both Private and Public network profiles. Document the firewall prompt behavior, and add a clear user-facing failure message when ICE fails, without the app changing firewall rules.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "Shared signaling contract / A1 network-loss detection",
+      "Problem": "Signaling uses short-lived TLS request connections (Receive() handles one command, then closes). This means there is no persistent channel whose loss can signal peer disappearance. The plan asks for network-loss detection and an 8-second disconnect grace, but does not say which signal drives them.",
+      "RequiredOutcome": "Say in the ADR that liveness during a connected call comes from ICE/DTLS connection state, optionally with a signaling keepalive. Define how the disconnect-grace timer maps to those state changes on both platforms.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Minor",
+      "Section": "Android Phase A3 (incoming call presentation)",
+      "Problem": "A full-screen incoming-call UI on a locked device needs USE_FULL_SCREEN_INTENT. On Android 14 (targetSdk 34) the user may not grant it or may revoke it. The plan does not name this permission or say what happens without it.",
+      "RequiredOutcome": "Name USE_FULL_SCREEN_INTENT and the CATEGORY_CALL/CallStyle notification. Add a fallback to a heads-up notification when full-screen intent is not allowed, and test that fallback.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-05",
+      "Severity": "Suggestion",
+      "Section": "Recommended execution order / A0-W0",
+      "Problem": "A0 needs a \u0027standards-compatible desktop WebRTC peer\u0027, and W0 needs the Android A0 harness. It is not clear which side is built first or which reference peer is used before W0 has chosen a media engine.",
+      "RequiredOutcome": "Name a neutral reference peer, such as a desktop-browser WebRTC page or a small reference-stack script with manual SDP exchange, so A0 and W0 can each be validated on their own before the two are paired.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

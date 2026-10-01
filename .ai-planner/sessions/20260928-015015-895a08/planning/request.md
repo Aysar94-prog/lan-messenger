@@ -1,0 +1,2 @@
+now we must add a new feature ... its voise messages and later on voice call and maybe video call.. think as steps but open the door to the next steps 
+our last goal is a video call but now for this step we play for a voice messages ,go ahed and plan stong obvious 

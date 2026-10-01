@@ -71,6 +71,107 @@ button scroll fix), **2.2.0** (2026-09-29, versionCode 27, the first release pac
 Messages Phase 1 work), **2.1.1** (2026-09-27, versionCode 26). See the
 [platform comparison](../PROJECT_STATUS.md).
 
+## Voice calls A00–A04 — real WebRTC media, validated on a physical device (2026-10-01)
+
+The WebRTC AAR (`io.github.webrtc-sdk:android:150.7871.01`, Maven Central) is downloaded and cached
+by `android/prepare-webrtc.ps1`, and `android/build-voice.ps1` is the single AAR-aware build
+pipeline (javac + d8 + aapt + apksigner, native `.so` packaged under `lib/<abi>/`). The AAR is now a
+**hard dependency**: `WebRtcCallMedia` uses direct `org.webrtc` imports, so there is no
+build-without-WebRTC mode. `android/build.ps1` is a thin wrapper over `build-voice.ps1` that keeps
+its signing-key contract and its refuse-to-overwrite guard. WebRTC added roughly 12 MB to the APK
+(arm64-only build: 6 MB; all ABIs: ~47 MB).
+
+Validated on a physical Samsung SM-S908E (Android 16 / SDK 36, arm64-v8a) over network ADB: the
+native library loads, hardware AEC/NS is used, and a loopback self-test drove two real
+peer connections through SDP offer/answer (Opus), ICE (5 + 3 host candidates), DTLS-SRTP and
+bidirectional audio to `packetsLost=0`, plus mute — **SELFTEST PASS**. The self-test was an
+`exported="true"` no-permission receiver, since removed from both source and manifest and kept
+only as `state/on-device/CallSelfTest.java.txt`; it is not in the installed package.
+
+Runtime testing found and fixed real defects that static review had missed: an SDP result-plumbing
+bug after the reflection-to-typed rewrite, and — most importantly — `PeerConnection.Observer`
+callbacks arriving on the WebRTC signaling thread, where any blocking listener work deadlocked the
+media thread against the caller. Ten build-pipeline bugs were also fixed, including `continue`
+inside `ForEach-Object` silently terminating `build-voice.ps1` with exit code 0, native libs
+packaged with backslashes (unrecognised by Android's loader), `-VersionName`/`-VersionCode` never
+reaching the manifest, and an aapt quirk that rejects a `-M` file not named exactly
+`AndroidManifest.xml`. See `state/handoff-A04-device.md`.
+
+`tests/CallCheck.java` passes **142/142**; 37 production files compile clean against the AAR. The
+device APK is `outputs/LanMessenger-2.2.7.apk` (versionCode 34), installed over 2.2.6 / 33. **No
+real two-party call has been made** — a loopback proves the media stack but not the LAN signalling
+path, and the Windows peer does not exist yet. Audio was never listened to, and A07 route
+application, A05 arbitration under a live call, and runtime microphone foreground-service
+behaviour all remain unverified on device.
+
+## Voice calls A08–A10 — call UI, notifications, entry point (2026-10-01)
+
+A call can now be placed and answered. The subsystem existed but had no way in: no entry point, and
+a rejected invitation told the caller nothing. Phase A08–A10 closes that and four holes found while
+wiring it.
+
+**Entry point (A08).** `chatMenu` offers **Call** for a direct contact only — group calls are out of
+scope, so a group row never shows it. `startCallTo` gates in the order a user can act on (not
+online → unverified → offline → microphone permission) and every refusal is a specific message. The
+permission is requested before the invitation and the pending peer ID survives the grant, so the
+call is placed exactly once. The channel is opened on a background thread. `CallController.TransportFactory`
+makes the controller mint the call ID and open the matching socket *inside its own lock*, so an
+INVITE can never precede the connection carrying it. Turning "Allow incoming calls" off during a
+ring **declines that call immediately** rather than letting it ring out its timeout.
+
+**In-call UI (A09).** `CallView` overlays the Activity's `stage`, so it covers the people list and
+the chat alike; the duration clock rides the existing 1 s `tick`. State, duration, mute, route and
+quality are separate lines, a quality hint appears only for `Reduced` and is announced once, and a
+terminal banner lingers 2500 ms. Back closes the overlay and falls back to a **return-to-call bar**
+on the people screen — a call is not tied to a conversation, so leaving the chat must not hide the
+only controls for ending it; Back never hangs up by accident. `CallUi` is service-owned and retains
+the terminal snapshot so "Declined" survives the controller's return to Idle. `CallController` gained
+`addListener`/`removeListener`, so the Activity and the service's notification both observe the state
+stream without displacing the single callback slot, and a throwing listener is isolated.
+
+**Notifications (A10).** Two channels: `calls_ringing` (HIGH) and `calls_active` (LOW, silent);
+only the ringing channel may alert. Accept/Decline are explicit service intents carrying the call ID,
+and **Accept opens `MainActivity`** rather than accepting in the background, because accepting means
+granting a visible permission flow. `accept(expectedCallId)` re-checks the call ID *and* the live
+preference, so a stale notification action cannot accept a replaced call or bypass a withdrawal.
+"Allow incoming calls" lives in the people side menu, bound to the service's persisted setting, and
+states that turning it off does not stop outgoing calls.
+
+**Bugs found and fixed.** The incoming INVITE was being dropped entirely (`onFrame` returned early
+on a null session and nothing called `onInvite`). A policy decline sent nothing, so the caller rang
+out 30 s and reported "No answer" — now `DECLINE`, with `BUSY` for throttling and occupancy and
+still silence for identity failure. `sendFrame` counted an outbound write as inbound evidence, so a
+dead channel never tripped the liveness check. And `onInvite` never validated the call ID: a
+non-UUID would create a session whose own frames the peer's parser rejects, so such a call could only
+ever expire.
+
+`tests/CallCheck.java` passes **229/229** (was 142). **Release is `outputs/LanMessenger-2.2.9.apk`**
+(versionCode 36), 6,283,697 bytes, SHA-256 `2f8a12ad…b15a517d`, signed and verified (v2 + v3) and
+installed over 2.2.8 (which confirms the same signing key). Release notes and
+`SHA256SUMS-Android-2.2.9.txt` written. Verified on
+device: no FATAL; WebRTC native stack OK (hwAEC/hwNS); both call notification channels created
+(`calls_ringing` importance 4, `calls_active` importance 2); the **"Allow incoming calls" switch
+toggles and persists across `force-stop` + restart**; the **Call action appears** in a verified
+direct peer's menu; tapping it on an offline peer produced the correct `"Lap is offline."` and no
+notification. See `state/handoff-A08-A10.md`.
+
+**Still unverified, and it is the important part: a real two-party call has never been placed.**
+Only one Android device exists (`192.168.1.4:5555`); there is no emulator (`emulator.exe` absent,
+no AVDs, no nested virt) and the Windows peer has no call support. So the INVITE/RINGING exchange,
+the overlay mid-call, notification actions in flight, network mute round-trip and the terminal
+banner are covered by unit test and compilation, not by a live call. Speaker output is unverifiable
+by adb, Bluetooth/wired route precedence is deliberately not claimed, and A07p proximity blanking,
+A06 runtime microphone FGS promotion and A05 arbitration under a live call remain untested.
+
+Also fixed while releasing: the About screen read its version from a hardcoded literal that had gone
+stale (it showed 2.2.6 in a 2.2.8 build). It now reads `versionName` from the installed package, so
+the manifest is the only place a version is declared and the two cannot drift.
+
+Note: `outputs/LanMessenger-2.2.6.apk` was destroyed by an earlier build; `build-voice.ps1` now
+refuses to overwrite a release artifact, which is why the release numbers stepped 2.2.6 → 2.2.7 →
+2.2.8 → 2.2.9 rather than being rebuilt in place. `2.2.6-voice-dev.apk` survives as the voice build
+of that version. **2.2.6 was not rebuilt**; 2.2.9 supersedes it.
+
 Reviewed 2026-09-29. Current Android local APK build: **2.2.2**, versionCode 29 — a same-day
 follow-up addressing real device-testing feedback on 2.2.1's voice messages, all in
 `VoicePlayer.java`/`VoicePlayback.java`/`VoiceCard.java`/`VoiceUi.java`/`MainActivity.java`:
@@ -238,3 +339,94 @@ Device acceptance of this historical 0.8.12 menu/filter work was not started at 
 Acceptance on two physical phones: destination choice, connection interruption/resume, Open, background receipt, and throughput. Engine tests alone do not complete this acceptance check.
 
 Device/click-through acceptance of the mutable-membership foundation's UI (Members dialog sync status, Re-invite), the 2.0.1 changes (Leave-group wording and its new in-chat entry point, the Hide-groups toggle), and the 2.1.0 ownership-transfer UI (the "Choose a new admin" picker, the "Leaving — waiting for…" state) is still outstanding — none of this has been exercised on a real device or emulator. See `PLAN-GROUP-MEMBERSHIP.md` and `PLAN-GROUP-OWNERSHIP-TRANSFER.md`.
+
+## Voice Calls — Phase A0 foundation (2026-10-01, plan-v006)
+
+Phase A0 shared architecture and contracts (B00/B01) are code-complete. These are pure-Java
+design contracts — no WebRTC dependency, no networking integration with PeerEngine, no UI, no
+production packaging. All classes compile with the existing javac/d8 pipeline; all 75 unit
+tests pass.
+
+New source files in `src/net/lanmsg/chat/`:
+
+- `CallProtocol.java` — 14 signaling message types (INVITE through PONG), 6 call states,
+  quality-indicator constants, invitation-limiter (5/peer/60s rolling window), glare
+  resolution, and all timing/defaults from plan-v006.
+- `CallSignaling.java` — 4-byte big-endian length + UTF-8 JSON frame serialization and
+  parsing, with convenience builders for every message type.
+- `CallSession.java` — Immutable call snapshots (caller/callee direction, state, mute,
+  audio route, quality, duration) for thread-safe UI consumption.
+- `CallController.java` — Main orchestrator: state-machine enforcement, signaling dispatch,
+  media lifecycle (via injectable `ICallMedia`), invitation throttling, ring/media-setup
+  timeouts, Connected heartbeat, quality polling, Offline cleanup, and engine-shutdown.
+- `ICallMedia.java` — Media-adapter interface + Factory (Opus, DTLS-SRTP, SDP/ICE, mute,
+  capture/playback, WebRTC cumulative statistics). A fake implementation (`FakeCallMedia`)
+  ships alongside for testing.
+- `CallSettings.java` — Incoming-call preference (default: enabled), persisted atomically
+  per device in a separate `call-settings.txt` with a generation counter to reject stale
+  writes. Corrupt settings disable incoming calls for that session.
+- `CallQualityMonitor.java` — Pure-Java evaluator consuming WebRTC-style cumulative stats;
+  first/last-sample deltas over a 5-second rolling window; 3 consecutive degraded evaluations
+  to enter Reduced; Normal immediately on recovery.
+- `WebRtcCallMedia.java` — Production media adapter using org.webrtc reflection-based API.
+  Uses webrtc-sdk:android:150.7871.01 AAR (PeerConnectionFactory, AudioSource/AudioTrack,
+  SDP offer/answer, ICE, stats). Requires native libjingle_peerconnection_so.so at runtime.
+  Uses a dedicated `HandlerThread` and a single-thread callback executor, with a process-global
+  refcounted `PeerConnectionFactory` and `JavaAudioDeviceModule`. LAN-only ICE (no STUN/TURN).
+  **Installed in the service** (`MessengerService` probes the native stack, then installs this
+  factory, falling back to `FakeCallMedia` only if the probe fails). `probe()` reported
+  `WebRTC native stack OK in 20 ms; hwAEC=true hwNS=true` on the SM-S908E.
+- `CallUi.java` — Service-owned call view-model (no Android dependency). Plan-v006 wording for
+  state/detail/end labels (`Declined` for both manual and policy decline, never disclosing the
+  preference), duration formatting, the Reduced quality hint, accept/decline/cancel/hangup/mute, and
+  an observer list so an Activity can bind without displacing the service's notification. Retains
+  the terminal snapshot so the end reason outlives the controller's return to Idle.
+- `CallChannel.java` — Owns the call socket, one reader thread and a serialized writer for both
+  directions. Implements `Transport` and `Closeable`; the opening INVITE is routed to `onInvite`
+  while later frames go to the controller.
+- `CallNotifier.java` — `calls_ringing` (IMPORTANCE_HIGH, the only alerting channel) and
+  `calls_active` (IMPORTANCE_LOW, silent); ringtone playback; Accept/Decline service intents
+  carrying the call ID; Accept opens `MainActivity` so the permission flow is visible.
+- `CallView.java` — In-Activity call overlay on `stage`. Rebuilt per state change; duration on the
+  1 s tick; terminal banner expiring after 2500 ms; one-shot quality announcement.
+- `CallRoute.java` — Carries a route decision to `AudioManager`: `MODE_IN_COMMUNICATION`, and the
+  built-in speaker or earpiece on API 31+. Only switches when the user chose the speaker, so a
+  headset the platform itself selected is never overridden.
+- `AudioOwnership.java` — Arbitration between voice calls and voice messages. Service-owned,
+  pure Java. Recording is refused while a call rings/connects/captures; playback is refused while
+  a call owns the device; a call may start over playback but recording interrupts it first.
+  Guarded `releaseIf(owner)` is the only release used by the voice side.
+- `CallRoutePolicy.java` — Route *selection*, separated from route application. Earpiece is the
+  default and speaker is never an automatic first choice; a wired headset outranks the earpiece;
+  a lost route is held for the 3 s `ROUTE_RECOVERY_MS` window before falling back; a user-selected
+  route is never silently overridden while missing; proximity applies only on earpiece; no route
+  at all is a distinct failure rather than a silent fallback.
+
+Test: `tests/CallCheck.java` — **229 unit tests** covering protocol transitions, signaling
+serialize/parse round-trips (including oversized/malformed rejection), settings
+persistence/reload/generation, quality degradation/recovery via deterministic sequences,
+invitation-limiter bounds/window-expiry/prune, controller lifecycle/shutdown, incoming-call
+dispatch, decline, disabled-policy rejection, mute, frame-parse edge cases, glare/duplicate
+INVITE idempotency, settings corruption, audio-ownership state machine and its controller
+lifecycle, and route selection including the recovery window; plus (A08–A10) invitation replies
+never being silent (policy → DECLINE, throttled/occupied → BUSY, identity mismatch → silence),
+malformed call ID refused, RINGING confirming the ring window, policy withdrawal of a ringing
+call, stale-`accept(callId)` refusal, uniform terminal wording, listener fan-out surviving
+rebind and isolating a throwing listener, audio route in the snapshot, and UI label
+distinctness/duration formatting.
+`CALLCHECK PASS=229 FAIL=0`.
+
+Modified: `PeerEngine.java` (+CALLCONNECT protocol, +callHandler, +onRevoke,
++openCallConnection), `MessengerService.java` (+CallController +CallSettings +AudioOwnership,
+lifecycle wiring), `VoiceUi.java` / `VoicePlayback.java` (+audio-ownership claims and releases,
+including the awaited release on the recording stop thread), `AndroidManifest.xml`
+(+MODIFY_AUDIO_SETTINGS, +extractNativeLibs=true, +microphone feature optional,
+`foregroundServiceType="connectedDevice|microphone"`, +FOREGROUND_SERVICE_MICROPHONE).
+
+Not yet done (all device-dependent): A04 real media install, A07p proximity sensor,
+`AudioManager` route application, runtime microphone foreground-service behavior.
+
+Build: `prepare-webrtc.ps1` downloads the WebRTC AAR; `build-voice.ps1` produces an
+integrated APK with native .so libraries. See
+`.ai-planner/sessions/20260930-091333-43c139/state/` for all handoffs and the A00
+evaluation report.

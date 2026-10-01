@@ -51,6 +51,15 @@ public final class PeerEngine implements Closeable {
   public String id,name; public volatile String error=""; public volatile boolean running;
   public volatile Runnable changed=()->{};
   public volatile java.util.function.Consumer<Message> received=m->{};
+  // ── Call infrastructure ───────────────────────────────────────
+  /** Callback for incoming CALLCONNECT handoffs: (peerId, authenticatedTlsSocket).
+   *  The socket has already passed TLS handshake, HELLO/READY, and received
+   *  LM4\tCALLCONNECT.  The handler owns the socket from this point. */
+  public volatile java.util.function.BiConsumer<String,java.net.Socket> callHandler=(peerId,socket)->{
+    try{socket.close();}catch(Exception ignored){}
+  };
+  /** Called after a peer's verification is revoked (locally or via FORGET). */
+  public volatile java.util.function.Consumer<String> onRevoke=peerId->{};
   public interface TransferProgressListener{void onProgress(String messageId,long done,long total);}
   // Fired while streaming an attachment over the network, in either direction. Purely
   // informational/UI, never persisted. Throttled internally to about one event per percent.
@@ -212,6 +221,37 @@ public final class PeerEngine implements Closeable {
     try(Socket s=connect(a[0],targetPort)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))throw new IOException("No other LAN Messenger device at this address.");remember(h[2],dec(h[3]),a[0],Integer.parseInt(h[4]));try{recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){throw new IOException(e);}}
   }
   Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();if(!running)throw new IOException("Network is offline.");return s;}catch(IOException e){activeSockets.remove(s);s.close();throw e;}}
+
+  /** Open an authenticated call channel to a verified peer.
+   *  Sends HELLO, receives READY, sends CALLCONNECT, and returns the
+   *  live TLS socket for call-frame exchange.  Caller owns the socket. */
+  public Socket openCallConnection(String peerId,String callId)throws IOException {
+    Peer p;synchronized(this){p=peers.get(peerId);}if(p==null)throw new IOException("Peer not found.");
+    SSLSocket s=(SSLSocket)connect(p.host,p.port);
+    try {
+      write(s,hello());
+      String[] h=read(s).split("\t",-1);
+      if(!validHello(h)||!h[2].equals(peerId))
+        throw new IOException("Peer identity mismatch");
+      String fingerprint; byte[] pubKey;
+      try {
+        fingerprint=SecureIdentity.remote(s);
+        pubKey=SecureIdentity.remotePublicKey(s);
+      } catch(Exception e) { throw new IOException("TLS identity check failed: "+e.getMessage(),e); }
+      recordCertificate(peerId,fingerprint,pubKey);
+      if(!trusted(peerId,fingerprint))
+        throw new IOException("Peer is not verified — verify before calling");
+      String ready=read(s);
+      if(!"LM4\tREADY".equals(ready))
+        throw new IOException("Peer did not accept connection for calling");
+      // Switch to call mode
+      write(s,"LM4\tCALLCONNECT\t"+callId);
+      return s; // caller owns this socket now
+    } catch(IOException e) {
+      try{s.close();}catch(Exception ignored){}
+      throw e;
+    }
+  }
   synchronized void track(Socket s)throws IOException {if(!running||workerSession.get()!=null&&workerSession.get()!=generation){s.close();throw new IOException("Network is offline.");}activeSockets.removeIf(Socket::isClosed);activeSockets.add(s);}
   synchronized void track(ServerSocket s)throws IOException {if(!running){s.close();throw new IOException("Network is offline.");}temporaryListeners.add(s);}
   static String read(Socket s)throws IOException {ByteArrayOutputStream b=new ByteArrayOutputStream();int c;InputStream in=s.getInputStream();while((c=in.read())!=-1){if(c==10)return new String(b.toByteArray(),StandardCharsets.UTF_8);if(b.size()>=16384)throw new IOException("Frame too large");b.write(c);}throw new EOFException();}
@@ -223,12 +263,17 @@ public final class PeerEngine implements Closeable {
   public synchronized void verify(String peerId,String expectedCode)throws IOException {
     Peer p=peers.get(peerId);if(p==null)throw new IOException("Choose a device");if(p.keyChanged())throw new IOException("Device key changed. Revoke old verification before pairing again.");if(!pairingCode(peerId).equals(expectedCode))throw new IOException("Device key changed while this dialog was open. Try again.");String old=p.verified;p.verified=p.fingerprint;try{save();}catch(IOException e){p.verified=old;throw e;}notifyChanged();
   }
-  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;p.verified="";try{save();}catch(IOException e){p.verified=old;throw e;}notifyChanged();}
+  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;p.verified="";try{save();}catch(IOException e){p.verified=old;throw e;}try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
   synchronized boolean trusted(String peerId,String fingerprint){Peer p=peers.get(peerId);return p!=null&&!p.verified.isEmpty()&&p.verified.equals(fingerprint);}
   void receive(Socket socket){try(SSLSocket s=(SSLSocket)socket){s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
     if(!trusted(h[2],fingerprint)){write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
     String[] m=read(s).split("\t",-1);
+    // ── Call handoff: LM4\tCALLCONNECT\t<call-id> ──────────────
+    if(m.length==3&&m[0].equals("LM4")&&m[1].equals("CALLCONNECT")&&uuid(m[2])){
+      callHandler.accept(h[2],s);
+      return; // socket ownership transferred — do not close
+    }
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHSTREAM")){ResumableTransfer.serve(this,s,m,h[2],fingerprint);return;}

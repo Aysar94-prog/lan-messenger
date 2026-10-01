@@ -25,6 +25,11 @@ import android.text.TextUtils;
 public class MainActivity extends Activity {
   final Handler ui=new Handler(Looper.getMainLooper());
   final int ink=Color.rgb(17,27,33),accent=Color.rgb(37,211,102),headerDark=Color.rgb(7,94,84),chatBg=Color.rgb(236,229,221),bubbleMine=Color.rgb(220,248,198),seenBlue=Color.rgb(83,169,239),panelBg=Color.rgb(240,242,245);
+  // ── Voice calls (A08-A10) ──
+  // The Activity holds no call state of its own: it binds to the service-owned CallUi, reads
+  // immutable snapshots, and issues commands. The call overlay lives on the stage, so it covers
+  // the people list and the chat alike.
+  CallUi callUi; String pendingCallPeerId,pendingCallAcceptId;
   final int[] namePalette={Color.rgb(233,30,99),Color.rgb(156,39,176),Color.rgb(63,81,181),Color.rgb(230,126,0),Color.rgb(0,137,123),Color.rgb(121,85,72),Color.rgb(216,67,21)};
   int nameColor(String id){int h=0;for(int i=0;i<id.length();i++)h=h*31+id.charAt(i);return namePalette[Math.abs(h)%namePalette.length];}
   LinearLayout root,chrome,body,feed,attachmentDraft; TextView status,heading; ScrollView scroll; EditText composer; Button send;
@@ -60,8 +65,8 @@ public class MainActivity extends Activity {
   MessengerService host;
   boolean bound;
   final ServiceConnection serviceConnection=new ServiceConnection(){
-    public void onServiceConnected(ComponentName name,IBinder binder){host=((MessengerService.LocalBinder)binder).host();bound=true;render();}
-    public void onServiceDisconnected(ComponentName name){host=null;bound=false;render();}
+    public void onServiceConnected(ComponentName name,IBinder binder){host=((MessengerService.LocalBinder)binder).host();bound=true;bindCalls();render();}
+    public void onServiceDisconnected(ComponentName name){unbindCalls();host=null;bound=false;render();}
   };
   PeerEngine engine(){return host==null?null:host.engine;}
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
@@ -88,6 +93,10 @@ public class MainActivity extends Activity {
   // The content view is a single full-screen stage so the people side menu can overlay everything,
   // header bar included, without changing the chrome column that each screen already builds.
   void frame(){if(root!=null)releaseImages(root);PeopleListView.closeMenu(this);if(keyboardListener!=null){getWindow().getDecorView().getViewTreeObserver().removeOnGlobalLayoutListener(keyboardListener);keyboardListener=null;}
+    // The call overlay lives on the stage, which frame() replaces wholesale, so its reference must
+    // be dropped with the old tree. The retained terminal snapshot survives on the view-model, so
+    // the end reason is still shown by the next render.
+    CallView.forgetOverlay();callBar=null;
     stage=new FrameLayout(this);chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);stage.addView(chrome,new FrameLayout.LayoutParams(-1,-1));setContentView(stage);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
@@ -97,6 +106,13 @@ public class MainActivity extends Activity {
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
     Button menuButton=PeopleListView.barButton(this,"☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->PeopleListView.openMenu(this));headerBar.addView(menuButton);
     chrome.addView(headerBar,0);
+    // Return-to-call bar sits directly under the header on the people screen, so a live call keeps
+    // its controls and a way back even when the user is looking at the conversation list.
+    callBar=new LinearLayout(this);callBar.setOrientation(LinearLayout.HORIZONTAL);
+    callBar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+    callBar.setBackgroundColor(headerDark);callBar.setPadding(dp(18),dp(8),dp(12),dp(8));
+    callBar.setVisibility(View.GONE);
+    chrome.addView(callBar,1);
     root.addView(status);
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
     FrameLayout avatarWrap=new FrameLayout(this);LinearLayout.LayoutParams avatarWrapParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarWrapParams.setMargins(0,0,dp(8),0);tools.addView(avatarWrap,avatarWrapParams);
@@ -169,7 +185,11 @@ public class MainActivity extends Activity {
     decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
   }
   PeerEngine transferProgressWiredFor;
-  void render(){if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);PeerEngine e=engine();if(e==null){status.setText(host==null?"Loading local messages…":host.problem.isEmpty()?host.state:host.problem);return;}
+  void render(){if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);
+    // A09: the call overlay is refreshed on every pass, including the one-second tick, so the
+    // duration clock advances and a snapshot change appears without any Activity-side state.
+    renderCallBar();CallView.render(this);
+    PeerEngine e=engine();if(e==null){status.setText(host==null?"Loading local messages…":host.problem.isEmpty()?host.state:host.problem);return;}
     if(e!=transferProgressWiredFor){
       // Attachment transfers run on background connection threads, not the UI thread — marshal
       // back to update the in-flight "Sending NN%" status shown on the message's own bubble.
@@ -260,11 +280,155 @@ public class MainActivity extends Activity {
     }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
   }
 
+  // A return-to-call bar, shown on the people screen while a call is live. A call is not tied to a
+  // conversation, so leaving the chat must not hide the only controls for ending it. Only the
+  // people screen gets it: inside a chat the call overlay is already on top.
+  LinearLayout callBar;
+
+  void renderCallBar(){
+    if(callBar==null||root==null)return;
+    CallUi ui=callUi;
+    CallSession call=ui==null?null:ui.getCurrent();
+    boolean live=call!=null&&!call.state.terminal();
+    if(callBar.getVisibility()==(live?View.VISIBLE:View.GONE))return;
+    if(live){
+      MessengerService service=host;
+      String name=service==null?call.peerId:service.callPeerName(call.peerId);
+      callBar.removeAllViews();
+      TextView summary=label(CallUi.stateLabel(call),15);summary.setTextColor(Color.WHITE);
+      summary.setContentDescription("Call with "+name+" in progress. "+CallUi.stateLabel(call));
+      callBar.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
+      Button returnToCall=button("Return");returnToCall.setTextColor(Color.WHITE);
+      returnToCall.setContentDescription("Return to the call with "+name);
+      returnToCall.setOnClickListener(v->showCallOverlay());
+      callBar.addView(returnToCall);
+      Button endCall=button("End");endCall.setTextColor(Color.WHITE);
+      endCall.setContentDescription("End the call with "+name);
+      endCall.setOnClickListener(v->runCallAction(ui::hangup,"Could not end the call."));
+      callBar.addView(endCall);
+    }
+    callBar.setVisibility(live?View.VISIBLE:View.GONE);
+  }
+
+  /** Put the call overlay on top of whatever screen is showing. */
+  void showCallOverlay(){
+    lastSignature="";
+    CallView.render(this);
+  }
+
   void chatMenu(View anchor){if(selected==null)return;PeerEngine e=engine();boolean isPeer=false;PeerEngine.Group group=null;
     if(e!=null){for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))isPeer=true;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;}
     final PeerEngine.Group selectedGroup=group;
-    PopupMenu menu=new PopupMenu(this,anchor);if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");if(selectedGroup!=null)menu.getMenu().add("Leave group");
-    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);else showMembers();return true;});menu.show();}
+    PopupMenu menu=new PopupMenu(this,anchor);
+    // A08: the Call action exists only for a direct contact. Group calls are out of scope, and a
+    // self-call is not a thing, so neither can offer it.
+    if(isPeer)menu.getMenu().add("Call");
+    if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");if(selectedGroup!=null)menu.getMenu().add("Leave group");
+    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Call"))startCallTo(selected);else if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);else showMembers();return true;});menu.show();}
+
+  // ── Voice calls (A08-A10) ──────────────────────────────────────
+
+  // Request code for the call microphone. Separate from VoiceUi's own so a grant cannot be mistaken
+  // for a call permission or vice versa; each is checked for its own pending action.
+  static final int CALL_MIC_REQUEST=7;
+
+  /** Attach the Activity to the service-owned call view-model.  The service already bound it, so
+   *  the Activity only adds an observer; rebinding is safe and cannot displace the notification,
+   *  because observers live in the controller's listener list rather than its single callback slot. */
+  void bindCalls(){
+    CallUi serviceUi=host==null?null:host.calls();
+    if(serviceUi==null){unbindCalls();return;}
+    if(callUi==serviceUi)return;
+    unbindCalls();
+    callUi=serviceUi;
+    callUi.addObserver(this::onCallChanged);
+    onCallChanged(callUi.getCurrent());
+  }
+
+  void unbindCalls(){
+    if(callUi!=null)callUi.removeObserver(this::onCallChanged);
+    callUi=null;
+  }
+
+  /** A call snapshot changed.  Only invalidates the render signature — tick repaints. */
+  void onCallChanged(CallSession snapshot){
+    lastSignature="";
+  }
+
+  /** Run a call command on a background thread and report failures in plain language.  Call actions
+   *  touch the socket and the media stack, so none of them may run on the UI thread. */
+  void runCallAction(CallAction action,String failureMessage){
+    new Thread(()->{try{action.run();ui.post(()->{lastSignature="";render();});}
+      catch(final Exception error){ui.post(()->Toast.makeText(this,error.getMessage()==null?failureMessage:error.getMessage(),Toast.LENGTH_LONG).show());}},"lan-call-action").start();
+  }
+
+  interface CallAction{void run() throws Exception;}
+
+  /** Place a call to a peer.  The microphone permission is obtained before inviting, and no
+   *  capture starts until the peer accepts. */
+  void startCallTo(String peerId){
+    if(peerId==null)return;
+    if(host==null||"Online".equals(host.state)==false){Toast.makeText(this,"Go online to call.",Toast.LENGTH_SHORT).show();return;}
+    PeerEngine e=engine();
+    if(e==null)return;
+    PeerEngine.Peer target=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(peerId))target=p;
+    if(target==null)return;
+    // A verified peer is the admission rule; say why rather than failing inside the controller.
+    if(!target.trusted()){Toast.makeText(this,"Verify this device before calling.",Toast.LENGTH_LONG).show();return;}
+    if(!target.online()){Toast.makeText(this,target.name+" is offline.",Toast.LENGTH_SHORT).show();return;}
+    if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+      pendingCallPeerId=peerId;
+      requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},CALL_MIC_REQUEST);
+      return;
+    }
+    placeCall(peerId);
+  }
+
+  void placeCall(final String peerId){
+    if(host==null)return;
+    // Blocking: opens an authenticated TLS channel and writes the first signaling frame.
+    new Thread(()->{try{host.startCall(peerId);ui.post(()->{lastSignature="";render();});}
+      catch(final Exception error){ui.post(()->Toast.makeText(this,error.getMessage()==null?"Could not place the call.":error.getMessage(),Toast.LENGTH_LONG).show());}},"lan-call-start").start();
+  }
+
+  /** Accept an incoming call.  Revalidated against the live preference and call ID by the
+   *  controller, so a notification action raised for an earlier call cannot accept this one. */
+  void acceptCall(final String callId){
+    if(callUi==null)return;
+    runCallAction(()->callUi.accept(callId),"Could not accept the call.");
+  }
+
+  /** Change the incoming-call preference from the people menu.
+   *
+   *  Applied through the controller so a still-ringing invitation is declined immediately and its
+   *  notification is withdrawn, rather than left to ring out its timeout.  A save failure keeps the
+   *  in-memory choice and reports the problem; it does not silently revert the switch, which would
+   *  then disagree with what the service is actually enforcing. */
+  void setAllowIncomingCalls(final boolean value){
+    MessengerService service=host;
+    if(service==null){Toast.makeText(this,"Calls are still starting.",Toast.LENGTH_SHORT).show();return;}
+    new Thread(()->{try{service.setAllowIncomingCalls(value);ui.post(()->{lastSignature="";render();});}
+      catch(final Exception error){ui.post(()->{Toast.makeText(this,error.getMessage()==null?"Setting was not saved.":error.getMessage(),Toast.LENGTH_LONG).show();
+        // The in-memory choice stands, so the switch stays where the user put it. Reopening the
+        // menu re-reads it from the service, so the displayed and enforced values stay in step.
+        closeMenuForPreference();});}},"lan-call-pref").start();
+  }
+
+  /** Rebuild the menu so the switch and any settings error reflect the service's live value. */
+  void closeMenuForPreference(){
+    PeopleListView.closeMenu(this);
+    lastSignature="";
+    render();
+  }
+
+  /** Toggle the speakerphone route for the live call.  The route is applied through AudioManager
+   *  and recorded on the session, so what is displayed is what is actually selected. */
+  void toggleSpeakerphone(CallSession call){
+    if(host==null)return;
+    final boolean toSpeaker=!"Speaker".equals(call.audioRoute);
+    runCallAction(()->{host.setCallSpeaker(toSpeaker);},"Could not change the audio route.");
+  }
+
   void clearChat(){final PeerEngine e=engine();final String target=selected;if(e==null||target==null)return;new AlertDialog.Builder(this).setTitle("Clear conversation?").setMessage("Remove messages and attachments from this device and cancel pending sends. Other devices keep their copies.").setNegativeButton("Cancel",null).setPositiveButton("Clear",(d,w)->{try{e.clearConversation(target);drafts.remove(target);if(composer!=null)composer.setText("");AttachmentFlow.clearPendingAttachment(this);lastSignature="";render();}catch(Exception error){problem(error);}}).show();}
   void confirmDeleteConversation(String id,String name,boolean isGroup){
      PeerEngine e=engine();
@@ -375,18 +539,42 @@ public class MainActivity extends Activity {
       else if(request==45&&uri!=null){byte[] raw;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open image");raw=AttachmentFlow.readLimited(in);}Bitmap bitmap=inlineBitmap(raw);if(bitmap==null)throw new IOException("This file is not a supported image.");ByteArrayOutputStream png=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,90,png);e.setAvatar(png.toByteArray());bitmap.recycle();ui.post(()->{Toast.makeText(this,"Profile picture updated",Toast.LENGTH_SHORT).show();if(selected==null)showPeople();});}
     }catch(Exception error){if(captured!=null&&request==44)captured.delete();ui.post(()->problem(error));}},"lan-attachment").start();
   }
-  @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");render();}
+  @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");
+    // Tapping the ongoing-call notification brings the user back to the call. The call ID is
+    // carried so a stale notification cannot switch the view to a call that has already ended.
+    if("OPEN_CALL".equals(intent.getAction())){pendingCallAcceptId=intent.getStringExtra(CallNotifier.EXTRA_CALL_ID);lastSignature="";render();return;}
+    render();}
 
-  static final String APP_VERSION="2.2.6";
-  void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+APP_VERSION+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
+  /** The installed version, read from the package rather than hardcoded.  This used to be a
+   *  literal, which silently went stale — the About screen reported 2.2.6 in a 2.2.8 build.  The
+   *  manifest is now the only place a version is declared, so it cannot drift from the APK. */
+  String appVersion(){
+    try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
+    catch(Exception unavailable){return "unknown";}
+  }
+  void showAbout(){new AlertDialog.Builder(this).setTitle("About LAN Messenger").setMessage("LAN Messenger\nVersion "+appVersion()+"\n\nPrivate Windows and Android messaging on a local network. No central server, host laptop, account or Internet relay.").setPositiveButton("Close",null).show();}
    void changeAvatar(){PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_SHORT).show();return;}try{startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),45);}catch(Exception error){problem(error);}}
    void profile(){PeerEngine e=engine();if(e==null)return;EditText name=input("Display name",30);name.setText(e.name);new AlertDialog.Builder(this).setTitle("Your profile").setMessage("Device ID: "+e.id.substring(0,8)+"\nYour contacts recognize this device even if its IP changes.\n\n"+e.uploadPolicy.summary()).setView(name).setPositiveButton("Save",(d,w)->{try{e.rename(name.getText().toString());render();}catch(Exception error){Toast.makeText(this,"Could not save your name.",Toast.LENGTH_LONG).show();}}).setNegativeButton("Close",null).show();}
    void addAddress(){PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to find a device.",Toast.LENGTH_SHORT).show();return;}EditText address=input("192.168.1.20",60);address.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);StringBuilder ips=new StringBuilder();try{Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();while(all.hasMoreElements()){Enumeration<InetAddress> addresses=all.nextElement().getInetAddresses();while(addresses.hasMoreElements()){InetAddress a=addresses.nextElement();if(a instanceof Inet4Address&&!a.isLoopbackAddress())ips.append(a.getHostAddress()).append("  ");}}}catch(Exception ignored){}
     new AlertDialog.Builder(this).setTitle("Add a device").setMessage("Your IP: "+ips+"\nEnter the other device's IP. It must be running LAN Messenger.").setView(address).setPositiveButton("Find device",(d,w)->{String value=address.getText().toString();new Thread(()->{try{e.addAddress(value);ui.post(()->{lastSignature="";render();});}catch(Exception error){ui.post(()->Toast.makeText(this,"Device not reachable. Check Wi-Fi, IP and firewall.",Toast.LENGTH_LONG).show());}}).start();}).setNegativeButton("Cancel",null).show();
   }
-  // Back closes an open side menu first; only then does the existing navigation run.
-  @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}if(selected!=null)showPeople();else super.onBackPressed();}
-  @Override protected void onResume(){super.onResume();active=true;ui.removeCallbacks(tick);ui.post(tick);}
+  // Back closes an open side menu first; then an open call overlay (falling back to the return-to-call
+  // bar rather than ending the call, so Back never hangs up by accident); only then existing navigation.
+  @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}
+    if(CallView.isShowing()&&callUi!=null&&callUi.hasActive()){CallView.hide(this);renderCallBar();lastSignature="";render();return;}
+    if(selected!=null)showPeople();else super.onBackPressed();}
+  @Override protected void onResume(){super.onResume();active=true;bindCalls();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
+
+  /** Act on a notification tap that asked to return to a call.  The call ID is revalidated, so a
+   *  notification left over from a call that has already ended simply does nothing. */
+  void handlePendingCallAccept(){
+    String expected=pendingCallAcceptId;
+    if(expected==null||callUi==null)return;
+    CallSession call=callUi.getCurrent();
+    if(call==null||!expected.equals(call.callId)){pendingCallAcceptId=null;lastSignature="";render();return;}
+    pendingCallAcceptId=null;
+    lastSignature="";CallView.render(this);
+  }
   // Backgrounding forces a safe stop, same as Windows' hide-to-tray/conversation-switch triggers:
   // recording is a foreground-UI activity here (no foreground-service microphone type declared),
   // so it cannot continue meaningfully once the Activity leaves the foreground.
@@ -398,12 +586,22 @@ public class MainActivity extends Activity {
    // case. If it doesn't, ReconcileVoiceDrafts (A02) safely diagnoses the leftover
    // Recording-state entry as Invalid the next time the registry is reconciled -- acceptable,
    // matching Windows' own documented limitation here.
-   @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
+   @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);unbindCalls();CallView.forgetOverlay();if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
   @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
     super.onRequestPermissionsResult(requestCode,permissions,results);
     if(requestCode==VoiceUi.RECORD_AUDIO_REQUEST){
       if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)VoiceUi.startVoiceRecording(this);
       else VoiceUi.permissionDenied(this);
+      return;
+    }
+    // A08: the call's microphone permission. Granted means place the call that asked for it;
+    // denied means no call is started and no automatic retry is attempted, because a call without
+    // a microphone would connect and transmit silence.
+    if(requestCode==CALL_MIC_REQUEST){
+      String peerId=pendingCallPeerId;pendingCallPeerId=null;
+      if(peerId==null)return;
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)placeCall(peerId);
+      else Toast.makeText(this,"Calling needs the microphone. Enable it in Android settings to call.",Toast.LENGTH_LONG).show();
     }
   }
 }

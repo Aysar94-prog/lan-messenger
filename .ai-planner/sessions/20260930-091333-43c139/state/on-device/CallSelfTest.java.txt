@@ -1,0 +1,126 @@
+package net.lanmsg.chat;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.util.Log;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+/** DEBUG SCAFFOLD -- not part of the shipping call path.
+ *
+ *  Connects two real WebRtcCallMedia instances to each other inside one process so the whole
+ *  media path (SDP offer/answer, ICE, DTLS-SRTP, audio source/track, statistics) can be
+ *  validated on a single device with no second peer available.
+ *
+ *  Triggered by:
+ *    adb shell am broadcast -a net.lanmsg.chat.SELFTEST
+ */
+public class CallSelfTest extends BroadcastReceiver {
+
+  private static final String TAG = "CallSelfTest";
+  private static volatile boolean running;
+
+  @Override public void onReceive(Context context, Intent intent) {
+    if (running) { Log.w(TAG, "self-test already running"); return; }
+    running = true;
+    final Context app = context.getApplicationContext();
+    final PendingResult result = goAsync();
+    new Thread(() -> {
+      try { run(app); }
+      catch (Throwable t) { Log.e(TAG, "SELFTEST FAILED: " + t, t); }
+      finally { running = false; result.finish(); }
+    }, "call-selftest").start();
+  }
+
+  private static void run(Context context) throws Exception {
+    Log.i(TAG, "SELFTEST begin");
+
+    if (!WebRtcCallMedia.probe(context)) {
+      Log.e(TAG, "SELFTEST FAILED: WebRTC native stack unavailable");
+      return;
+    }
+
+    final ICallMedia.Factory factory = new WebRtcCallMedia.Factory(context);
+    final ICallMedia caller = factory.create();
+    final ICallMedia callee = factory.create();
+    Log.i(TAG, "both media instances created");
+
+    final AtomicReference<String> offerToCallee = new AtomicReference<>();
+    final CountDownLatch aReady = new CountDownLatch(1);
+    final CountDownLatch bReady = new CountDownLatch(1);
+    final AtomicInteger aCandidates = new AtomicInteger();
+    final AtomicInteger bCandidates = new AtomicInteger();
+    final AtomicReference<ICallMedia> callerPeer = new AtomicReference<>(callee);
+    final AtomicReference<ICallMedia> calleePeer = new AtomicReference<>(caller);
+
+    // Each side's ICE candidates are fed straight to the OTHER side.
+    caller.setListener(new ICallMedia.Listener() {
+      @Override public void onIceCandidate(String c, String mid, int idx) {
+        aCandidates.incrementAndGet();
+        ICallMedia peer = callerPeer.get();
+        if (peer != null) { try { peer.addIceCandidate(c, mid, idx); } catch (Exception e) { Log.w(TAG, "A candidate: " + e); } }
+      }
+      @Override public void onMediaReady() { Log.i(TAG, "caller media ready"); aReady.countDown(); }
+      @Override public void onError(String m) { Log.e(TAG, "caller error: " + m); }
+    });
+    callee.setListener(new ICallMedia.Listener() {
+      @Override public void onIceCandidate(String c, String mid, int idx) {
+        bCandidates.incrementAndGet();
+        ICallMedia peer = calleePeer.get();
+        if (peer != null) { try { peer.addIceCandidate(c, mid, idx); } catch (Exception e) { Log.w(TAG, "B candidate: " + e); } }
+      }
+      @Override public void onMediaReady() { Log.i(TAG, "callee media ready"); bReady.countDown(); }
+      @Override public void onError(String m) { Log.e(TAG, "callee error: " + m); }
+    });
+
+    // ── SDP: offer from the caller, answer from the callee ──
+    String offer = caller.createOffer();
+    Log.i(TAG, "offer created: " + offer.length() + " bytes, audio m-lines="
+      + (offer.contains("m=audio") ? 1 : 0) + ", opus=" + offer.contains("opus"));
+    offerToCallee.set(offer);
+
+    callee.setRemoteDescription(offer);
+    String answer = callee.createAnswer(offer);
+    Log.i(TAG, "answer created: " + answer.length() + " bytes, opus=" + answer.contains("opus"));
+    caller.setRemoteDescription(answer);
+
+    caller.startMedia();
+    callee.startMedia();
+    Log.i(TAG, "startMedia called on both sides");
+
+    boolean a = aReady.await(25, TimeUnit.SECONDS);
+    boolean b = bReady.await(25, TimeUnit.SECONDS);
+    Log.i(TAG, "media ready: caller=" + a + " callee=" + b
+      + " candidatesA=" + aCandidates.get() + " candidatesB=" + bCandidates.get());
+
+    // Let audio flow, then confirm statistics are actually moving.
+    if (a || b) {
+      Thread.sleep(4000);
+      ICallMedia.Stats sa = caller.getStats();
+      ICallMedia.Stats sb = callee.getStats();
+      Log.i(TAG, "caller stats valid=" + sa.valid + " rx=" + sa.packetsReceived + " lost=" + sa.packetsLost
+        + " jitter=" + sa.jitterMs + " rtt=" + sa.roundTripTimeMs);
+      Log.i(TAG, "callee stats valid=" + sb.valid + " rx=" + sb.packetsReceived + " lost=" + sb.packetsLost
+        + " jitter=" + sb.jitterMs + " rtt=" + sb.roundTripTimeMs);
+    }
+
+    // Mute must toggle the local track without tearing the connection down.
+    caller.setMute(true);
+    Thread.sleep(300);
+    caller.setMute(false);
+    Log.i(TAG, "mute round-trip OK");
+
+    boolean verdict = a && b && caller.getStats().valid;
+    Log.i(TAG, verdict ? "SELFTEST PASS" : "SELFTEST FAIL (mediaReady caller=" + a + " callee=" + b + ")");
+
+    caller.dispose();
+    callee.dispose();
+    Log.i(TAG, "SELFTEST end, both disposed");
+  }
+}

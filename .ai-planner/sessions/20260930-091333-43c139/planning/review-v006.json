@@ -1,0 +1,21 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R6-01",
+      "Severity": "Minor",
+      "Section": "Invitation throttling / AT03 and WT03 caller wording",
+      "Problem": "Throttled attempts get a generic Busy, while policy-declined attempts get Declined. A caller who redials a callee with incoming calls disabled will see \u0027Declined\u0027 five times and then \u0027Busy\u0027. This sequence differs from a callee who is actually in a call. It does not directly reveal the preference, but it adds wording rules that UI testers could read as contradictory.",
+      "RequiredOutcome": "State explicitly in the B03 throttling constants that the Busy-after-limit behavior is identical whatever the callee\u0027s incoming policy is, and that the AT03/WT03 redial tests expect exactly that sequence.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-06",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "All five referenced findings are handled. R2-01: A03c creates the single service-owned controller, and A04 depends on A03c/AT01c. R2-03: W00a decides the x86 policy before the dependency freeze, and W03b uses an explicit per-RID matrix. R3-02: the plan records read-only evidence from outputs/LanMessenger-Windows-2.2.0 (a runtimeconfig.json is present, confirming framework-dependent deployment, plus an x64 apphost), sets SelfContained=false, PublishSingleFile=false and UseAppHost=true, and B00/W00a reconcile the other baselines. R4-02: MODIFY_AUDIO_SETTINGS is declared unconditionally in A03b, checked in AT01b before A04, and re-audited in A11. R5-02: A08/W08 require the generic \u0027Declined\u0027 wording, and the shared per-peer invitation throttle counts policy-declined attempts."
+    }
+  ],
+  "BlockedReason": null
+}

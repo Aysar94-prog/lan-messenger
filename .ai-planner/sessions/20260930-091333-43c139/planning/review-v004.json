@@ -1,0 +1,29 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R4-01",
+      "Severity": "Minor",
+      "Section": "A07 routing and Bluetooth policy (API 26\u201330 legacy path)",
+      "Problem": "The \u0027Call starts\u0027 row says to let Android select a communication route, including an already connected Bluetooth headset. On API 26\u201330, entering MODE_IN_COMMUNICATION does not activate a Bluetooth SCO voice route by itself; the app or the media stack\u0027s audio device helper must start SCO explicitly. Otherwise capture and playback usually stay on the built-in microphone and earpiece while the headset remains connected for media only. As a result, the \u0027system-selected\u0027 behavior differs by API level, and the legacy path could look like \u0027Bluetooth ignored\u0027 during AT02.",
+      "RequiredOutcome": "State the legacy (API 26\u201330) policy explicitly: either no SCO start (the headset is not used for calls on legacy devices, and the UI shows the built-in route) or an explicitly coordinated SCO start/stop under CallAudioRouter. Record which policy was tested in the AT02 observation.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R4-02",
+      "Severity": "Suggestion",
+      "Section": "A07 implementation requirements",
+      "Problem": "\u0027Add the normal MODIFY_AUDIO_SETTINGS declaration where needed\u0027 leaves the manifest change conditional. The current manifest (android/AndroidManifest.xml lines 3\u201310) has no MODIFY_AUDIO_SETTINGS. Both setMode/setSpeakerphoneOn and WebRTC\u0027s audio device module effectively require it for communication calls.",
+      "RequiredOutcome": "Make adding MODIFY_AUDIO_SETTINGS unconditional in A07 (or A03b if the dependency\u0027s manifest content requires it), and verify its presence in the A11 manifest audit.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-02",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "R2-01 is preserved. A03c creates exactly one CallController in MessengerService, with fake media first. A04 depends on A03c/AT01c and installs real media into that controller, and D01 introduces no temporary ownership model. R2-02 is resolved. The A07 routing and Bluetooth policy defines best-effort system-selected routing, phone/speaker override, disconnect and failure handling with bounded recovery, cleanup, and API guards. A mandatory physical Bluetooth-connected observation is now part of AT02, BT02 and the MVP matrix, and a silent route is explicitly not a pass. R2-03 is preserved. The W00a x86 retain/exclude decision precedes dependency freeze, and explicit per-RID PlatformTarget publishing is still required in W03b."
+    }
+  ],
+  "BlockedReason": null
+}

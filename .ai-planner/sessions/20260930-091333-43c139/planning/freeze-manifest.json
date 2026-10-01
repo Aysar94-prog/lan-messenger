@@ -1,0 +1,129 @@
+{
+  "session_id": "20260930-091333-43c139",
+  "frozen_at_utc": "2026-09-30T10:28:53.8863382Z",
+  "plan_artifact_id": "plan-v006",
+  "plan_content_hash": "sha256:5a3239466848af29fb05e1739d97aa42f384a6c74c9de7455ea32fe5bc401982",
+  "rounds": 6,
+  "findings": [
+    {
+      "Id": "R1-01",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R1-02",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R1-03",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R1-04",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R2-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R2-02",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R2-03",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "U-01",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R3-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R3-02",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "U-02",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R4-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R4-02",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "U-03",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "U-04",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "U-05",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R5-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R5-02",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "U-06",
+      "severity": "Major",
+      "status": "Closed",
+      "LastDisposition": "Accepted"
+    },
+    {
+      "Id": "R6-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    }
+  ]
+}

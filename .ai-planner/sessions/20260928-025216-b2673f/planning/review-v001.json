@@ -1,0 +1,55 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Major",
+      "Section": "Fixed product contract / Shared dependency gates / I01-I04, W05, A05, A06, W06",
+      "Problem": "The user asked to split the latest Voice Messages plan (session 20260928-015015-895a08, plan-v007), not to shorten its content. The split drops the normative sections that v007 spelled out and never says that v007 is still the reference. Missing: the 10-step durable write order and the three allowed crash outcomes; the WAV validation checklist (RIFF/WAVE, checked chunk arithmetic, block alignment and byte rate, unknown/duplicate chunk handling, duration consistency); the 7-step seek procedure; the per-state receiver behavior table; the 9 fixed scheduler admission rules (for example, a manual request arriving at full capacity becomes the next admission, and Offline/cancel/clear/expiry keep their existing semantics); the golden-vector manifest contents; the draft registry entry fields and rules (Preview/Delete-only for unsendable drafts, no arbitrary external paths); and the PCM-frame property table (sequence, timestamp, ownership, backpressure). Some tasks point at material that is no longer in the document. For example, W05 says \u0027using the required durable write order\u0027, which this plan never defines, and I01/I04 say they \u0027freeze\u0027 contracts whose content is missing. Implementers of the separately authorized Android or Windows phases could build divergent behavior.",
+      "RequiredOutcome": "Keep the v007 normative contract content in the split plan, for example as a shared-contract section owned by I01-I04: write order, crash outcomes, WAV validation list, seek steps, receiver-state table, all 9 scheduler rules, registry rules and fields, PCM-frame table, and fixture manifest contents. Alternatively, state explicitly that plan-v007\u0027s contract sections stay normative and cite them by name. Every task reference (such as \u0027required durable write order\u0027) must resolve to defined content.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Major",
+      "Section": "Phase 1/Phase 2 exit gates; I11; Recommended execution order",
+      "Problem": "Platform status records (android/STATUS.md, windows/STATUS.md, PROJECT_STATUS.md) are updated only in I11, after all integration work. The plan explicitly allows the Android and Windows phases to be \u0027separately authorized platform work\u0027, and AGENTS.md requires updating the affected platform status after changes. If Phase 1 or Phase 2 finishes while Phase 3 is not yet authorized, the status records would be stale and any agent taking over would be misled. The exit gates say acceptance is \u0027recorded separately\u0027 but do not say where.",
+      "RequiredOutcome": "Add a status-update task to the end of each platform phase, for example A11 updating android/STATUS.md and W11 updating windows/STATUS.md. Each should record implemented code, automated verification and device/manual acceptance separately, with interoperability marked as not yet verified. I11 should then be limited to PROTOCOL.md, the PROJECT_STATUS.md comparison, and interoperability results.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "Phase 3 tasks I05-I09 dependencies",
+      "Problem": "The dependency gate text says interoperability starts only after both platforms pass their local automated gates, but I05-I09 list only implementation tasks (A*/W*) and omit AT01-AT06 and WT01-WT06. Platform manual acceptance, which step 4 of the execution order puts before I05, also does not appear as a dependency.",
+      "RequiredOutcome": "Make I05-I09 depend on the Phase 1 and Phase 2 exit gates (including AT/WT tasks), or explicitly state which subset is enough.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Minor",
+      "Section": "A04 / Android manual acceptance",
+      "Problem": "v007 requires a safe forced stop on the Offline transition for both platforms. W04 keeps this, but A04 and AT03 do not mention the Offline transition. The Android manual acceptance list also dropped the Offline Send/restart/deliver check that the Windows list keeps.",
+      "RequiredOutcome": "Add Offline-transition forced stop to A04/AT03 and add an Offline Send/restart check to Android manual acceptance.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-05",
+      "Severity": "Suggestion",
+      "Section": "Phase 3 structure",
+      "Problem": "I01-I04 sit inside Phase 3 but must run before Phases 1 and 2, which makes the phase numbering read out of order.",
+      "RequiredOutcome": "Consider labeling I01-I04 as a \u0027Phase 3a / pre-phase shared contract\u0027 subsection, or note at the top of Phase 3 that its gate tasks run first.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-06",
+      "Severity": "Suggestion",
+      "Section": "Deferred roadmap / Risks",
+      "Problem": "The v007 risks and mitigations table, the roadmap guardrails, and the CALL entry gates were dropped. Examples: camera permission is not requested before video, and microphone consent does not imply consent to a live call.",
+      "RequiredOutcome": "Keep the risks table and guardrails, or point to them in v007.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

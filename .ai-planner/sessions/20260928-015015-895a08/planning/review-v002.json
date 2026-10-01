@@ -1,0 +1,62 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R2-01",
+      "Severity": "Minor",
+      "Section": "VM02 / VM08 / VM09-VM10 (receiver UI before and after fetch)",
+      "Problem": "Before the fetch finishes, the receiver has only the marker filename and the size, so there is no WAV content to validate yet. That means the card showing Download/Retry has to be chosen from the marker alone. The plan never says what happens when a marked offer is fetched internally and then fails WAV validation after its hash matches, for example a spoofed marker. VM02 falls back to the ordinary attachment UI, whose Download opens the destination-picker flow. The internally stored LMATCS1 copy would then be left unused, and the file would be re-fetched to an external location. The plan also does not say whether Save/Export is still offered for that copy.",
+      "RequiredOutcome": "Split the voice card into two states: a pre-fetch state based on the marker only, and a post-validation playable state. Also define what happens when a marked note is fetched internally but is not a valid voice note. For example, it could show an ordinary-file card that exports from the internal copy without fetching it again, and clear/expiry should still clean up that internal copy. Add a VT01/VT04 case for this.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-02",
+      "Severity": "Minor",
+      "Section": "VM08 / VM13 (shared two-task automatic cap)",
+      "Problem": "Voice notes share the existing global cap of two automatic tasks with image auto-fetch. If a large backlog of pending images builds up, for example after reconnecting or restarting, voice notes can wait behind them indefinitely. The plan sets no ordering or fairness rule, even though a voice note is small and the user is likely to want to hear it right away.",
+      "RequiredOutcome": "State the scheduling order between pending images and voice notes. Either prioritise voice notes (which are small and capped) or state explicitly that FIFO is accepted. Cover the chosen behaviour in the VT07 auto-fetch concurrency test.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-03",
+      "Severity": "Suggestion",
+      "Section": "VM03 / VM09 (winmm adapters)",
+      "Problem": "The winmm documentation forbids calling most waveIn/waveOut functions from inside CALLBACK_FUNCTION callbacks, and the callbacks run on a system thread. A careless WinForms implementation can deadlock or corrupt state during stop/dispose, or fail during device removal.",
+      "RequiredOutcome": "Specify event- or window-message-based buffer completion (CALLBACK_EVENT or CALLBACK_WINDOW), or require the adapters to marshal all waveIn/waveOut calls off the callback thread. Also pin the callback delegates so they are not garbage-collected while buffers are in flight. Add a device-removal-during-capture/playback case to VT02/VT05.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "R1-01",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "Plan lines 20-21 and VM08/VM10 state that voice Download/Retry/Resume use only the internal automatic-fetch pipeline, writing LMATCS1 and .sec.resume files, and never the destination picker. Save/Export is a separate action, and SAF is excluded from playback storage. VT04 and the manual LAN checks assert that no picker opens, and that relay and clear/expiry work from internal storage."
+    },
+    {
+      "FindingId": "R1-02",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "Line 19 and VM07 require the Normal encrypted store and forbid Fast/original references. The four-step durability order (lines 41-46) deletes the draft only after both the encrypted copy and the message row are durable, and cleanup keeps referenced drafts. VT02, VT04 and completion gate 3 test Offline send, then sender restart, then fetch."
+    },
+    {
+      "FindingId": "R1-03",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "Drafts are restricted to app-private storage and never %TEMP%, and an orphan sweep is added. Playback uses bounded in-memory decryption with no plaintext playback file, which VT05 and completion gate 7 enforce. The remaining plaintext window for drafts is documented as a known limitation."
+    },
+    {
+      "FindingId": "R1-04",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "VM01 selects project-owned winmm waveIn/waveOut P/Invoke wrappers and prohibits third-party audio packages. VM01 and VM09 require streaming PCM, Play/Pause and position reporting, which waveOutPause/waveOutRestart/waveOutGetPosition support."
+    },
+    {
+      "FindingId": "R1-05",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "VM13 requires PROTOCOL.md to document the voice auto-fetch exception to the non-image consent policy, including the 9,600,044-byte ceiling, the shared cap of two tasks, and rescheduling after restart. Completion gate 8 repeats this requirement."
+    },
+    {
+      "FindingId": "R1-06",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "Line 16 binds the signed filename at queue time, after the final message ID is assigned. Line 17 and VM02 state that classification does not require the embedded ID to match, and VT01 tests the non-matching case."
+    }
+  ],
+  "BlockedReason": null
+}

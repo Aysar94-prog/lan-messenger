@@ -1,0 +1,29 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R7-01",
+      "Severity": "Minor",
+      "Section": "Deterministic retrieval scheduling / Fixed admission policy (items 1 and 6)",
+      "Problem": "Today, user-initiated downloads do not appear to go through the automatic-image capacity. In windows/Transfers.cs:12-25 and android TransferManager.java:23-32, only the automatic image path acquires imageSlots (Semaphore of 2). The policy says a manual request that arrives while capacity is full waits for the next released slot. Read literally, manual downloads would now be gated behind automatic retrievals that are already running, including a full 9.6 MB voice fetch. That is a user-visible behavior change and a possible slowdown compared with the current ungated manual path.",
+      "RequiredOutcome": "In VM01, state explicitly whether manual downloads share the automatic-media capacity pool or keep their current independent path. If they keep their own path, \u0027manual first\u0027 only means automatic work never takes manual capacity. Make the VT07 and VT10 regression expectations match that decision.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R7-02",
+      "Severity": "Suggestion",
+      "Section": "Shared golden vectors / VT11",
+      "Problem": "The plan requires Windows and Android test runners to load tests/voice_messages/vectors/ directly. It does not say how the Android suite gets to that directory: host JVM unit tests versus instrumented on-device tests, which cannot read the source tree.",
+      "RequiredOutcome": "In VM02, note that Android vector tests run as host-side JVM tests that read the source-tree path, or that packaging copies the files at build time from the single canonical directory. Either way, this must not count as a prohibited platform-local copy.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-07",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "R6-01 is closed. The plan names the real integration points: PeerEngine.QueueImageDownloads/imageSlots/imageAttempts in windows/Transfers.cs, and TransferManager.queueImageDownloads with PeerEngine.imageSlots/imageAttempts on Android. I confirmed these exist in the source. The plan also fixes one non-preemptive next-admitted policy for both platforms, with no runtime branch. R6-02 is closed: one versioned fixture set under tests/voice_messages/vectors/ is normative, both platforms\u0027 VT01/VT02/VT07 must consume it, and VT11 enforces this. The execution sequence now runs VT10 and VT11 only after VM16."
+    }
+  ],
+  "BlockedReason": null
+}

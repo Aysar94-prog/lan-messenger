@@ -1,0 +1,29 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R3-01",
+      "Severity": "Minor",
+      "Section": "Phase A2 (A07 / AT02) \u2014 Bluetooth",
+      "Problem": "Bluetooth is still only listed as \u0027Guaranteed Bluetooth support remains deferred\u0027. A07 and AT02 do not define what happens when Android communication mode, or the media stack\u0027s audio device module, routes to an already-connected Bluetooth headset on its own. If that route is broken, the result could be a silent call that is never observed during acceptance.",
+      "RequiredOutcome": "In A07, state the policy for a connected Bluetooth device: either best-effort system routing, or force earpiece/speaker. Add one observation with a Bluetooth device connected to AT02 or the MVP Android matrix.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R3-02",
+      "Severity": "Suggestion",
+      "Section": "W03b build/publish contract",
+      "Problem": "The plan says to \u0027retain framework-dependent deployment\u0027 with SelfContained=false. Neither windows/LanMessenger.csproj nor any build script under windows/ currently declares SelfContained, PublishSingleFile or a -r RID, so the current deployment mode of previous release packages is not recorded in source.",
+      "RequiredOutcome": "In B00 or W00a, record how the previous Windows release artifacts in D:\\LAN-Messenger\\outputs were actually published (framework-dependent or self-contained, apphost architecture) before W03b sets SelfContained=false, so the upgrade path matches existing installations.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-01",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "R2-01 is resolved. A03c places exactly one production CallController inside the existing MessengerService with fake media, and AT01c tests bind/rebind and stale commands. The ownership contract states there is no Activity-owned implementation. A04 depends on A03c/AT01c and installs the real adapter into the same host, D01 binds to the service controller, and A06 adds only the microphone foreground-service type and background continuation, with no ownership migration. R2-03 is resolved. The W00a architecture decision (x86 retain/exclude with evidence, ARM64 native versus emulation) now precedes W00 and gates the B02 dependency freeze. W03b explicitly implements the AnyCPU-to-per-RID PlatformTarget transition with isolated outputs, per-RID packages and upgrade checks, and WT01b and W10 verify each retained architecture."
+    }
+  ],
+  "BlockedReason": null
+}

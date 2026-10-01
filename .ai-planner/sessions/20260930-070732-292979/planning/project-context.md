@@ -1,0 +1,114 @@
+PROJECT FILE CONTEXT (generated locally; the current working tree is authoritative)
+Use this as a navigation hint. Inspect changed files first, then any unchanged dependencies needed for a correct plan or review.
+No source file contents are embedded here. Generated folders such as bin, obj, dist and node_modules are excluded.
+Indexed files: 1414.
+No prior complete index exists. This is the first project scan; inspect relevant files as needed.
+Project file map (1414):
+- README.md
+- tests/CsharpHarness/CsharpHarness.csproj
+- tests/MeasureWindows/MeasureWindows.csproj
+- tests/WindowsUi/WindowsUi.csproj
+- windows/LanMessenger.csproj
+- tests/.build/oak-audit-45A2F514-r2/audit_fixture.py
+- tests/.build/oak-audit-45A2F514-r2/audit_mut.py
+- tests/.build/oak-audit-45A2F514-r2/audit_sched.py
+- tests/.build/oak-audit-45A2F514-r2/dump_wav.py
+- tests/.build/oak-audit-45A2F514-r3/audit_fixture.py
+- tests/.build/oak-audit-45A2F514-r3/audit_recipe_negative.py
+- tests/.build/oak-audit-45A2F514-r3/audit_rule6.py
+- tests/.build/oak-audit-45A2F514-r3/audit_sched_controls.py
+- tests/.build/oak-audit-45A2F514-r3/baseline_hashes.txt
+- tests/.build/oak-audit-45A2F514-r3/regen_wav_cases.bin
+- tests/.build/oak-audit-45A2F514-r3/vectors/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514-r3/vectors/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514-r3/vectors/manifest.json
+- tests/.build/oak-audit-45A2F514-r3/vectors/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514-r3/vectors/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/audit_a.py
+- tests/.build/oak-audit-45A2F514/audit_a3_recheck.py
+- tests/.build/oak-audit-45A2F514/audit_b2_mutations.py
+- tests/.build/oak-audit-45A2F514/audit_b3_controls.py
+- tests/.build/oak-audit-45A2F514/audit_b4_controls.py
+- tests/.build/oak-audit-45A2F514/audit_b_mutations.py
+- tests/.build/oak-audit-45A2F514/confirm.py
+- tests/.build/oak-audit-45A2F514/confirm/c1/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/confirm/c1/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/confirm/c1/manifest.json
+- tests/.build/oak-audit-45A2F514/confirm/c1/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/confirm/c1/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/confirm/c2/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/confirm/c2/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/confirm/c2/manifest.json
+- tests/.build/oak-audit-45A2F514/confirm/c2/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/confirm/c2/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/confirm/c3/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/confirm/c3/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/confirm/c3/manifest.json
+- tests/.build/oak-audit-45A2F514/confirm/c3/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/confirm/c3/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/dbg.py
+- tests/.build/oak-audit-45A2F514/dbg/c1/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/dbg/c1/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/dbg/c1/manifest.json
+- tests/.build/oak-audit-45A2F514/dbg/c1/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/dbg/c1/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m01/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m01/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m01/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m01/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m01/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m02/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m02/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m02/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m02/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m02/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m03/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m03/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m03/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m03/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m03/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m04/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m04/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m04/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m04/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m04/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m05/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m05/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m05/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m05/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m05/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m06/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m06/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m06/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m06/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m06/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m07/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m07/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m07/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m07/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m07/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m08/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m08/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m08/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m08/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m08/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m09/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m09/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m09/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m09/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m09/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m10/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m10/generate_wav_cases.py
+- tests/.build/oak-audit-45A2F514/mut/m10/manifest.json
+- tests/.build/oak-audit-45A2F514/mut/m10/pcm_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m10/wav_cases.bin
+- tests/.build/oak-audit-45A2F514/mut/m11/__pycache__/generate_wav_cases.cpython-314.pyc
+- tests/.build/oak-audit-45A2F514/mut/m11/generate_wav_cases.py
+- ... 1314 more; search the project if relevant.
+Recent planning history (navigation only; it does not prove the current code matches a prior plan):
+- 2026-09-30 08:25  ·  WaitingForPlanner  ·  we r succesfully done the voice message feature . now the next step is a simple voice call and must be able...
+  Plan: .ai-planner/sessions/20260930-052521-b19f4d/planning/plan-v001.md (read only if relevant)
+- 2026-09-28 05:52  ·  PlanFrozen  ·  Read the latest Voice Messages plan and split it into 3 phases: Android PC (Windows) Android ↔ Windows Inte...
+  Plan: .ai-planner/sessions/20260928-025216-b2673f/planning/plan-v003.md (read only if relevant)
+- 2026-09-28 04:50  ·  PlanFrozen  ·  now we must add a new feature ... its voise messages and later on voice call and maybe video call.. think a...
+  Plan: .ai-planner/sessions/20260928-015015-895a08/planning/plan-v007.md (read only if relevant)

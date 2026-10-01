@@ -1,0 +1,47 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Major",
+      "Section": "Phase A4 / A11 (dependency ordering against A05, A08, A09, A10)",
+      "Problem": "The only task that puts the WebRTC Java/JNI dependency into the production Android build is A11, and A11 depends on A10 and B05. But A05 (physical two-way audio), A06/A07 (service and routing device tests), A09 (device instrumentation), A10 (physical acceptance) and B04 (native-media interop) all need a production APK that already contains libwebrtc classes and lib/\u003Cabi\u003E/*.so. The current android/build.ps1 cannot produce one. It compiles only src/net/lanmsg/chat/*.java against android.jar with no extra classpath. It adds only classes.dex through aapt, never adds lib/\u003Cabi\u003E native libraries, never merges AAR manifest entries, and runs zipalign without -p. It also hard-codes the output to outputs\\LanMessenger-2.1.1.apk and throws if that file already exists, so repeated development builds fail. A01 proves loading only in a spike, and no task carries that result into build.ps1 before the media work. As sequenced, the dependency graph cannot be carried out, and the plan\u0027s own claim that it \u0027exposes packaging risks early\u0027 is false for Android.",
+      "RequiredOutcome": "Add an early Android build-integration task that depends on A01/B02 and blocks A05. It must extend build.ps1 with the pinned classes.jar on the javac/d8 classpath, native .so packaging per chosen ABI, merged manifest entries, native alignment (zipalign -p / page-size), and non-colliding development output naming. Its acceptance must be a signed dev APK built by the production script that loads WebRTC on a device. Then limit A11 to release packaging, version naming, and upgrade verification.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Minor",
+      "Section": "Document structure (sections 1 and 2)",
+      "Problem": "The user asked for two major sections, Android and Windows. The plan puts shared \u0027Both\u0027 tasks inside the platform sections: B01\u2013B03 and the whole shared contract sit under Android Phase A0, and B04\u2013B06 plus the shared test matrix and execution sequence sit under Windows W4/W5. A Windows-only implementer must read the Android section to find the contract, and the platform phase numbering is interleaved with cross-platform gates.",
+      "RequiredOutcome": "Move the shared contract and B-tasks into a short shared preamble or appendix that both sections reference, so the Android and Windows sections contain only their own phases.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "Phase W1 / W04 dependencies",
+      "Problem": "W04 (TLS signaling integration with fake media) depends on W02 (native bridge and distribution freeze). Signaling over the existing BouncyCastle SecureChannel does not need the native bridge. Its Android counterpart A03 depends only on A02. This dependency needlessly serializes Windows signaling work behind the riskiest native task.",
+      "RequiredOutcome": "Make W04 depend on W03 (and B03) only, and keep W02 as a dependency of W06.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Minor",
+      "Section": "Phase W0 / B02 dependency decision",
+      "Problem": "Windows WebRTC availability for .NET 9 WinForms is the largest feasibility risk. The plan names no candidate options (for example a maintained prebuilt libwebrtc binding, a self-built C ABI over upstream libwebrtc, or a managed stack), no criteria for comparing them (AEC availability, maintenance status, license, build cost), and no decision owner or time box. \u0027Revise the approach\u0027 is the only path if B02 fails.",
+      "RequiredOutcome": "List 2\u20133 concrete Windows candidates, with rejection criteria and a time-boxed decision recorded in W01/B02.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-05",
+      "Severity": "Suggestion",
+      "Section": "Shared contract \u2014 Discovery and signaling transport",
+      "Problem": "Both codebases already have a precedent for a separate capability verb plus a long-lived stream after the LM4 handshake: FILECAPS \u2192 STREAM1 in ResumableTransfer.java and PeerEngine.java:233, and FETCHDIRECT/ServeDirect on Windows. The plan proposes CALLCAPS/CALLOPEN without referencing this pattern or its existing timeout and ownership handling (Android receive() uses soTimeout 6000 with try-with-resources; Windows Read/Write use a fixed 3500 ms timeout).",
+      "RequiredOutcome": "Reference the FILECAPS/FETCHDIRECT pattern as the model for CALLCAPS/CALLOPEN handoff, and explicitly list the 6000 ms and 3500 ms timeouts that must be bypassed for the call channel.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

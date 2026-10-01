@@ -1,0 +1,47 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R3-01",
+      "Severity": "Minor",
+      "Section": "Crash-recoverable draft design / VM05, VM08, VM09",
+      "Problem": "Startup Restore/Delete appears only in the owning conversation. The plan does not say what happens when that conversation no longer exists or can no longer be sent to at restart: the user left the group, the group was deleted, ownership moved, or the contact was removed. A valid finalized draft could then become unreachable, with no UI to resolve it. It would also keep taking a registry slot, and the \u0027user must resolve before recording more\u0027 rule could end up blocking new recordings.",
+      "RequiredOutcome": "Define a deterministic outcome for drafts whose owning conversation is missing or no longer allows sending. For example, offer Delete from a global recovery notice and never re-target the draft to another conversation. Add this case to VT03.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R3-02",
+      "Severity": "Minor",
+      "Section": "Crash-recoverable draft design (registry limit)",
+      "Problem": "When the bounded registry is full, the user must resolve an existing draft. The plan does not say whether this blocks only new recordings or also blocks Restore of other drafts. The age policy for recoverable drafts is also not specified: its value, and whether expiry deletes without asking, which could conflict with the \u0027never silently delete a valid finalized draft\u0027 criterion.",
+      "RequiredOutcome": "State the concrete registry count and age values in VM01/VM05. Specify that age expiry is shown to the user or only applies after a notice, so it stays consistent with the VM05 acceptance criterion.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R3-03",
+      "Severity": "Suggestion",
+      "Section": "VM01 / VM11 auto-fetch",
+      "Problem": "Maximum-size notes (about 9.6 MB each) are fetched automatically under the existing two-task concurrency limit. On large groups or slow Android devices, a burst of voice notes could delay user-initiated ordinary attachment downloads. The plan does not say whether voice auto-fetch has its own queue or priority relative to manual downloads.",
+      "RequiredOutcome": "Note in VM11 whether manual downloads keep priority over, or preempt, voice auto-fetch in the shared concurrency slots, and cover it in VT09.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-01",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The plan now has a durable draft registry recording the owning conversation, creation time, finalization state and a safe app-private reference. It orders the crash-safe transitions (register before capture, mark finalized only after the header is complete, delete only after both the encrypted source and the queued row are durable). At startup a valid finalized, unqueued draft is not treated as an orphan and the user gets Restore/Delete. This is enforced through VM05, VM08, VM09 and VT03, and by completion gate 3."
+    },
+    {
+      "FindingId": "U-02",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The seek conversion contract specifies clamping, checked integer arithmetic, mapping to the validated data chunk, alignment down to 2 bytes, bounds clamping, flushing stale output, and serialization with the other player actions. VM12, VM13 and VM14 add an optional seek slider with elapsed/remaining time, keyboard seeking (Arrow/Page/Home/End) and accessibility actions, tested in VT07/VT08 and required by gates 6 and 7."
+    },
+    {
+      "FindingId": "U-03",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The internal PCM frame contract defines the sequence number, monotonic timestamp, format metadata, 20 ms cadence (320 samples / 640 bytes), end and discontinuity indications, ownership rules, and bounded backpressure, with networking and codecs explicitly excluded. Capture and playback go through it (VM02, VM04, VM06, VM07, VM12). VT02 is a synthetic loopback test covering ordering, drift, backpressure and device restart, and gate 5 requires it to pass."
+    }
+  ],
+  "BlockedReason": null
+}
