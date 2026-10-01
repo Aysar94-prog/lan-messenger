@@ -130,13 +130,25 @@ public class CallUi {
     terminalAtMs = 0;
   }
 
-  private void onSnapshot(CallSession snap) {
+  /** Absorb one controller snapshot.  Package-private so the retention rules below are testable:
+   *  they are what stops the end banner from covering the screen forever, and that failure was
+   *  invisible because the banner lives in a view. */
+  void onSnapshot(CallSession snap) {
     this.current = snap;
     if (snap == null) return;
     if (snap.state.terminal()) {
       // Retain the end reason; the controller clears its own session immediately afterwards.
-      this.terminal = snap;
-      this.terminalAtMs = System.currentTimeMillis();
+      //
+      // The end time is stamped only when this is a NEW terminal outcome. The same terminal
+      // snapshot is re-delivered on every render pass, and re-stamping it each time meant the end
+      // banner refreshed itself once a second and never expired: it stayed on screen covering the
+      // header, so a call that ended badly left the user with no visible way back.
+      if (terminal == null || !terminal.callId.equals(snap.callId)
+          || terminal.state != snap.state
+          || terminal.endReason != snap.endReason) {
+        this.terminal = snap;
+        this.terminalAtMs = System.currentTimeMillis();
+      }
     } else {
       // A new call invalidates any previously retained end reason.
       this.terminal = null;
@@ -155,6 +167,14 @@ public class CallUi {
 
   /** The retained terminal snapshot, or null. */
   public CallSession getTerminal() { return terminal; }
+
+  /** When the retained terminal snapshot was recorded, or 0 if there is none.
+   *
+   *  <p>This is the single source of truth for "when did the call end".  The overlay used to keep
+   *  its own static timestamp and refreshed it on every render, so a terminal snapshot left in
+   *  {@link #current} made the end banner refresh itself once a second and never expire: the
+   *  overlay stayed on screen indefinitely, covering the header and its back button. */
+  public long terminalAtMs() { return terminal == null ? 0 : terminalAtMs; }
 
   /** Consume the retained terminal snapshot, so an end banner is shown once. */
   public CallSession takeTerminal() {

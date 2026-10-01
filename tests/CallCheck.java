@@ -43,6 +43,8 @@ public final class CallCheck {
     testUiSnapshotLabels();
     testInboundFrameAdmissionTable();
     testCallerAcceptReachesConnecting();
+    testParsedFrameTypeComparesByValue();
+    testTerminalSnapshotRetention();
 
     System.out.println("\nCALLCHECK PASS=" + pass + " FAIL=" + fail);
     if (fail > 0) {
@@ -1183,5 +1185,101 @@ public final class CallCheck {
     eng.close();
     for (File f : eng.file.getParentFile().listFiles()) f.delete();
     eng.file.getParentFile().delete();
+  }
+
+  /** Regression: a frame type read off the wire is a substring of the received JSON, so it is a
+   *  different object from the CallProtocol constant even though the two are equal.  CallChannel
+   *  used == to recognise the opening INVITE, which was therefore never true: the INVITE fell
+   *  through to CallController.onFrame, that returned immediately because no session existed yet,
+   *  and every incoming call was discarded before it could ring.  Nothing errored, so the caller's
+   *  phone simply rang out and then reported "No answer".
+   *
+   *  <p>Guards the whole type vocabulary, not just INVITE, because the same mistake anywhere else
+   *  in the signaling path would fail just as quietly. */
+  static void testParsedFrameTypeComparesByValue() throws Exception {
+    System.out.println("testParsedFrameTypeComparesByValue...");
+
+    String callId = UUID.randomUUID().toString();
+    String caller = UUID.randomUUID().toString();
+    String callee = UUID.randomUUID().toString();
+    String sdp = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\n";
+
+    CallProtocol.Frame[] frames = {
+      CallSignaling.invite(callId, 1, caller, callee),
+      CallSignaling.ringing(callId, 2),
+      CallSignaling.accept(callId, 3),
+      CallSignaling.decline(callId, 4),
+      CallSignaling.busy(callId, 5),
+      CallSignaling.cancel(callId, 6),
+      CallSignaling.offer(callId, 7, 1, sdp),
+      CallSignaling.answer(callId, 8, 1, sdp),
+      CallSignaling.ice(callId, 9, 1, "candidate", "0", 0),
+      CallSignaling.hangup(callId, 10),
+      CallSignaling.ping(callId, 11),
+      CallSignaling.pong(callId, 12),
+    };
+
+    for (CallProtocol.Frame sent : frames) {
+      CallProtocol.Frame got = CallSignaling.parse(CallSignaling.serialize(sent));
+      check(got != null, "N120-parse-roundtrip-" + sent.type, "frame failed to survive serialize/parse");
+      if (got == null) continue;
+      check(got.type.equals(sent.type) && got.callId.equals(callId),
+        "N121-frame-identity-by-value-" + sent.type,
+        "a parsed frame must compare equal to what was sent by value, never by reference");
+    }
+
+    // The exact comparison CallChannel.dispatch performs on the opening frame.
+    CallProtocol.Frame invite = CallSignaling.parse(
+      CallSignaling.serialize(CallSignaling.invite(callId, 1, caller, callee)));
+    check(CallProtocol.INVITE.equals(invite.type),
+      "N123-invite-recognised-by-value", "dispatch must recognise the opening INVITE by value");
+  }
+
+  /** Regression: a terminal snapshot stays in getCurrent() after the call ends, and the end banner
+   *  used to stamp "now" every time it re-rendered that snapshot, so it never expired. The banner
+   *  stayed on screen indefinitely, covering the header and the back button, which is what left the
+   *  caller stuck on a "No answer" screen with no way out.
+   *
+   *  <p>The end time must therefore be recorded once, on arrival, and left alone. */
+  static void testTerminalSnapshotRetention() throws Exception {
+    System.out.println("testTerminalSnapshotRetention...");
+
+    CallUi ui = new CallUi();
+    String callId = UUID.randomUUID().toString();
+    CallSession.Builder b = new CallSession.Builder(callId, "peer", true, System.currentTimeMillis());
+    b.state = CallProtocol.State.OutgoingRinging;
+    ui.onSnapshot(b.snapshot());
+    check(ui.hasActive() && ui.hasOutgoingRinging(), "N130-live-call-is-active", "");
+    eq(ui.terminalAtMs(), 0L, "N131-no-terminal-while-live");
+
+    // The call ends.
+    b.state = CallProtocol.State.Ending;
+    b.endReason = CallProtocol.EndReason.TIMEOUT_RINGING;
+    CallSession ended = b.snapshot();
+    ui.onSnapshot(ended);
+    long endedAt = ui.terminalAtMs();
+    check(endedAt > 0, "N132-end-time-recorded", "a terminal snapshot must record when it arrived");
+    check(ui.getTerminal() != null, "N133-end-reason-retained", "");
+    check(!ui.hasActive(), "N134-no-longer-active", "a terminal snapshot is not an active call");
+
+    // Re-delivering the same terminal snapshot, which happens on every render pass, must not move
+    // the end time. If it does, the banner can never expire.
+    for (int i = 0; i < 3; i++) {
+      Thread.sleep(15);
+      ui.onSnapshot(ended);
+      eq(ui.terminalAtMs(), Long.valueOf(endedAt), "N135-end-time-not-refreshed-" + i);
+    }
+
+    // Consuming it clears the retention so the banner is shown once.
+    check(ui.takeTerminal() != null, "N136-terminal-consumed", "");
+    eq(ui.terminalAtMs(), 0L, "N137-end-time-cleared");
+    check(ui.getTerminal() == null, "N138-terminal-cleared", "");
+    check(ui.takeTerminal() == null, "N139-terminal-consumed-once", "");
+
+    // A new call invalidates any retained end reason.
+    b.state = CallProtocol.State.OutgoingRinging;
+    ui.onSnapshot(b.snapshot());
+    eq(ui.terminalAtMs(), 0L, "N140-new-call-clears-end-reason");
+    check(ui.hasActive(), "N141-new-call-is-active", "");
   }
 }

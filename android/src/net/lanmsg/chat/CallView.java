@@ -41,12 +41,19 @@ final class CallView {
     if (ui == null) { hide(activity); return; }
 
     CallSession call = ui.getCurrent();
-    if (call == null) {
+    if (call == null || call.state.terminal()) {
       // No live call. If a terminal snapshot is still being shown, keep the overlay up until it
       // expires so the end reason is readable, then take it down.
-      CallSession ended = ui.getTerminal();
-      if (ended != null && System.currentTimeMillis() - lastTerminalAt < TERMINAL_VISIBLE_MS) {
-        buildTerminal(activity, ended);
+      //
+      // The expiry is measured against the timestamp the view-model recorded when the call ended,
+      // NOT a timestamp kept here. A terminal snapshot stays in getCurrent(), so branching on it
+      // and stamping "now" on every render refreshed that stamp once a second and the banner
+      // never went away: it covered the header, and with it the back button, leaving no way out
+      // of the screen.
+      CallSession ended = call != null && call.state.terminal() ? call : ui.getTerminal();
+      long endedAt = ui.terminalAtMs();
+      if (ended != null && endedAt > 0 && System.currentTimeMillis() - endedAt < TERMINAL_VISIBLE_MS) {
+        if (overlay == null || !ended.callId.equals(boundCallId)) buildTerminal(activity, ended);
         return;
       }
       ui.takeTerminal();
@@ -54,13 +61,6 @@ final class CallView {
       return;
     }
 
-    if (call.state.terminal()) {
-      lastTerminalAt = System.currentTimeMillis();
-      buildTerminal(activity, call);
-      return;
-    }
-
-    lastTerminalAt = 0;
     // Rebuild only when the call identity or state changed; otherwise just refresh the clock.
     if (overlay == null || !call.callId.equals(boundCallId) || stateText == null) {
       build(activity, ui, call);
@@ -82,8 +82,6 @@ final class CallView {
       }
     }
   }
-
-  private static long lastTerminalAt;
 
   private static void build(final MainActivity activity, CallUi ui, final CallSession call) {
     detach(activity);
@@ -182,13 +180,18 @@ final class CallView {
     attach(activity, holder);
   }
 
-  /** Terminal snapshot: show the end reason, then take the overlay down. */
+  /** Terminal snapshot: show the end reason, then take the overlay down.
+   *
+   *  Anchored to the bottom of the stage rather than filling it.  As a full-screen panel the end
+   *  reason sat on top of the header, hiding the back button, so a call that ended badly could
+   *  look like a screen with no way out of it.  The holder is still full-size but transparent and
+   *  not clickable, so the header stays visible and tappable underneath. */
   private static void buildTerminal(final MainActivity activity, CallSession call) {
     detach(activity);
     boundCallId = call.callId;
     LinearLayout panel = activity.column();
     panel.setGravity(Gravity.CENTER_HORIZONTAL);
-    panel.setPadding(activity.dp(24), activity.dp(24), activity.dp(24), activity.dp(24));
+    panel.setPadding(activity.dp(24), activity.dp(20), activity.dp(24), activity.dp(20));
     panel.setBackgroundColor(Color.rgb(17, 27, 33));
     TextView label = activity.label(CallUi.stateLabel(call), 22);
     label.setTextColor(Color.WHITE);
@@ -196,7 +199,10 @@ final class CallView {
     label.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     panel.addView(label);
     android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
-    holder.addView(panel, new android.widget.FrameLayout.LayoutParams(-1, -1));
+    android.widget.FrameLayout.LayoutParams atBottom =
+      new android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    atBottom.setMargins(0, 0, 0, activity.dp(24));
+    holder.addView(panel, atBottom);
     attach(activity, holder);
     // The label was just attached; announce it once so the end reason is not silent.
     label.post(() -> announce(activity, CallUi.stateLabel(call)));
@@ -225,7 +231,6 @@ final class CallView {
   static void hide(MainActivity activity) {
     detach(activity);
     boundCallId = null;
-    lastTerminalAt = 0;
   }
 
   /** Drop references to a view tree the Activity has already thrown away.  Called from frame()
@@ -235,7 +240,6 @@ final class CallView {
     overlay = null;
     stateText = null; detailText = null; qualityText = null; routeText = null;
     boundCallId = null;
-    lastTerminalAt = 0;
     lastQualityAnnounceMs = 0;
   }
 
