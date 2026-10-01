@@ -41,6 +41,8 @@ public final class CallCheck {
     testListenerFanOut();
     testAudioRouteRecordedOnSnapshot();
     testUiSnapshotLabels();
+    testInboundFrameAdmissionTable();
+    testCallerAcceptReachesConnecting();
 
     System.out.println("\nCALLCHECK PASS=" + pass + " FAIL=" + fail);
     if (fail > 0) {
@@ -1085,5 +1087,101 @@ public final class CallCheck {
     b.audioRoute = "Speaker";
     b.state = CallProtocol.State.Connected;
     eq(b.snapshot().audioRoute, "Speaker", "N82-route-visible");
+  }
+
+  /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and
+   *  the LOCAL role.  It used to be written from the sender's point of view, which silently
+   *  discarded RINGING, ACCEPT, BUSY and ANSWER on the caller and OFFER on the callee.  A call
+   *  could therefore never progress past ringing: the caller heard nothing back and reported
+   *  "No answer" after 30 s, with no error anywhere. */
+  static void testInboundFrameAdmissionTable() {
+    System.out.println("testInboundFrameAdmissionTable...");
+
+    // Every frame a successful call exchanges, evaluated on the device that receives it.
+    // A null result here means the frame is thrown away and the call stalls.
+    check(CallProtocol.allowedSender(CallProtocol.INVITE, CallProtocol.State.Idle, false) != null,
+      "N90-invite-reaches-idle-callee", "a ringing device must be able to receive an invite");
+    check(CallProtocol.allowedSender(CallProtocol.RINGING, CallProtocol.State.OutgoingRinging, true) != null,
+      "N91-caller-hears-ringing", "caller must accept RINGING while it is ringing out");
+    check(CallProtocol.allowedSender(CallProtocol.ACCEPT, CallProtocol.State.OutgoingRinging, true) != null,
+      "N92-caller-hears-accept", "caller must accept ACCEPT while it is ringing out");
+    check(CallProtocol.allowedSender(CallProtocol.BUSY, CallProtocol.State.OutgoingRinging, true) != null,
+      "N93-caller-hears-busy", "caller must accept BUSY while it is ringing out");
+    check(CallProtocol.allowedSender(CallProtocol.DECLINE, CallProtocol.State.OutgoingRinging, true) != null,
+      "N94-caller-hears-decline", "caller must accept DECLINE while it is ringing out");
+    check(CallProtocol.allowedSender(CallProtocol.OFFER, CallProtocol.State.Connecting, false) != null,
+      "N95-callee-receives-offer", "callee must accept the caller's SDP offer");
+    check(CallProtocol.allowedSender(CallProtocol.ANSWER, CallProtocol.State.Connecting, true) != null,
+      "N96-caller-receives-answer", "caller must accept the callee's SDP answer");
+    check(CallProtocol.allowedSender(CallProtocol.CANCEL, CallProtocol.State.IncomingRinging, false) != null,
+      "N97-callee-hears-cancel", "ringing callee must accept the caller cancelling");
+    check(CallProtocol.allowedSender(CallProtocol.ICE, CallProtocol.State.Connecting, true) != null,
+      "N98-ice-during-connecting", "trickle ICE must be accepted before the call is connected");
+    check(CallProtocol.allowedSender(CallProtocol.MEDIA_READY, CallProtocol.State.Connecting, false) != null,
+      "N99-media-ready-while-connecting", "MEDIA_READY is what promotes Connecting to Connected");
+    check(CallProtocol.allowedSender(CallProtocol.HANGUP, CallProtocol.State.Connected, false) != null,
+      "N100-hangup-while-connected", "a hangup must be honoured mid-call");
+
+    // The mirrored checks must still be refused, so the fix is not just a blanket allow.
+    check(CallProtocol.allowedSender(CallProtocol.OFFER, CallProtocol.State.Connecting, true) == null,
+      "N101-caller-rejects-offer", "a caller must never receive an SDP offer");
+    check(CallProtocol.allowedSender(CallProtocol.ANSWER, CallProtocol.State.Connecting, false) == null,
+      "N102-callee-rejects-answer", "a callee must never receive an SDP answer");
+    check(CallProtocol.allowedSender(CallProtocol.ACCEPT, CallProtocol.State.IncomingRinging, false) == null,
+      "N103-callee-rejects-remote-accept", "only the caller may be told ACCEPT");
+    check(CallProtocol.allowedSender(CallProtocol.INVITE, CallProtocol.State.Connected, true) == null,
+      "N104-no-invite-while-connected", "a device already in a call must not be invited");
+    check(CallProtocol.allowedSender("NOT_A_REAL_TYPE", CallProtocol.State.Connected, true) == null,
+      "N105-unknown-type-refused", "an unknown frame type must be refused");
+    check(CallProtocol.allowedSender(CallProtocol.ICE, CallProtocol.State.OutgoingRinging, true) == null,
+      "N106-no-ice-while-ringing", "ICE before negotiation has started must be refused");
+  }
+
+  /** Regression, end to end through the controller: a ringing caller that receives RINGING then
+   *  ACCEPT must reach Connecting and send its SDP offer.  This is the path that previously died
+   *  inside onFrame's admission check, which is why the user saw "No answer" instead of an error. */
+  static void testCallerAcceptReachesConnecting() throws Exception {
+    System.out.println("testCallerAcceptReachesConnecting...");
+
+    PeerEngine eng = dummyEngine();
+    String peerId = UUID.randomUUID().toString();
+    PeerEngine.Peer peer = new PeerEngine.Peer(peerId, "TestPeer", "10.0.0.1", 43872);
+    peer.fingerprint = "aa:bb:cc:dd";
+    peer.verified = "aa:bb:cc:dd"; // trusted, so startCall is permitted
+    synchronized (eng) { eng.peers.put(peerId, peer); }
+
+    CallSettings settings = new CallSettings(eng.file.getParentFile());
+    settings.setAllowIncoming(true);
+    CallController ctrl = new CallController(eng, settings);
+    ctrl.setMediaFactory(new FakeCallMedia.Factory());
+    ctrl.start();
+
+    final List<byte[]> sent = Collections.synchronizedList(new ArrayList<>());
+    String callId = ctrl.startCall(peerId, callId2 -> sent::add);
+    check(ctrl.snapshot() != null && ctrl.snapshot().isCaller, "N110-outgoing-is-caller", "");
+    eq(ctrl.snapshot().state, CallProtocol.State.OutgoingRinging, "N111-ringing-out");
+
+    // The callee's RINGING must be absorbed without ending the call.
+    ctrl.onFrame(CallSignaling.ringing(callId, 1), peerId);
+    eq(ctrl.snapshot().state, CallProtocol.State.OutgoingRinging, "N112-still-ringing-after-ringing");
+
+    // The callee's ACCEPT must move the caller to Connecting and trigger an SDP offer.
+    ctrl.onFrame(CallSignaling.accept(callId, 2), peerId);
+    eq(ctrl.snapshot().state, CallProtocol.State.Connecting, "N113-accept-reaches-connecting");
+
+    boolean sentOffer = false;
+    for (byte[] w : sent) {
+      CallProtocol.Frame f = CallSignaling.parse(w);
+      if (f != null && CallProtocol.OFFER.equals(f.type)) { sentOffer = true; break; }
+    }
+    check(sentOffer, "N114-offer-sent-after-accept", "caller must send its SDP offer once accepted");
+
+    // A BUSY arriving after the call has left the ringing state must not be misread as a hangup.
+    check(ctrl.hasActive(), "N115-still-active-after-accept", "");
+
+    ctrl.shutdown();
+    eng.close();
+    for (File f : eng.file.getParentFile().listFiles()) f.delete();
+    eng.file.getParentFile().delete();
   }
 }

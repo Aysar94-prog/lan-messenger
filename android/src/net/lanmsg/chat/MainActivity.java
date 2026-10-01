@@ -85,7 +85,33 @@ public class MainActivity extends Activity {
     // touches disk, so it stays off the UI thread. The saved Online request starts the service
     // after the first render; an Offline request binds locally without starting networking.
     new Thread(()->{final boolean offlineValue=PeopleListView.readShowOffline(this);final boolean hideGroupsValue=PeopleListView.readHideGroups(this);final boolean online=getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).getBoolean("default_online",true);ui.post(()->{if(isDestroyed())return;showOffline=offlineValue;hideGroups=hideGroupsValue;showPeople();bindService(new Intent(this,MessengerService.class),serviceConnection,BIND_AUTO_CREATE);if(online)startConnection();});},"lan-ui-preference").start();
-    if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},1);}
+    requestNotificationPermissionOnce();}
+
+  /** Whether this device may post notifications.  False on Android 13+ when POST_NOTIFICATIONS is
+   *  not granted.  Used to refuse calls rather than start one that could never be announced. */
+  boolean canPostNotifications(){
+    if(Build.VERSION.SDK_INT<33)return true;
+    return checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED;
+  }
+
+  /** Ask for notification permission at most once per install.
+   *
+   *  This used to be requested on every launch, and its result was never handled.  That is worse
+   *  than it sounds: once the user has declined, Android rate-limits and then silently auto-denies
+   *  further requests, so the app asked forever, believed the permission was still pending, and
+   *  notifications posted through NotificationManager were discarded with no error.  An incoming
+   *  call therefore arrived, was admitted, and produced complete silence on the receiving device.
+   *
+   *  Now the request is made once.  A denial is remembered and never re-asked, so the app stops
+   *  requesting something the system will not grant; {@link #canPostNotifications} reports the
+   *  real state at the moment it matters. */
+  void requestNotificationPermissionOnce(){
+    if(Build.VERSION.SDK_INT<33||canPostNotifications())return;
+    if(getPreferences(MODE_PRIVATE).getBoolean("notifications_asked",false))return;
+    getPreferences(MODE_PRIVATE).edit().putBoolean("notifications_asked",true).apply();
+    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_REQUEST);
+  }
+
   void startConnection(){try{startForegroundService(new Intent(this,MessengerService.class).setAction("ONLINE"));}catch(Exception e){if(host!=null)host.problem="Could not start. Open the app and try again.";}}
   void setConnection(boolean online){if(online)startConnection();else if(host!=null)host.transition(false);lastSignature="";render();}
   // The header is built by each screen (showPeople/showChat) and inserted at chrome index 0, so a
@@ -331,6 +357,10 @@ public class MainActivity extends Activity {
   // Request code for the call microphone. Separate from VoiceUi's own so a grant cannot be mistaken
   // for a call permission or vice versa; each is checked for its own pending action.
   static final int CALL_MIC_REQUEST=7;
+
+  // Request code for the one-time POST_NOTIFICATIONS request. It was previously hardcoded to 1,
+  // which collided with nothing by accident but was never handled at all.
+  static final int NOTIFICATION_REQUEST=91;
 
   /** Attach the Activity to the service-owned call view-model.  The service already bound it, so
    *  the Activity only adds an observer; rebinding is safe and cannot displace the notification,
@@ -589,6 +619,14 @@ public class MainActivity extends Activity {
    @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);unbindCalls();CallView.forgetOverlay();if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
   @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
     super.onRequestPermissionsResult(requestCode,permissions,results);
+    // Result of the one-time notification request. Nothing is retried: the platform would
+    // auto-deny a repeat, and the refusal is surfaced at call time instead, where it can actually
+    // explain what is wrong and where to fix it.
+    if(requestCode==NOTIFICATION_REQUEST){
+      if(results.length==0||results[0]!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+        ui.post(()->Toast.makeText(this,"Without notification permission this device cannot show an incoming call. You can still call other people.",Toast.LENGTH_LONG).show());
+      return;
+    }
     if(requestCode==VoiceUi.RECORD_AUDIO_REQUEST){
       if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)VoiceUi.startVoiceRecording(this);
       else VoiceUi.permissionDenied(this);
