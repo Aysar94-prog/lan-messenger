@@ -1,0 +1,39 @@
+{
+  "session_id": "20260927-135740-8475f2",
+  "frozen_at_utc": "2026-09-27T14:08:50.5044435Z",
+  "plan_artifact_id": "plan-v001",
+  "plan_content_hash": "sha256:709b4694fee56ee60674ed2c8a35df279a43c231e58faa5b5cb73de3455d036e",
+  "rounds": 1,
+  "findings": [
+    {
+      "Id": "R1-01",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R1-02",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R1-03",
+      "severity": "Minor",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R1-04",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    },
+    {
+      "Id": "R1-05",
+      "severity": "Suggestion",
+      "status": "Closed",
+      "LastDisposition": "BACKLOG"
+    }
+  ]
+}

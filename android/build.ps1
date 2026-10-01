@@ -2,45 +2,44 @@ param(
   [string]$SdkRoot = 'C:\Program Files (x86)\Android\android-sdk',
   [string]$JdkRoot = 'C:\Program Files (x86)\Android\openjdk\jdk-17.0.14',
   [string]$BuildRoot = (Join-Path $PSScriptRoot '..\..\outputs\.build\android'),
-  [switch]$GenerateDevelopmentKey
+  [string]$VersionName = '2.2.6',
+  [int]$VersionCode = 33,
+  [switch]$GenerateDevelopmentKey,
+  [switch]$Arm64Only
 )
+
+# Entry point for a standard LAN Messenger build.
+#
+# The app links the WebRTC native library (io.github.webrtc-sdk:android), so the AAR classes must
+# be on the javac classpath and the .so files must be packaged. All of that lives in
+# build-voice.ps1, which is the single build pipeline; this script is a thin wrapper that keeps
+# the documented build.ps1 entry point and its signing-key contract intact.
+#
+# Use -Arm64Only for a ~6 MB APK instead of ~47 MB when the APK only has to run on arm64 devices.
+
 $ErrorActionPreference = 'Stop'
-$BuildRoot = [IO.Path]::GetFullPath($BuildRoot)
-$keyFile = Join-Path $PSScriptRoot '..\.private\development.keystore'
-if (!(Test-Path -LiteralPath $keyFile) -and !$GenerateDevelopmentKey) {
-  throw 'Existing signing key not found. Restore it to BuildRoot to preserve upgrade compatibility. Use -GenerateDevelopmentKey only for a separate new development installation.'
-}
-$toolsDir = Join-Path $SdkRoot 'build-tools\35.0.0'
-$platformJar = Join-Path $SdkRoot 'platforms\android-34\android.jar'
-$buildId = [Guid]::NewGuid().ToString('N')
-$classesDir = Join-Path $BuildRoot "classes-$buildId"
-$dexDir = Join-Path $BuildRoot "dex-$buildId"
-New-Item -ItemType Directory -Force $BuildRoot,$classesDir,$dexDir | Out-Null
-function Check-Result { if ($LASTEXITCODE -ne 0) { throw "Build command failed with exit code $LASTEXITCODE" } }
-$sourceFiles = Get-ChildItem -LiteralPath "$PSScriptRoot\src\net\lanmsg\chat" -Filter '*.java' | ForEach-Object FullName
-& "$JdkRoot\bin\javac.exe" -J-Xmx256m -encoding UTF-8 -source 8 -target 8 -bootclasspath "$toolsDir\core-lambda-stubs.jar;$platformJar" -d $classesDir $sourceFiles
-Check-Result
-& "$JdkRoot\bin\jar.exe" -J-Xmx128m cf "$BuildRoot\classes.jar" -C $classesDir .
-Check-Result
-& "$JdkRoot\bin\java.exe" -Xms16m -Xmx384m -cp "$toolsDir\lib\d8.jar" com.android.tools.r8.D8 --lib $platformJar --min-api 26 --output $dexDir "$BuildRoot\classes.jar"
-Check-Result
-& "$toolsDir\aapt.exe" package -f -M "$PSScriptRoot\AndroidManifest.xml" -I $platformJar -F "$BuildRoot\unsigned.apk"
-Check-Result
-Push-Location $dexDir
-try { & "$toolsDir\aapt.exe" add "$BuildRoot\unsigned.apk" classes.dex; Check-Result } finally { Pop-Location }
-& "$toolsDir\zipalign.exe" -f 4 "$BuildRoot\unsigned.apk" "$BuildRoot\aligned.apk"
-Check-Result
+
 $keyFile = Join-Path $PSScriptRoot '..\.private\development.keystore'
 if (!(Test-Path -LiteralPath $keyFile)) {
+  if (!$GenerateDevelopmentKey) {
+    throw 'Existing signing key not found. Restore it to .private\development.keystore to preserve upgrade compatibility. Use -GenerateDevelopmentKey only for a separate new development installation.'
+  }
   New-Item -ItemType Directory -Force (Split-Path -Parent $keyFile) | Out-Null
   & "$JdkRoot\bin\keytool.exe" -genkeypair -keystore $keyFile -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=LAN Messenger Development,O=LAN Messenger,C=US'
-  Check-Result
+  if ($LASTEXITCODE -ne 0) { throw "keytool failed with exit code $LASTEXITCODE" }
 }
-$apkFile = Join-Path $PSScriptRoot '..\..\outputs\LanMessenger-2.1.1.apk'
-if (Test-Path -LiteralPath $apkFile) { throw "Output APK already exists; refusing to overwrite: $apkFile" }
-if (Test-Path -LiteralPath "$apkFile.idsig") { throw "Output .idsig already exists; refusing to overwrite: $apkFile.idsig" }
-& "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" sign --ks $keyFile --ks-pass pass:android --key-pass pass:android --out $apkFile "$BuildRoot\aligned.apk"
-Check-Result
-& "$JdkRoot\bin\java.exe" -Xmx128m -jar "$toolsDir\lib\apksigner.jar" verify --verbose $apkFile
-Check-Result
-Write-Output "APK ready: $apkFile"
+
+$voiceBuild = @{
+  SdkRoot     = $SdkRoot
+  JdkRoot     = $JdkRoot
+  BuildRoot   = $BuildRoot
+  VersionName = $VersionName
+  VersionCode = $VersionCode
+  # No suffix: this is the standard artifact name, and build-voice.ps1 refuses to overwrite
+  # an existing file.
+  ApkSuffix   = ''
+}
+if ($Arm64Only) { $voiceBuild.Arm64Only = $true }
+
+& (Join-Path $PSScriptRoot 'build-voice.ps1') @voiceBuild
+if ($LASTEXITCODE -ne 0) { throw "build-voice.ps1 failed with exit code $LASTEXITCODE" }

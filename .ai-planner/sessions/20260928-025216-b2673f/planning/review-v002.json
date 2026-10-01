@@ -1,0 +1,70 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R2-01",
+      "Severity": "Major",
+      "Section": "Phase 3 \u2014 Integration tasks (I10) and Integration testing (IT07)",
+      "Problem": "The Phase 3 dependency graph has a cycle. I10 depends on \u0027I05-I09, IT01-IT07\u0027, and IT07 depends on \u0027I10\u0027. Because I11 depends on I10 and the integration exit gate requires I10 and IT07, neither I10 nor IT07 can ever start if the dependency columns are followed literally. The plan is meant to be handed to another agent through status records, so a dependency-driven agent would deadlock at the end of Phase 3. Only the prose in execution-order step 11 (\u0027Complete I10 and IT07\u0027) suggests they run together.",
+      "RequiredOutcome": "Break the cycle. Either make I10 depend on I05-I09 and IT01-IT06 (with IT07 depending on I10), or state explicitly that IT07 is I10\u0027s own verification task and is executed within it.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-02",
+      "Severity": "Minor",
+      "Section": "A11 / W11 platform status tasks; I11",
+      "Problem": "A11 and W11 update only the platform-local STATUS.md. The PROJECT_STATUS.md comparison is updated only in I11. AGENTS.md says to update the comparison whenever parity or compatibility changes. Completing Phase 1 alone changes parity: Android has Voice Messages and Windows does not, and Windows receives Android voice messages as ordinary WAVs. The comparison would therefore stay stale until Phase 3, which may never be authorized.",
+      "RequiredOutcome": "Have A11 and W11 also update the PROJECT_STATUS.md parity/comparison entry, marked \u0027platform-local only; interoperability not yet verified\u0027. Keep I11 responsible for the protocol and interoperability results.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-03",
+      "Severity": "Minor",
+      "Section": "Phase 1 / Phase 2 tasks vs I10",
+      "Problem": "The rule that PCM code must not import WAV, LM4, attachment, UI, signaling, or video dependencies is enforced only in I10/IT07 (Phase 3). The same applies to the check that runners reject divergent local fixture copies (v007 VT11). A platform phase can close its exit gate with a boundary violation that is found only after both platforms are done.",
+      "RequiredOutcome": "Add the platform-local architecture-boundary and no-local-fixture-copy checks to AT06 and WT06 (or to A10/W10). I10 can keep the cross-platform re-check.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-04",
+      "Severity": "Suggestion",
+      "Section": "Fixed product contract",
+      "Problem": "v007\u0027s \u0027Explicitly deferred\u0027 list is not carried over. Items such as echo cancellation, noise suppression, waveform generation, editing, playback speed, transcription, new codecs, sending partially recorded audio, and NAT/internet relays are now only implied. The roadmap guardrails cover the call and video items but not these Voice Message scope exclusions.",
+      "RequiredOutcome": "Restore a short non-goals list so that separately authorized platform phases do not expand scope differently.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "R1-01",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "Checked against v007. The plan now includes: the PCM-frame property table, golden-vector manifest and fixture set, WAV validation checklist, receiver-state table, 7-step seek procedure, registry rules and entry fields, 10-step durable write order with the three crash outcomes, and all 9 scheduler rules. W05, A05, I01 and I04 now reference content that is defined in the document."
+    },
+    {
+      "FindingId": "R1-02",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "A11 and W11 update android/STATUS.md and windows/STATUS.md at the end of each phase and keep implementation, automated results and acceptance separate. Both phase exit gates require them. I11 is limited to PROTOCOL.md and the comparison. The remaining gap in the comparison is tracked as R2-02 (Minor)."
+    },
+    {
+      "FindingId": "R1-03",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "I05-I09 now depend on both platform exit gates. Those gates include AT/WT suites, manual/device acceptance and A11/W11."
+    },
+    {
+      "FindingId": "R1-04",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "A04 and AT03 include the Offline-transition forced stop. Android manual acceptance adds Offline recording stop and Offline Send/restart/deliver."
+    },
+    {
+      "FindingId": "R1-05",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "I01-I04 are labeled \u0027Phase 3a \u2014 Pre-phase shared contract\u0027 and explicitly run before Phases 1 and 2. Execution-order step 1 matches."
+    },
+    {
+      "FindingId": "R1-06",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The risks table, the CALL01-03 entry gates and the roadmap guardrails, including the camera-permission and live-call-consent boundaries, are restored and match v007."
+    }
+  ],
+  "BlockedReason": null
+}

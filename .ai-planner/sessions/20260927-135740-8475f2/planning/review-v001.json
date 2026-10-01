@@ -1,0 +1,47 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Minor",
+      "Section": "U02 / S02 (Android service while Offline)",
+      "Problem": "The plan keeps MessengerService running as a foreground service while Offline. The manifest declares foregroundServiceType=\u0022connectedDevice\u0022 (targetSdk 34), and the service currently calls startForeground() in onCreate and starts the engine from there. A foreground service with an ongoing notification that does no networking is a poor fit for that service type. It also keeps a permanent notification and background process alive while the user has chosen to disconnect. Today MainActivity.onCreate and several other paths call startConnection() unconditionally (startForegroundService). A persisted Offline preference therefore also needs every one of those call sites gated.",
+      "RequiredOutcome": "State explicitly whether the Offline engine is hosted by the foreground service or in-process without startForeground. Justify the choice against the connectedDevice type. List every startConnection()/startForegroundService call site (MainActivity onCreate, the Refresh button, lines ~362-363) that must respect the persisted Offline preference.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Minor",
+      "Section": "E04 / Android offline local use",
+      "Problem": "Several Android UI paths currently treat engine==null as \u0027offline\u0027. Examples: \u0027Go online to save a new message.\u0027, \u0027Go online and try again.\u0027 in onActivityResult, \u0027Go online first.\u0027 in changeAvatar, and the render() status text \u0027Offline \u00B7 Tap Refresh to go online\u0027. Once the engine stays loaded while offline, these checks no longer mean offline. The code will need to be rewritten to check the new session state instead. The plan does not call out this audit.",
+      "RequiredOutcome": "Add a note or subtask to U02 to audit the MessengerService.engine==null checks and messages in MainActivity. Replace them with checks on the new Online/Offline state where the semantics differ, for example allowing a local avatar change and queued sends while Offline.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "R01 (documentation)",
+      "Problem": "README.md line 93 documents the current behaviour: \u0027Profile \u003E Go offline stops reception\u0027. This will become inaccurate. R01 lists only the three status files.",
+      "RequiredOutcome": "Include the README update, and any HANDOFF note if relevant, in R01.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Suggestion",
+      "Section": "Risks / presence timeout",
+      "Problem": "Both implementations use a 12 s presence window (Peer.Online =\u003E Now-Seen\u003C12000 on Windows; online() on Android). The plan only says \u0027existing timeout\u0027. Stating the concrete value would make the T02 acceptance criterion measurable.",
+      "RequiredOutcome": "Reference the 12 s presence window in T02 and the testing matrix, for example \u0027remote shows Offline within about 12 s plus one announce interval\u0027.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-05",
+      "Severity": "Suggestion",
+      "Section": "Scope / sequencing",
+      "Problem": "The user asked for a simple online/offline toggle that closes the port. The plan is broad: full transfer-interruption semantics, UI automation, rapid-toggle state machine, and cross-platform matrix. This is not wrong, but it risks delaying a usable first increment.",
+      "RequiredOutcome": "Consider marking a minimal first milestone: the session stop/start lifecycle, the port-closure test and the toggle with persistence. D01/T03 transfer refinements could then land as a follow-up without blocking the core toggle.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

@@ -12,3 +12,8 @@ tests/**/obj/
 .private/
 hs_err_pid*.log
 __pycache__/
+# Build scratch. Real release artifacts live outside the repo, in D:\LAN-Messenger\outputs, so
+# nothing under these directories is ever source. tests/.build/ is javac output and AAR expansion
+# (over a thousand files); the repo-local outputs/ held only a stray test log.
+tests/.build/
+outputs/

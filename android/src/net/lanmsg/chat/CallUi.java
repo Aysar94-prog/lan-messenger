@@ -1,0 +1,255 @@
+package net.lanmsg.chat;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+/** UI state helper for call views.  Pure Java — no Android dependency.
+ *  The Activity binds to this for display and actions.
+ *
+ *  Responsibilities:
+ *  - Format call duration, state labels, quality hints
+ *  - Expose "Allow incoming calls" preference
+ *  - Provide action methods for the UI
+ *  - Retain the terminal snapshot so the caller sees "Declined" after the controller has already
+ *    returned to Idle (plan-v006: "Preserve a terminal UI snapshot while returning the controller
+ *    to Idle")
+ *
+ *  The controller is service-owned and never holds an Activity reference.  This class is a
+ *  passive view-model: the Activity binds, reads snapshots, and issues commands.
+ */
+public class CallUi {
+
+  // ── Bound controller and settings ──────────────────────────────
+
+  private CallController controller;
+  private CallSettings settings;
+  private final List<CallController.Callback> observers = new CopyOnWriteArrayList<>();
+
+  // ── Current snapshot ───────────────────────────────────────────
+
+  private volatile CallSession current;
+
+  // The most recent terminal snapshot, kept after the controller drops back to Idle so the end
+  // reason can still be shown.  Cleared when a new call starts, or when the UI consumes it.
+  private volatile CallSession terminal;
+  private volatile long terminalAtMs;
+
+  // ── UI labels (plan-v006 contract wording) ─────────────────────
+
+  /** State label for the caller's UI. */
+  public static String stateLabel(CallSession s) {
+    if (s == null) return "";
+    switch (s.state) {
+      case OutgoingRinging: return "Ringing…";
+      case IncomingRinging: return s.isCaller ? "Ringing…" : "Incoming call";
+      case Connecting:      return "Connecting…";
+      case Connected:       return formatDuration(s.elapsedMs());
+      case Ending:          return endLabel(s.endReason);
+      default:              return "";
+    }
+  }
+
+  /** Subtitle / detail label. */
+  public static String detailLabel(CallSession s) {
+    if (s == null) return "";
+    switch (s.state) {
+      case Connecting:  return "Establishing secure audio…";
+      case Connected:   return s.muted ? "Muted" : "";
+      default:          return "";
+    }
+  }
+
+  /** Quality hint — only shown when Reduced. */
+  public static String qualityHint(CallSession s) {
+    if (s == null || s.quality != CallProtocol.Quality.Reduced) return null;
+    return "Connection quality reduced\nCheck your LAN connection. On Wi-Fi, try moving closer to the router.";
+  }
+
+  /** End reason label. "Declined" for both manual and policy — never discloses preference. */
+  static String endLabel(CallProtocol.EndReason r) {
+    if (r == null) return "Call ended";
+    switch (r) {
+      case DECLINED:       return "Declined";
+      case LOCAL_DECLINE:  return "Declined";
+      case BUSY_REMOTE:    return "Busy";
+      case CANCELED:       return "Canceled";
+      case TIMEOUT_RINGING: return "No answer";
+      case TIMEOUT_MEDIA:   return "Connection failed";
+      case REMOTE_HANGUP:   return "Call ended";
+      case LOCAL_HANGUP:    return "Call ended";
+      case SIGNALING_LOST:  return "Connection lost";
+      case NETWORK_FAILURE: return "Network unavailable";
+      case OFFLINE:         return "You went offline";
+      case MEDIA_ERROR:     return "Audio error";
+      default:              return "Call ended";
+    }
+  }
+
+  /** Duration formatted as MM:SS. */
+  public static String formatDuration(long ms) {
+    long sec = ms / 1000;
+    return String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60);
+  }
+
+  // ── Binding ────────────────────────────────────────────────────
+
+  /** Bind to the service-owned controller and its settings.  The service owns this instance and
+   *  makes it the controller's primary callback, so the terminal snapshot is retained even when no
+   *  Activity is bound. */
+  public void bind(CallController ctrl, CallSettings sets) {
+    this.controller = ctrl;
+    this.settings = sets;
+    if (ctrl != null) this.current = ctrl.snapshot();
+  }
+
+  /** Register a snapshot observer, typically the Activity.  An observer cannot displace the
+   *  primary callback, so binding the UI can never stop the service's call notification. */
+  public void addObserver(CallController.Callback observer) {
+    if (observer == null) return;
+    if (!observers.contains(observer)) observers.add(observer);
+    if (controller != null) controller.addListener(observer);
+  }
+
+  public void removeObserver(CallController.Callback observer) {
+    if (observer == null) return;
+    observers.remove(observer);
+    if (controller != null) controller.removeListener(observer);
+  }
+
+  /** Release the controller and settings.  Only the service calls this, when it shuts down. */
+  public void unbind() {
+    for (CallController.Callback observer : observers) {
+      if (controller != null) controller.removeListener(observer);
+    }
+    observers.clear();
+    controller = null;
+    settings = null;
+    current = null;
+    terminal = null;
+    terminalAtMs = 0;
+  }
+
+  private void onSnapshot(CallSession snap) {
+    this.current = snap;
+    if (snap == null) return;
+    if (snap.state.terminal()) {
+      // Retain the end reason; the controller clears its own session immediately afterwards.
+      this.terminal = snap;
+      this.terminalAtMs = System.currentTimeMillis();
+    } else {
+      // A new call invalidates any previously retained end reason.
+      this.terminal = null;
+      this.terminalAtMs = 0;
+    }
+  }
+
+  /** Attach this instance as the controller's primary callback.  Used by the service, which is
+   *  the single owner of the state stream; the Activity then binds as an extra observer. */
+  public void adoptAsPrimary() {
+    if (controller != null) controller.setCallback(this::onSnapshot);
+  }
+
+  /** Current call snapshot (thread-safe, may be null). */
+  public CallSession getCurrent() { return current; }
+
+  /** The retained terminal snapshot, or null. */
+  public CallSession getTerminal() { return terminal; }
+
+  /** Consume the retained terminal snapshot, so an end banner is shown once. */
+  public CallSession takeTerminal() {
+    CallSession t = terminal;
+    if (t != null) { terminal = null; terminalAtMs = 0; }
+    return t;
+  }
+
+  /** Whether a call is active (ringing, connecting, or connected). */
+  public boolean hasActive() {
+    CallSession s = current;
+    return s != null && !s.state.terminal();
+  }
+
+  /** Whether an incoming call is waiting for a local decision. */
+  public boolean hasIncoming() {
+    CallSession s = current;
+    return s != null && s.state == CallProtocol.State.IncomingRinging;
+  }
+
+  /** Whether an outgoing call is still ringing and can be canceled. */
+  public boolean hasOutgoingRinging() {
+    CallSession s = current;
+    return s != null && s.state == CallProtocol.State.OutgoingRinging;
+  }
+
+  /** Whether a call is established, so in-call controls are meaningful. */
+  public boolean isConnected() {
+    CallSession s = current;
+    return s != null && s.state == CallProtocol.State.Connected;
+  }
+
+  // ── Incoming-call preference ───────────────────────────────────
+
+  public boolean allowIncoming() {
+    return settings != null ? settings.allowIncoming() : true;
+  }
+
+  public String settingsLoadError() {
+    return settings != null ? settings.loadError() : null;
+  }
+
+  /** Change the preference.  Going through the controller is what withdraws a still-ringing
+   *  invitation, so the UI and its notification disappear instead of timing out. */
+  public void setAllowIncoming(boolean value) throws Exception {
+    if (controller != null) { controller.setAllowIncoming(value); return; }
+    if (settings != null) settings.setAllowIncoming(value);
+  }
+
+  // ── Actions (forward to controller) ────────────────────────────
+
+  /** Place a call.  The channel is opened by the service inside the controller's lock, so the
+   *  first signaling frame can never precede its connection. */
+  public void startCall(String peerId, CallController.TransportFactory channel) throws Exception {
+    if (controller == null) throw new java.io.IOException("Calls are not available");
+    controller.startCall(peerId, channel);
+  }
+
+  /** Accept an incoming call.  expectedCallId revalidates a stale notification action. */
+  public void accept(String expectedCallId) throws Exception {
+    if (controller != null && current != null &&
+        current.state == CallProtocol.State.IncomingRinging) {
+      controller.accept(expectedCallId);
+    }
+  }
+
+  /** Decline an incoming call. */
+  public void decline() throws Exception {
+    if (controller != null && current != null) {
+      controller.decline();
+    }
+  }
+
+  /** Cancel an outgoing invitation still ringing. */
+  public void cancel() throws Exception {
+    if (controller != null && current != null) controller.cancel();
+  }
+
+  /** Hang up the current call. */
+  public void hangup() throws Exception {
+    if (controller != null && current != null && !current.state.terminal()) {
+      controller.hangup();
+    }
+  }
+
+  /** Toggle mute. */
+  public void toggleMute() throws Exception {
+    if (controller != null && current != null &&
+        current.state == CallProtocol.State.Connected) {
+      controller.setMute(!controller.isMuted());
+    }
+  }
+
+  /** Whether the current call is muted. */
+  public boolean isMuted() {
+    return controller != null && controller.isMuted();
+  }
+}

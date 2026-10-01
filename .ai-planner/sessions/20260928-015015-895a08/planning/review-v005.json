@@ -1,0 +1,37 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R5-01",
+      "Severity": "Minor",
+      "Section": "Scope and product decisions / Stored voice-message contract (9,600,044-byte ceiling vs VM03 parser)",
+      "Problem": "The plan sets a hard ceiling of exactly 9,600,044 bytes, which is a canonical 44-byte header plus PCM. It also says VM03 validates chunks and trailing data. It does not say whether a marked WAV with extra non-data chunks (for example LIST or fact) or a WAVE_FORMAT_EXTENSIBLE header is rejected outright or accepted when the PCM and duration are within limits. If each platform picks a different rule, a file one platform accepts could be shown as invalid-marked content on the other.",
+      "RequiredOutcome": "In VM01/VM03, state that marked voice content must be canonical: exactly a 44-byte header with fmt then data, no extra chunks, and PCM tag 1. Alternatively, list the exact allowed chunk set and the size ceiling that applies to it. Add a matching VT01 case that runs on both platforms.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R5-02",
+      "Severity": "Minor",
+      "Section": "Retrieval scheduling policy, rules 3 and 5",
+      "Problem": "Two points in the fairness rule are unclear. First, the three-voice/one-image counter does not say whether a voice job resumed after a manual request paused it counts as a new admission. Second, it does not say whether the counter survives restart. Implementations could differ, and VT07\u0027s restart-ordering test would be ambiguous.",
+      "RequiredOutcome": "State whether resumed automatic jobs count toward the 3:1 counter, and whether the counter resets on restart (a reset is acceptable). Mirror both rules in VT07.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R5-03",
+      "Severity": "Suggestion",
+      "Section": "Voice-message task plan VM13 dependencies",
+      "Problem": "VM13 (Windows playback) depends on VM06 (Windows capture), even though playback needs only the shared waveOut safety rules and VM12. This creates an ordering that is not needed, and VM14 on Android has no equivalent dependency.",
+      "RequiredOutcome": "Optionally make the dependency point to a shared Windows winmm wrapper/safety task instead of capture, or add a note on why it is kept.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "U-05",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "plan-v005 addresses every listed item. Receiver states before fetch and after validation are defined in the receiver card state model table. Invalid marked content reuses the internal copy for export without refetch, and clear/expiry covers every state (scope line 22, state table, VM11, gate 4). Manual/voice/image priority and 3:1 fairness are explicit (retrieval scheduling policy, VT07, gate 10). The winmm rules cover callback ownership, serialized control calls, rooted delegates, and idempotent disposal (Windows audio-adapter safety, VM06/VM13, gate 9). Drafts whose conversation is gone or cannot send get global Preview/Delete-only recovery with no retargeting (startup reconciliation, gate 6). Registry policy is concrete: ten entries, only new recording blocked, and a 30-day review notice instead of deletion (registry policy, VT03, gate 7). VM02 depends only on the sample-format part of VM01 (PCM contract text, VM02, VT11). The API 34 foreground-recording acceptance item is present and matches the manifest\u0027s targetSdkVersion 34."
+    }
+  ],
+  "BlockedReason": null
+}

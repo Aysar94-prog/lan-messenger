@@ -1,0 +1,55 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Major",
+      "Section": "Scope bullet \u0027manual Download/Resume fallback\u0027; VM08; VM09; VM10; VT04",
+      "Problem": "In this codebase, the manual Download path (0.8.7\u002B, PROJECT_STATUS.md lines 53-55, PROTOCOL.md lines 122-130) asks the user to pick a destination and streams one receiver copy straight to an external file or SAF URI. It does not produce the internal encrypted LMATCS1 attachment. Only the automatic image scheduler fetches into internal \u0060attachments/*.sec\u0060 storage. The plan says the inline voice player reads only through the encrypted attachment access path, and it also keeps the existing manual Download/Resume as the fallback. Taken literally, a voice note fetched through the manual fallback lands outside the store: the inline card cannot play it, it is not tracked for clear/expiry cleanup, and it cannot be served for group relay. On Android the player would also have to open a user-chosen SAF URI. So the fallback path and the playback path contradict each other.",
+      "RequiredOutcome": "State that a voice note\u0027s Download/Retry/Resume action uses the internal automatic-fetch path (the same internal storage and resume model as auto-photos, with FETCHSTREAM/FETCH resume into \u0060.sec.resume\u0060). It must not use the destination-picker manual download. Offer saving or exporting the WAV to an external location, if wanted, as a separate action from playback. Add acceptance criteria and a VT04 case: after an auto-download fails, pressing Retry produces a playable inline note that clear/expiry deletes and that can serve group relay.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Major",
+      "Section": "VM05; VM06; VM07 (source retention); Fast transfers",
+      "Problem": "The recorder writes a temporary WAV draft, and Delete/cancel/cleanup removes temporary data. The project supports two kinds of sender source: Normal (encrypted snapshot) and Fast (a protected reference to the original file, which must stay unchanged and available; PROTOCOL.md line 131). Serving a FETCH requires complete data or the original source (line 126). The plan never says which kind of source a voice note uses, or when the temp draft may be deleted. If the finalized draft goes through a Fast/original-reference path, or the temp file is deleted or swept at startup before an encrypted copy is durably stored, then queued-offline and group recipients will get UNAVAILABLE and the note can never be fetched. VM07\u0027s acceptance criterion (survives sender restart and Offline/Online) would fail, with no clear owner for the bug.",
+      "RequiredOutcome": "State that Send always imports a finalized voice note into the Normal encrypted attachment store, never a Fast/original-file reference. The temp draft is securely deleted only after the encrypted copy and the message row are durably saved. Startup cleanup must never touch a draft that is referenced by a queued message. Add these as VM07 acceptance criteria and add a VT02/VT04 case: send while Offline, restart the sender, then have the receiver fetch successfully.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "VM03; VM05; VM09 (temporary draft / temporary playback file)",
+      "Problem": "The project encrypts all state and attachments at rest (DPAPI/Keystore, LMATCS1). The plan allows a plaintext Windows WAV draft in an unspecified temporary location, and allows a \u0027controlled temporary playback file\u0027. Either one leaves decrypted microphone audio on disk, for example in %TEMP% after a crash. The largest note is about 9.6 MB (16 kHz x 2 bytes x 300 s), so it fits in memory easily.",
+      "RequiredOutcome": "Put Windows drafts in an app-private data directory, add a startup sweep for orphaned drafts, and prefer bounded in-memory decryption for playback (capped at the voice size ceiling) over a plaintext temp file. Record any plaintext-on-disk window that remains as a known limitation.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Minor",
+      "Section": "VM03; VM09 (Windows audio APIs)",
+      "Problem": "The Windows target is .NET 9 WinForms, which has no built-in capture API and no pausable, seekable WAV playback API. System.Media.SoundPlayer cannot pause or report position. \u0027Supported local Windows APIs\u0027 leaves open a real choice between winmm waveIn/waveOut P/Invoke, WASAPI via COM interop, and a third-party package such as NAudio. That choice affects the dependency policy (\u0027no third-party codec dependency\u0027) and how the adapter is reused for future calls.",
+      "RequiredOutcome": "Name the chosen Windows capture and playback API in VM01/VM03 and say whether a third-party package is allowed. It must support streaming PCM frames, Play/Pause, and position reporting.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-05",
+      "Severity": "Minor",
+      "Section": "VM08; VM13 (auto-download policy)",
+      "Problem": "PROTOCOL.md describes automatic fetch as limited to image offers (by extension allowlist), and says non-images require manual consent. Automatically downloading voice notes changes that documented consent policy. The plan lists changing trust policy as a non-goal, but it never says to document this deliberate exception.",
+      "RequiredOutcome": "In VM13, update PROTOCOL.md to describe the voice-note auto-fetch exception: the marker, the size ceiling, how it shares the existing concurrency cap of two automatic tasks, and restart rescheduling of pending voice offers.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-06",
+      "Severity": "Suggestion",
+      "Section": "Scope: filename marker \u0060voice-\u003Cmessage-id\u003E.lanvoice.wav\u0060",
+      "Problem": "The filename is part of the signed group canonical fields. The message ID is assigned when the note is queued, not when recording starts. The plan does not say when the name is bound.",
+      "RequiredOutcome": "Specify that the marker filename is generated at queue time from the final message ID. Classification must not require the ID in the filename to match the message ID unless both platforms enforce that identically.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

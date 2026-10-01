@@ -1,0 +1,52 @@
+{
+  "Status": "PlanApproved",
+  "Findings": [
+    {
+      "Id": "R2-01",
+      "Severity": "Minor",
+      "Section": "Phase A2 (A04) / Early integrated demonstration (D01)",
+      "Problem": "A04 and D01 run before A06, the step that makes MessengerService own call lifetime. The plan does not say which Android component hosts the production CallController and WebRtcCallMedia during A04/D01. The engine is already service-owned, and MainActivity.onPause currently stops audio. An implementer could wire the controller to the Activity temporarily and then have to rework it in A06, or accidentally tie call lifetime to the Activity.",
+      "RequiredOutcome": "State that A04/D01 host the controller in the existing MessengerService, next to the engine, with the Activity acting only as a foreground UI/permission surface. The only additions in A06 should be the microphone foreground-service type and background-continuation behavior.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-02",
+      "Severity": "Minor",
+      "Section": "Phase A2 (A07) / Deferred Bluetooth",
+      "Problem": "Bluetooth is listed as deferred, but in Android communication mode the platform, and possibly the WebRTC audio device module, may route to a connected Bluetooth headset automatically. The plan does not say what the app does when a Bluetooth route becomes active on its own.",
+      "RequiredOutcome": "In A07, define the behavior when a Bluetooth device is connected: either allow the system route as best-effort and unsupported, or explicitly keep earpiece/speaker. Also include one Bluetooth-connected observation in AT02, so the \u0027not guaranteed\u0027 status does not hide a broken or silent route.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R2-03",
+      "Severity": "Suggestion",
+      "Section": "W00a / W03b",
+      "Problem": "LanMessenger.csproj currently has no RuntimeIdentifier or PlatformTarget (AnyCPU, net9.0-windows). Adding a native bridge forces a per-architecture build/publish. The Shiguredo prebuilt also targets x64/ARM64 only, which may drop any existing x86 Windows users.",
+      "RequiredOutcome": "Record the AnyCPU-to-RID transition explicitly in W03b, and make the W00a architecture inventory decide x86 support before the dependency is frozen at B02.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [
+    {
+      "FindingId": "R1-01",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "A03b (production javac classpath, D8 inputs, multi-DEX, lib/\u003Cabi\u003E/*.so, AAR resources) and AT01b now exist. A04 explicitly depends on A03b and AT01b, with the note \u0027must finish before A04\u0027. The Windows equivalent is handled the same way: W03b and WT01b are prerequisites of W04. A11 and W10 are now release audits only."
+    },
+    {
+      "FindingId": "R1-02",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The B01 shortlist names two Android candidates (webrtc-sdk/android, upstream self-build) and three Windows candidates (Shiguredo prebuilt plus C ABI bridge, upstream self-build plus bridge, SIPSorcery). For each it gives capabilities and gaps (AEC, Opus, DTLS-SRTP, codec omissions) and effort estimates. The self-build is flagged as a multi-day infrastructure task, and selection stays at the B02 gate."
+    },
+    {
+      "FindingId": "R1-03",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The Android native packaging policy sets the ABI set, explicit extractNativeLibs=true with compressed entries, separate ZIP and ELF alignment checks, 16 KiB evidence, and APK/installed size reporting. It requires API 26 and newest-device fresh/upgrade validation, implemented in A03b and audited in A11."
+    },
+    {
+      "FindingId": "R1-04",
+      "Verdict": "VerifiedClosed",
+      "Rationale": "The early D01 Android\u2013Windows demonstration has been added. The MVP gates are now separated from the BH01 hardening targets (30-minute soak, 100 cycles, external latency measurement, impairment profile), and BH01 is explicitly not a dependency of A12 or W10. Security and lifecycle correctness still gate release."
+    }
+  ],
+  "BlockedReason": null
+}

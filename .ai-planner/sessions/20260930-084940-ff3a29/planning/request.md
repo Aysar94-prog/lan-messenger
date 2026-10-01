@@ -1,0 +1,1 @@
+we r succesfully done the voice message feature . now the next step is a simple voice call and must be able to develope to video call . read the code and give me full plan for both android and pc . must me detailed plan and  two major sections android and windows .and for each devide the implementation to phases to easly implement 

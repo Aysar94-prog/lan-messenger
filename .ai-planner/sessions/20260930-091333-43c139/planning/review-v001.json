@@ -1,0 +1,39 @@
+{
+  "Status": "ChangesRequired",
+  "Findings": [
+    {
+      "Id": "R1-01",
+      "Severity": "Major",
+      "Section": "Android Phase A2 (A04) vs Phase A4 (A11); task dependency graph",
+      "Problem": "The Android build integration for WebRTC is scheduled too late. A11 (extend build.ps1 for pinned Java/JNI artifacts and native ABI libraries) sits in Phase A4 and depends only on B02. A04 (\u0027Implement native peer connection, Opus track...\u0027, acceptance \u0027Two-way physical audio\u0027) is in Phase A2 and depends only on A00 and A03. android/build.ps1:20 compiles every *.java file in src/net/lanmsg/chat using a -bootclasspath of only core-lambda-stubs.jar and android.jar (line 21). It adds only classes.dex to the APK (line 30), with no lib/\u003Cabi\u003E/*.so. Once WebRtcCallMedia.java, which imports org.webrtc, is added to that directory in A04, the whole APK build breaks. Even with an ad-hoc classpath fix, the APK would contain no libjingle_peerconnection_so, so A04\u0027s on-device acceptance cannot run. Following the stated order (A1 \u2192 A2 \u2192 A3 \u2192 A4) therefore fails at A04. The A00 spike does not fix this, because it is a feasibility prototype and not the production build.",
+      "RequiredOutcome": "Move the build/classpath/native-library packaging part of A11 ahead of A04 (e.g. a new A03b \u0027build.ps1 WebRTC integration\u0027 task that depends on B03/B02) and make A04 depend on it. Keep A11/A12 in Phase A4 only for the release-side work: licenses, ABI validation on all declared devices, versioned output name and signing. Alternatively, state explicitly that the WebRtcCallMedia sources stay outside the compiled glob until A11 lands, and move A04\u0027s physical-audio acceptance after A11. Apply the same explicit ordering on Windows: the LanMessenger.csproj native reference or package plus native DLL copy/load must exist before W04. Currently W00a only \u0027defines\u0027 distribution, and W10 does the packaging.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-02",
+      "Severity": "Minor",
+      "Section": "Architecture decision / B01, W00",
+      "Problem": "The plan names no candidate dependencies at all, and deliberately leaves the selection to B01/B02. On Android, Google\u0027s org.webrtc Maven artifact is no longer published, so a community prebuilt or a self-build is needed. On Windows, the realistic options differ a lot in effort and in what they provide, e.g. building libwebrtc from source behind a C ABI bridge, versus a managed stack. With no candidates named, a handoff agent may start W00 without a concrete shortlist and underestimate the effort. The largest option (building libwebrtc for Windows with depot_tools) is a multi-day infrastructure task that is not called out.",
+      "RequiredOutcome": "In B01, list 2\u20133 concrete candidates per platform. For each, give the expected build/packaging effort and what it does or does not provide (AEC, Opus, DTLS-SRTP), so the feasibility spike has a defined shortlist. Keep the final selection at the B02 gate.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-03",
+      "Severity": "Minor",
+      "Section": "Android Phase A4 (A11) / release",
+      "Problem": "The plan does not mention the APK size or per-ABI impact of bundling WebRTC native libraries (typically several MB per ABI). It also does not address how aapt-added .so files interact with extractNativeLibs and compression under the current raw aapt/zipalign -f 4 pipeline. Both affect upgrade installs on existing user devices.",
+      "RequiredOutcome": "Add an explicit A11 note that sets the ABI set, records the APK size delta, and chooses the extractNativeLibs/compression/alignment policy, verified on the lowest supported API (26) and the newest tested device.",
+      "BlocksApproval": false
+    },
+    {
+      "Id": "R1-04",
+      "Severity": "Suggestion",
+      "Section": "Overall scope / Required test matrix",
+      "Problem": "The user asked for a \u0027simple voice call\u0027. The plan\u0027s first-release gate includes a 30-minute soak per pairing, 100-cycle automation, externally measured mouth-to-ear latency, and a network impairment profile. These are reasonable, but they make the MVP heavy and could delay a first usable build.",
+      "RequiredOutcome": "Consider marking which acceptance targets are MVP release gates and which are hardening targets, so a minimal working A\u2194W call can be demonstrated earlier.",
+      "BlocksApproval": false
+    }
+  ],
+  "Verifications": [],
+  "BlockedReason": null
+}

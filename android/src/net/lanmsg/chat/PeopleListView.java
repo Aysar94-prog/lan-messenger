@@ -31,6 +31,32 @@ final class PeopleListView {
     // setChecked runs before the listener is attached, so building the menu never reports a change.
     Switch offlineToggle=new Switch(activity);offlineToggle.setText("Show offline users");offlineToggle.setTextSize(16);offlineToggle.setPadding(0,activity.dp(12),0,0);offlineToggle.setChecked(activity.showOffline);offlineToggle.setOnCheckedChangeListener((view,checked)->setShowOffline(activity,checked));panel.addView(offlineToggle,new LinearLayout.LayoutParams(-1,-2));
     Switch groupsToggle=new Switch(activity);groupsToggle.setText("Hide groups");groupsToggle.setTextSize(16);groupsToggle.setPadding(0,activity.dp(12),0,0);groupsToggle.setChecked(activity.hideGroups);groupsToggle.setOnCheckedChangeListener((view,checked)->setHideGroups(activity,checked));panel.addView(groupsToggle,new LinearLayout.LayoutParams(-1,-2));
+    panel.addView(activity.label("Calls",19));
+    // A08: the incoming-call preference. It lives in the service (persisted in the app's files
+    // directory), not in this menu's SharedPreferences, because the service must be able to read it
+    // with no Activity running. The menu is rebuilt on every open, so the switch always shows the
+    // value the service actually holds, including a value that survived a restart or was loaded
+    // from a corrupt file.
+    MessengerService service=activity.host;
+    if(service==null){
+      TextView callsUnavailable=activity.label("Calls are still starting. Open the app again in a moment to change this.",14);
+      callsUnavailable.setTextColor(Color.rgb(112,128,144));panel.addView(callsUnavailable);
+    } else {
+      Switch incomingCalls=new Switch(activity);incomingCalls.setText("Allow incoming calls");incomingCalls.setTextSize(16);incomingCalls.setPadding(0,activity.dp(12),0,0);
+      incomingCalls.setChecked(service.allowIncomingCalls());
+      incomingCalls.setContentDescription("Allow incoming calls");
+      // setChecked runs before the listener is attached, so building the menu never reports a change.
+      incomingCalls.setOnCheckedChangeListener((view,checked)->activity.setAllowIncomingCalls(checked));
+      panel.addView(incomingCalls,new LinearLayout.LayoutParams(-1,-2));
+      // A corrupt or unreadable settings file disables admission and says so. The message names
+      // the recoverable action, because the user cannot tell a refused call from an off switch.
+      String settingsError=service.callSettingsError();
+      if(settingsError!=null&&!settingsError.isEmpty()){
+        TextView errorLine=activity.label(settingsError+"\nIncoming calls stay off until you turn this back on.",13);
+        errorLine.setTextColor(Color.rgb(211,47,47));panel.addView(errorLine);
+      }
+      panel.addView(activity.label("Turning this off does not stop you calling others. A call that is already ringing is declined and its notification is withdrawn.",13));
+    }
     Button deleteDataItem=menuItem(activity,"Delete app data");deleteDataItem.setTextColor(Color.rgb(211,47,47));deleteDataItem.setOnClickListener(v->{closeMenu(activity);activity.confirmDeleteAllData();});panel.addView(deleteDataItem);
     panel.addView(activity.label("Hiding a row only removes it from this list. The contact or group, its chats, its unread count and any queued message stay on this device.",13));
     activity.stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));activity.menuOverlay=overlay;activity.menuOpen=true;}

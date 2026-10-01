@@ -33,18 +33,33 @@ final class VoiceUi {
 
   static void startVoiceRecording(MainActivity activity) {
     if (activity.selected == null || activity.recordingDraftId != null) return;
+    // A05: an active voice call owns the microphone, so recording cannot start. Voice playback
+    // yields first (claimRecording interrupts it) because capture is the stronger claim.
+    AudioOwnership owner = AudioOwnership.of(activity.host);
+    if (owner != null && !owner.canStartRecording()) {
+      Toast.makeText(activity, "Finish the call before recording a voice message.", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    if (owner != null) {
+      if (activity.activePlayer != null) VoicePlayback.stopActivePlayer(activity);
+      if (!owner.claimRecording()) {
+        Toast.makeText(activity, "Finish the call before recording a voice message.", Toast.LENGTH_SHORT).show();
+        return;
+      }
+    }
     if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
       activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO_REQUEST);
+      if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_RECORDING);
       return;
     }
     PeerEngine e = activity.engine(); if (e == null) return;
     String target = activity.selected; boolean isGroup = false;
     for (PeerEngine.Group g : e.groups()) if (g.id.equals(target)) isGroup = true;
     String draftId;
-    try { draftId = e.createVoiceDraft(target, isGroup); } catch (Exception ex) { activity.problem(ex); return; }
+    try { draftId = e.createVoiceDraft(target, isGroup); } catch (Exception ex) { if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_RECORDING); activity.problem(ex); return; }
     VoiceDraftWriter writer;
     try { writer = e.openVoiceDraftWriter(draftId); }
-    catch (Exception ex) { try { e.deleteVoiceDraft(draftId); } catch (Exception ignored) {} activity.problem(ex); return; }
+    catch (Exception ex) { if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_RECORDING); try { e.deleteVoiceDraft(draftId); } catch (Exception ignored) {} activity.problem(ex); return; }
     VoiceRecorder recorder = new VoiceRecorder();
     activity.recordingDraftId = draftId; activity.recordingConversation = target;
     activity.activeWriter = writer; activity.activeRecorder = recorder;
@@ -54,6 +69,9 @@ final class VoiceUi {
     try { recorder.start(); }
     catch (Exception ex) {
       activity.recordingDraftId = null; activity.recordingConversation = null; activity.activeWriter = null; activity.activeRecorder = null;
+      // A05: the capture device never started, so the claim is released immediately. A failed
+      // release is not possible here -- there is nothing to release beyond the claim itself.
+      if (owner != null) owner.releaseIf(AudioOwnership.Owner.VOICE_RECORDING);
       try { writer.abort(); } catch (Exception ignored) {}
       try { e.deleteVoiceDraft(draftId); } catch (Exception ignored) {}
       activity.problem(ex); return;
@@ -80,6 +98,12 @@ final class VoiceUi {
     String draftId = activity.recordingDraftId; VoiceRecorder recorder = activity.activeRecorder; VoiceDraftWriter writer = activity.activeWriter;
     activity.recordingDraftId = null; activity.recordingConversation = null; activity.activeRecorder = null; activity.activeWriter = null;
     PeerEngine e = activity.engine();
+    // A05: the ownership claim is deliberately NOT released on entry to this thread. The capture
+    // device stays claimed until recorder.stop() has actually returned, because a competing
+    // capture that starts in that window would fight VoiceRecorder for AudioRecord. The claim is
+    // released at the end of this thread, and only on the success path -- a failed release leaves
+    // the claim held (blocked) rather than handing a device we could not release to someone else.
+    final AudioOwnership owner = AudioOwnership.of(activity.host);
     new Thread(() -> {
       Exception failure = null;
       try {
@@ -107,6 +131,10 @@ final class VoiceUi {
         try { if (recorder != null) recorder.dispose(); } catch (Exception ignored) {}
         if (e != null) e.invalidateVoiceDraft(draftId);
       }
+      // A05: reached only after the capture device is really gone. On the failure path the claim
+      // stays held so no competing capture races a device we could not release; the draft is
+      // invalidated above either way, so nothing user-visible is lost.
+      if (owner != null && failure == null) owner.releaseIf(AudioOwnership.Owner.VOICE_RECORDING);
       final Exception finalFailure = failure;
       activity.ui.post(() -> {
         activity.recordingStopping = false;
