@@ -115,7 +115,13 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
 
   /** Route one inbound frame into the controller. */
   private void dispatch(CallProtocol.Frame frame) {
-    if (frame.type == CallProtocol.INVITE && callId == null) {
+    // Compare the type by value.  CallSignaling.parse builds frame.type as a substring of the
+    // received JSON, so it is never the same object as the CallProtocol constant even though the
+    // two are equal.  Using == here meant the opening INVITE was never recognised: it fell
+    // through to controller.onFrame, which returns immediately because no session exists yet, so
+    // every incoming call was discarded before it could ring.  The caller then waited out the
+    // 30 s ringing timeout and reported "No answer", and the callee showed nothing at all.
+    if (CallProtocol.INVITE.equals(frame.type) && callId == null) {
       // The opening INVITE.  onInvite answers a rejection on this same channel (DECLINE or BUSY)
       // and returns the accepted session, or null when the invitation was refused.
       try {
