@@ -76,6 +76,15 @@ public class MainActivity extends Activity {
   LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
   Button button(String text){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(accent);return b;}
   GradientDrawable circleBg(int c,int diameterDp){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(diameterDp)/2f);return d;}
+  /** A round control carrying one glyph, used for the in-call toggles and for the list's call
+   *  control.
+   *
+   *  <p>Where the glyph is a toggle, the on/off state is carried three ways at once -- the glyph
+   *  changes, the fill changes from translucent to solid, and the accessibility label spells out
+   *  which is in force -- because a single toggle whose state only lives in its icon is
+   *  indistinguishable from one that does nothing when pressed. */
+  Button dotButton(String glyph,String description,boolean on){return dotButton(glyph,description,on,56);}
+  Button dotButton(String glyph,String description,boolean on,int diameterDp){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(diameterDp>=56?24:20);b.setPadding(0,0,0,0);b.setGravity(android.view.Gravity.CENTER);b.setContentDescription(description);b.setBackground(circleBg(on?accent:Color.argb(70,255,255,255),diameterDp));b.setTextColor(on?Color.WHITE:Color.rgb(214,224,232));return b;}
   TextView circle(String letter,int color,int diameterDp,int textSize){TextView t=new TextView(this);t.setText(letter);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(textSize);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(color,diameterDp));return t;}
   EditText input(String hint,int max){EditText e=new EditText(this);e.setHint(hint);e.setTextSize(17);e.setSingleLine(true);e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});return e;}
   GradientDrawable bg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(12));return d;}
@@ -251,7 +260,7 @@ public class MainActivity extends Activity {
       }
       for(Object[] c:convos){
         if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members"+(e.pendingOwnershipHandoff(g.id)?" · Leaving…":""));contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(g.id,g.name,true);return true;});}
-         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+("Online".equals(host.state)&&p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
+         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+("Online".equals(host.state)&&p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial),callButtonFor(p));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
       }
       return;
     }
@@ -396,6 +405,17 @@ public class MainActivity extends Activity {
 
   /** Place a call to a peer.  The microphone permission is obtained before inviting, and no
    *  capture starts until the peer accepts. */
+  /** The one-tap call control for a list row.
+   *
+   *  <p>Built here rather than in the row itself so the peer is captured as a final local: the row
+   *  is rebuilt on every render, and a listener closing over the loop variable would later act on
+   *  whichever peer happened to be last. */
+  Button callButtonFor(final PeerEngine.Peer p){
+    Button b=dotButton("📞","Call "+p.name,true,44);
+    b.setOnClickListener(v->startCallTo(p.id));
+    return b;
+  }
+
   void startCallTo(String peerId){
     if(peerId==null)return;
     if(host==null||"Online".equals(host.state)==false){Toast.makeText(this,"Go online to call.",Toast.LENGTH_SHORT).show();return;}
@@ -591,7 +611,7 @@ public class MainActivity extends Activity {
   // Back closes an open side menu first; then an open call overlay (falling back to the return-to-call
   // bar rather than ending the call, so Back never hangs up by accident); only then existing navigation.
   @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}
-    if(CallView.isShowing()&&callUi!=null&&callUi.hasActive()){CallView.hide(this);renderCallBar();lastSignature="";render();return;}
+    if(CallView.isShowing()&&callUi!=null){if(callUi.hasActive()){CallView.hide(this);}else{CallView.dismiss(this,callUi);}renderCallBar();lastSignature="";render();return;}
     if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;bindCalls();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
 

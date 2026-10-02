@@ -84,9 +84,17 @@ final class PeopleListView {
   static TextView badge(MainActivity activity,int count){TextView t=new TextView(activity);t.setText(count>99?"99+":String.valueOf(count));t.setTextColor(Color.WHITE);t.setTextSize(11);t.setTypeface(null,Typeface.BOLD);t.setGravity(android.view.Gravity.CENTER);t.setBackground(activity.circleBg(activity.accent,26));return t;}
   static void addContactRow(MainActivity activity,Button contact,int unread,String initial,int avatarColor){addContactRow(activity,contact,unread,activity.circle(initial,avatarColor,40,15));}
   // A contact's real photo, once received (see peerAvatarView) — otherwise the colored-initial circle.
-  static void addContactRow(MainActivity activity,Button contact,int unread,View avatarView){LinearLayout row=new LinearLayout(activity);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,activity.dp(2),0,activity.dp(2));
+  static void addContactRow(MainActivity activity,Button contact,int unread,View avatarView){addContactRow(activity,contact,unread,avatarView,null);}
+  /** A contact row carrying an optional trailing control, which is the one-tap call button.
+   *
+   *  <p>Calling was reachable only through the conversation's overflow menu, two taps in from the
+   *  list, so the list did not offer the thing the list is for.  The control is always shown and
+   *  always tappable even for a device that is offline: it then explains why, which is more use
+   *  than a control that is silently dead. */
+  static void addContactRow(MainActivity activity,Button contact,int unread,View avatarView,View trailing){LinearLayout row=new LinearLayout(activity);row.setOrientation(LinearLayout.HORIZONTAL);row.setGravity(android.view.Gravity.CENTER_VERTICAL);row.setPadding(0,activity.dp(2),0,activity.dp(2));
     LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(activity.dp(40),activity.dp(40));avatarParams.setMargins(activity.dp(6),0,activity.dp(8),0);row.addView(avatarView,avatarParams);
     row.addView(contact,new LinearLayout.LayoutParams(0,-2,1));
+    if(trailing!=null){LinearLayout.LayoutParams trailParams=new LinearLayout.LayoutParams(activity.dp(44),activity.dp(44));trailParams.setMargins(activity.dp(8),0,activity.dp(4),0);row.addView(trailing,trailParams);}
     if(unread>0){LinearLayout.LayoutParams badgeParams=new LinearLayout.LayoutParams(activity.dp(26),activity.dp(26));badgeParams.setMargins(activity.dp(8),0,activity.dp(6),0);row.addView(badge(activity,unread),badgeParams);}
     activity.body.addView(row,new LinearLayout.LayoutParams(-1,-2));}
   static View peerAvatarView(MainActivity activity,PeerEngine e,PeerEngine.Peer p,String initial){

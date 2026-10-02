@@ -23,9 +23,6 @@ final class CallView {
 
   private CallView() {}
 
-  // How long a terminal result stays on screen before the overlay goes away.
-  private static final long TERMINAL_VISIBLE_MS = 2500;
-
   /** Overlay views currently attached, so render() can find the one to update. */
   private static View overlay;
   private static TextView stateText, detailText, qualityText, routeText;
@@ -42,6 +39,24 @@ final class CallView {
    *  call was answered, where tapping them did nothing because the state had already moved on, and
    *  meant the in-call controls never appeared at all. */
   private static CallProtocol.State boundState;
+
+  /** Mute and audio route as last built.
+   *
+   *  <p>The round in-call toggles draw their glyph from these two values, so flipping either one
+   *  has to rebuild the overlay: without it the control kept showing the state it was built with,
+   *  which looked exactly like a toggle that does nothing. */
+  private static boolean boundMuted;
+  private static String boundRoute;
+
+  /** Null-safe string equality, so an unknown route and a known one compare as different. */
+  private static boolean sameRoute(String a, String b) { return a == null ? b == null : a.equals(b); }
+
+  /** Layout params for one round in-call toggle: a fixed circle, spaced evenly in its row. */
+  private static LinearLayout.LayoutParams dot(MainActivity activity) {
+    LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(activity.dp(56), activity.dp(56));
+    p.setMargins(activity.dp(14), 0, activity.dp(14), 0);
+    return p;
+  }
 
   /** When true the call overlay is collapsed to a compact bar at the foot of the stage.
    *
@@ -60,25 +75,24 @@ final class CallView {
 
     CallSession call = ui.getCurrent();
     if (call == null || call.state.terminal()) {
-      // No live call. If a terminal snapshot is still being shown, keep the overlay up until it
-      // expires so the end reason is readable, then take it down.
+      // No live call. If a terminal snapshot is still being shown, keep the overlay up so the end
+      // reason stays readable.
       //
-      // The expiry is measured against the timestamp the view-model recorded when the call ended,
-      // NOT a timestamp kept here. A terminal snapshot stays in getCurrent(), so branching on it
-      // and stamping "now" on every render refreshed that stamp once a second and the banner
-      // never went away: it covered the header, and with it the back button, leaving no way out
-      // of the screen.
+      // The end reason is the entire point of this banner. "Declined", "Busy" and "No answer" are
+      // the only thing the caller is told about how their attempt ended, and expiring the banner
+      // after a couple of seconds left the caller staring at a closed popup with no idea whether
+      // the other device was busy, ignored them, or never heard the phone. It now stays until it
+      // is dismissed, which is safe because it is bottom-anchored -- the header and the back
+      // button stay visible -- and it carries its own Close control.
       CallSession ended = call != null && call.state.terminal() ? call : ui.getTerminal();
-      long endedAt = ui.terminalAtMs();
-      if (ended != null && endedAt > 0 && System.currentTimeMillis() - endedAt < TERMINAL_VISIBLE_MS) {
-        // A collapsed bar has nowhere to show why the call ended, so the banner always replaces it.
-        // boundCallId is cleared as well, because the bar is still bound to this call ID and would
-        // otherwise satisfy the identity test below and leave the bar standing.
+      if (ended != null) {
+        // A collapsed bar has nowhere to show why the call ended, so the banner always replaces
+        // it. boundCallId is cleared as well, because the bar is still bound to this call ID and
+        // would otherwise satisfy the identity test below and leave the bar standing.
         if (collapsed) { collapsed = false; boundCallId = null; }
-        if (overlay == null || !ended.callId.equals(boundCallId)) buildTerminal(activity, ended);
+        if (overlay == null || !ended.callId.equals(boundCallId)) buildTerminal(activity, ended, ui);
         return;
       }
-      ui.takeTerminal();
       hide(activity);
       return;
     }
@@ -99,6 +113,7 @@ final class CallView {
     // Rebuild whenever the call identity OR the state changed: the controls on this overlay are
     // state-specific, so keeping the old ones would leave dead buttons on screen.
     if (overlay == null || !call.callId.equals(boundCallId) || call.state != boundState
+        || call.muted != boundMuted || !sameRoute(call.audioRoute, boundRoute)
         || stateText == null) {
       build(activity, ui, call);
       return;
@@ -124,6 +139,8 @@ final class CallView {
     detach(activity);
     boundCallId = call.callId;
     boundState = call.state;
+    boundMuted = call.muted;
+    boundRoute = call.audioRoute;
 
     LinearLayout panel = activity.column();
     panel.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -192,20 +209,28 @@ final class CallView {
     } else {
       LinearLayout row = new LinearLayout(activity);
       row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setGravity(Gravity.CENTER);
       // Mute and Speaker appear from the moment the call is answered, not only once it is fully
       // connected. Waiting for Connected left the user with no way to silence themselves during a
       // negotiation that can take seconds, and a stalled negotiation never reaches Connected at
       // all, so the controls were simply absent for the whole time they were most wanted.
       if (call.state.active()) {
-        Button mute = activity.button(call.muted ? "Unmute" : "Mute");
-        mute.setContentDescription(call.muted ? "Unmute microphone" : "Mute microphone");
+        // Round glyph controls that show which way each toggle currently stands, the way a caller
+        // expects from a phone call: two labelled words ("Mute", "Speaker") looked like actions to
+        // perform rather than states to switch, and nothing on screen said which of the two the
+        // audio was actually using.
+        boolean speakerOn = "Speaker".equals(call.audioRoute);
+        Button mute = activity.dotButton(call.muted ? "🔇" : "🎤",
+          call.muted ? "Microphone muted. Switch the microphone back on"
+                     : "Microphone on. Mute the microphone", call.muted);
         mute.setOnClickListener(v -> activity.runCallAction(ui::toggleMute, "Could not change the microphone."));
-        row.addView(mute, new LinearLayout.LayoutParams(0, activity.dp(56), 1));
+        row.addView(mute, dot(activity));
 
-        Button route = activity.button("Speaker");
-        route.setContentDescription("Switch audio to the speaker");
+        Button route = activity.dotButton(speakerOn ? "🔊" : "🔈",
+          speakerOn ? "Speaker on. Switch audio to the earpiece"
+                    : "Speaker off. Switch audio to the speaker", speakerOn);
         route.setOnClickListener(v -> activity.toggleSpeakerphone(call));
-        row.addView(route, new LinearLayout.LayoutParams(0, activity.dp(56), 1));
+        row.addView(route, dot(activity));
       }
       panel.addView(row);
 
@@ -236,7 +261,8 @@ final class CallView {
    *  reason sat on top of the header, hiding the back button, so a call that ended badly could
    *  look like a screen with no way out of it.  The holder is still full-size but transparent and
    *  not clickable, so the header stays visible and tappable underneath. */
-  private static void buildTerminal(final MainActivity activity, CallSession call) {
+  private static void buildTerminal(final MainActivity activity, final CallSession call,
+                                    final CallUi ui) {
     detach(activity);
     boundCallId = call.callId;
     boundState = call.state;
@@ -249,6 +275,12 @@ final class CallView {
     label.setGravity(Gravity.CENTER);
     label.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
     panel.addView(label);
+
+    Button close = activity.button("Close");
+    close.setContentDescription("Dismiss this message");
+    close.setOnClickListener(v -> dismiss(activity, ui));
+    panel.addView(close, new LinearLayout.LayoutParams(-1, activity.dp(48)));
+
     android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
     android.widget.FrameLayout.LayoutParams atBottom =
       new android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
@@ -257,6 +289,12 @@ final class CallView {
     attach(activity, holder);
     // The label was just attached; announce it once so the end reason is not silent.
     label.post(() -> announce(activity, CallUi.stateLabel(call)));
+  }
+
+  /** Drop the end-reason banner and the retained snapshot behind it. */
+  static void dismiss(MainActivity activity, CallUi ui) {
+    if (ui != null) ui.takeTerminal();
+    hide(activity);
   }
 
   /** The collapsed call: a compact bar pinned to the foot of the stage.
@@ -268,6 +306,8 @@ final class CallView {
     detach(activity);
     boundCallId = call.callId;
     boundState = call.state;
+    boundMuted = call.muted;
+    boundRoute = call.audioRoute;
 
     String peerName = activity.host == null ? call.peerId : activity.host.callPeerName(call.peerId);
 
@@ -338,6 +378,8 @@ final class CallView {
     detach(activity);
     boundCallId = null;
     boundState = null;
+    boundMuted = false;
+    boundRoute = null;
     collapsed = false;
   }
 
@@ -349,6 +391,8 @@ final class CallView {
     stateText = null; detailText = null; qualityText = null; routeText = null;
     boundCallId = null;
     boundState = null;
+    boundMuted = false;
+    boundRoute = null;
     lastQualityAnnounceMs = 0;
     collapsed = false;
   }

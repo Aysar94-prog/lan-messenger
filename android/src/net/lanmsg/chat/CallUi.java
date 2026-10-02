@@ -55,7 +55,15 @@ public class CallUi {
     if (s == null) return "";
     switch (s.state) {
       case Connecting:  return "Establishing secure audio…";
-      case Connected:   return s.muted ? "Muted" : "";
+      case Connected: {
+        // Mute and the speaker route are two independent toggles and both are worth naming in
+        // words: a glyph alone is not readable by everyone, and the collapsed bar carries no
+        // control of its own for the user to read a glyph off.
+        StringBuilder detail = new StringBuilder();
+        if (s.muted) detail.append("Muted");
+        if ("Speaker".equals(s.audioRoute)) detail.append(detail.length() > 0 ? " · Speaker" : "Speaker");
+        return detail.toString();
+      }
       default:          return "";
     }
   }
@@ -176,10 +184,18 @@ public class CallUi {
    *  overlay stayed on screen indefinitely, covering the header and its back button. */
   public long terminalAtMs() { return terminal == null ? 0 : terminalAtMs; }
 
-  /** Consume the retained terminal snapshot, so an end banner is shown once. */
+  /** Consume the retained terminal snapshot, so an end banner is shown once.
+   *
+   *  <p>The terminal snapshot still sitting in {@code current} is dropped too.  The controller
+   *  notifies the end state and then drops its own session without ever publishing an idle one,
+   *  so {@code current} keeps handing back that same terminal snapshot forever.  A view that
+   *  re-reads it after the banner was dismissed would put the banner straight back up, and the
+   *  user would be unable to close it at all. */
   public CallSession takeTerminal() {
     CallSession t = terminal;
     if (t != null) { terminal = null; terminalAtMs = 0; }
+    CallSession c = current;
+    if (c != null && c.state.terminal()) current = null;
     return t;
   }
 
