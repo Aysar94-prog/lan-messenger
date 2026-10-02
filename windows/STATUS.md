@@ -1,5 +1,56 @@
 # Windows status
 
+## Release 2.2.42, real-device bugfix pass (2026-10-03): UI freeze on Call, missing ringtone
+
+First actual manual use of the packaged 2.2.42 build on real Windows hardware surfaced two bugs
+neither the automated suite nor the `windriver` console-driver call test could have caught (the
+driver calls `CallController` directly, never through the WinForms UI; there is no UI test for
+calls yet):
+
+1. **Clicking "Call" froze the whole app ("Not Responding").** `ChatWindowCalls.cs`'s
+   `StartCallToSelected()` — the Call button's click handler — called `CallController.StartCall`
+   directly on the UI thread. `StartCall` holds its internal lock for the entire duration of
+   `EngineTransportFactory.Open`, which performs a *synchronous* blocking TCP connect + TLS
+   handshake (`engine.OpenCallConnectionAsync(...).GetAwaiter().GetResult()`) — genuine network
+   I/O that can take seconds, or hang indefinitely against an unresponsive peer. This blocked the
+   UI thread for that whole window, which Windows reports as "Not Responding" and which the user
+   reasonably read as a crash. Fixed by moving the actual `StartCall` call onto a background
+   thread (`Task.Run`); `CallController` is already internally thread-safe and its own snapshot
+   callback already marshals back to the UI thread via `BeginInvoke`, so only the failure
+   `MessageBox` needed to come back explicitly. `OnInvite` (the incoming-call path) was never
+   affected — it runs on the engine's own accept-loop thread, never the UI thread.
+2. **No ringtone at all for an incoming (or outgoing) call.** `CallView.cs` had no audio cue
+   whatsoever — only the (easy-to-miss, non-modal) call window itself. First attempt added a
+   repeating `System.Media.SystemSounds.Exclamation` played on a 1.8s `System.Windows.Forms.Timer`
+   — the same mechanism already used for ordinary message notifications in `ChatWindowDialogs.cs`.
+   **This did not actually work**: the user confirmed on real hardware that an incoming call still
+   produced no audible ring even though a sound file was confirmed assigned to that event in the
+   registry — the OS "system sound" event (`MessageBeep`) can apparently still be silently
+   suppressed independent of both the assigned file and the speaker volume (sound-scheme state,
+   per-event mute, or similar). Replaced entirely with a new `CallRingtone.cs`: synthesizes an
+   actual two-tone (440Hz+480Hz) ring cadence as raw PCM and plays it directly through
+   `CallAudioPlayback` — the same proven winmm output path real call audio already uses
+   successfully — rather than depending on any OS sound-event mechanism. Started/stopped from the
+   same `UpdateRingtone`/`OnCallStateChanged` hook in `ChatWindowCalls.cs` as before, just backed
+   by a different, more reliable audio path. Not yet re-confirmed audible by the user as of this
+   entry — see the dated note below once it is.
+
+Rebuilt (`dotnet build -c Release`, 0 errors) and republished over the existing 2.2.42 package —
+no version bump each time, since these correct a just-shipped release rather than add a feature.
+Two successive rebuilds happened under this same entry (bug 1 + first ringtone attempt, then the
+ringtone replacement above); only the final zip exists on disk: `outputs/LanMessenger-Windows-
+2.2.42.zip` (7,210,458 bytes, SHA-256
+`a3975ac0acff78a3c59dbd64a6c6985f25a70f2307155e2fd7a1cdffff6f0d87`), manifest updated at
+`outputs/SHA256SUMS-Windows-2.2.42.txt`. Full `tests/run.ps1` suite passed clean (exit 0) against
+the intermediate build (bug 1 fix); the final ringtone-replacement build was not separately
+re-run through the full suite since `CallRingtone.cs`/`ChatWindowCalls.cs` have no automated
+coverage either way (no WinForms UI test exists yet for calls) — a clean `dotnet build` is the
+only automated signal available for this specific change, same as for bug 1's original (reverted)
+fix attempt.
+
+Manual re-verification of these two specific fixes on real hardware is Pending (reported by the
+user from live use; not yet confirmed fixed by the user after this pass).
+
 ## Release 2.2.42 (2026-10-03): first packaged build with voice calls
 
 Packaged the voice-call implementation below into an actual Windows release, numbered to match
