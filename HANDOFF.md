@@ -4,12 +4,18 @@ Windows is untouched by this session. Branch `master`, local commits only, nothi
 
 ## Where things stand
 
-`tests/CallCheck.java` **PASS=354 FAIL=0** against the working tree, which includes four fixes
-landed after the last independent review. Built and installed on both phones as
-**Android 2.2.30** (versionCode 57), same signer as every prior release, arm64 only.
+`tests/CallCheck.java` **PASS=370 FAIL=0** against the working tree. Two builds exist:
 
-**The two-device acceptance run has not produced a valid result.** See "Unverified" below — do not
-read any earlier run as evidence.
+- **2.2.30** (versionCode 57) — installed on *both* phones, but assembled **before** the tap-through
+  fix. It does not contain it.
+- **2.2.31** (versionCode 58) — installed on **SM-ultraaysar only**, as asked. Same signer as every
+  prior release, arm64 only.
+
+**The two-device acceptance run has not produced a valid result**, and the tap-through fix — the bug
+the user reported last — **has never been exercised on hardware**. SM-A075F (192.168.1.44) is off
+the network entirely: 100% packet loss from ultra, and it shows as `Offline` in the people list.
+`startCallTo` refuses an offline peer before creating a call, so no call overlay can be raised from
+ultra alone. Bring the other phone back onto the LAN and this is the first thing to check.
 
 ## What was asked for and done
 
@@ -50,37 +56,47 @@ the chat underneath is meant to stay usable. Do not "fix" those the same way.
 
 ## Fixed after the independent review
 
-An independent reviewer returned REJECT. Four of its findings are now fixed:
+An independent reviewer returned REJECT. All its actionable findings are now fixed:
 
 - **💬 was a dead control.** `hide()` + `showChat()` was undone by `showChat` ending in `render()`,
   which rebuilt the panel over the chat in the same tap. `dismissedCallId` now records the request,
   keyed by call ID so it lapses by itself when that call ends.
 - **`Return / End` bar frozen at `0:00`.** Its rebuild key was `call.state`, an enum that stops
   changing at `Connected`, while the text beside it is a duration that changes every second. Now
-  keyed on the rendered words.
+  keyed on the rendered words, and the summary is retargeted in place instead of rebuilt at 1 Hz.
 - **`LOCAL_DECLINE` told the decliner the *other* phone declined.** It is only ever produced on the
   pressing phone. Now "You declined the call." (test `N154`/`N155`).
 - **`SIGNALING_LOST` named a side the controller cannot know** — it is raised by heartbeat timeout, a
   local send failure *and* a local channel close, so it happens just as well when this phone drops.
   That sent a user with dead Wi-Fi to check the other phone. Now side-neutral (test `N152`).
+- **TalkBack read the clock aloud once a second** for the whole call. Now gated to transitions
+  (`N156`–`N159`).
+- The hang-up disc's specific label is no longer overwritten with a bare "Hang up"; dead
+  `isCollapsed()` removed; `N147` de-flaked; `N146` rewritten around the reported symptom.
+
+Also fixed this round, from the user directly: **"Group members" was offered on a direct
+conversation** and opened a dialog that could not open. It is now group-only, and the menu dispatch
+is explicit rather than ending in `else showMembers()`.
+
+### Why the decisions moved into `CallUi`
+
+The three rules worth testing — when to announce, when to keep the call screen dismissed, what the
+return-to-call bar shows — all lived in `CallView` and `MainActivity`, and the pure-Java harness
+**cannot load either class**: referencing them throws
+`NoClassDefFoundError: android/content/Context`. That is precisely why they had no coverage, and why
+the two staleness bugs in the call bar survived a green suite twice. They now live in `CallUi`
+alongside `stateLabel`/`detailLabel`, with `CallView` and `MainActivity` calling into them, so there
+is one copy of each rule and the test reaches it. Keep it that way: a rule that decides what a user
+sees belongs where the test can see it.
 
 ## Not fixed — open, do these first
 
-1. **TalkBack announces the duration every second.** `stateText` carries the clock and is a live
-   region; `render()` rewrites it at 1 Hz. Arm the live region on state transitions only and clear it
-   while Connected. Regression introduced by this session's work; hits the users the surrounding
-   comments argue for.
-2. **The call bar rebuilds three views every second** while Connected. Correct, but it allocates on
-   the UI thread at 1 Hz for the length of a call. Prefer updating the summary's text in place.
-3. **No coverage for the four fixes above.** `tests/CallCheck.java` cannot reach `CallView`,
-   `MainActivity` or `renderCallBar`. Extract the overlay-attachment decision and the bar-tag
-   computation into pure helpers and assert them — all four findings are control flow, not layout.
-4. `N147` is flaky: `elapsedMs()` recomputes live, so `"0:03"` only holds for a 1 s window. `N145`
-   allows 2 s for the same quantity. `N146` passes for the wrong reason (redundant with `N145`).
-5. `isCollapsed()` is dead code. `hangupCircle`'s `description` parameter is overwritten by its only
-   caller, so the specific "End the call with X" never reaches a screen reader.
-6. Peer name and avatar are not in the rebuild key set, so they go stale until the next rebuild.
-7. Not yet written or tested at all: `CallRoutePolicy.reconcile` → `AudioManager`, proximity sensor,
+1. **Peer name and avatar are not in the rebuild key set**, so they go stale until the next rebuild.
+   Cosmetic.
+2. **No controller-level test that a delivered `Connected` snapshot always has `connectedAtMs > 0`.**
+   `N144` currently pins the frozen-clock fallback as correct behaviour, which is the shape of the
+   bug rather than the fix. The harness has `FakeCallMedia.Factory` and drives frames already.
+3. Not yet written or tested at all: `CallRoutePolicy.reconcile` → `AudioManager`, proximity sensor,
    runtime microphone FGS promotion, A05 arbitration under a live call. Live two-device audio quality
    is unassessed.
 

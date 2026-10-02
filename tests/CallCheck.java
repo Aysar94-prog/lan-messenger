@@ -1129,9 +1129,24 @@ public final class CallCheck {
     CallSession connected = c.snapshot();
     check(connected.elapsedMs() >= 3000 && connected.elapsedMs() < 3000 + 2000,
       "N145-clock-runs-from-answer", "expected ~3000ms of connected time, got " + connected.elapsedMs());
-    check(connected.elapsedMs() < 20000,
-      "N146-ringing-time-is-not-counted", "the 20s spent ringing leaked into the call clock");
-    eq(CallUi.stateLabel(connected), "0:03", "N147-timer-starts-at-answer");
+    // The reported bug itself: "why the timer start from ringing?". A call that rang for 20s and
+    // was picked up on the first second must read 0:00, not 0:20. Checked on a fresh builder rather
+    // than inferred from N145, because N145's 5s ceiling would also pass against the old bug on a
+    // short ring -- this one fails loudly whichever way the clock is computed.
+    CallSession.Builder rung = new CallSession.Builder("c0a11e00-0000-4000-8000-0000000000aa", "peer", false, now - 20000);
+    rung.state = CallProtocol.State.Connected;
+    rung.connectedAtMs = now;
+    check(rung.snapshot().elapsedMs() < 2000,
+      "N146-ringing-time-is-not-counted",
+      "a call answered after 20s of ringing showed " + CallUi.stateLabel(rung.snapshot()) + " on the clock");
+    // Not an equality. elapsedMs() recomputes from the wall clock on every call, so an exact "0:03"
+    // holds for a one-second window and fails on any machine that stalls for a second between two
+    // lines, which is what made this flaky while N145 -- allowing two seconds for the same quantity
+    // -- passed. The ringing gap is 17s, so landing inside 3-4s proves the 20s of ringing is not
+    // being counted without depending on how fast the machine running the test is.
+    check("0:03".equals(CallUi.stateLabel(connected)) || "0:04".equals(CallUi.stateLabel(connected)),
+      "N147-timer-starts-at-answer",
+      "expected 0:03 or 0:04 from a 3s call, got " + CallUi.stateLabel(connected));
     c.state = CallProtocol.State.Ending;
     eq(c.snapshot().elapsedMs(), 0L, "N148-no-clock-once-ended");
 
@@ -1159,6 +1174,51 @@ public final class CallCheck {
       "N155-decline-two-sides-differ", "declining locally and being declined are different events");
     check(!CallUi.endLabel(CallProtocol.EndReason.SIGNALING_LOST).contains("lost"),
       "N153-lost-link-worded-plainly", "'Connection lost' reads as the local side failing");
+
+    // The clock line is rewritten once a second for the whole call. With a permanently-live
+    // accessibility region that made TalkBack read the duration out loud every second, which is the
+    // one thing that stops a screen-reader user hearing the person they are on a call with.
+    check(CallUi.isNewStateAnnouncement(null, CallProtocol.State.IncomingRinging),
+      "N156-first-state-is-announced", "the first state of a call must be spoken");
+    check(!CallUi.isNewStateAnnouncement(CallProtocol.State.Connected, CallProtocol.State.Connected),
+      "N157-repaint-is-not-an-announcement",
+      "an unchanged state must stay silent, or the clock is read out once a second");
+    for (CallProtocol.State each : CallProtocol.State.values()) {
+      check(!CallUi.isNewStateAnnouncement(each, each),
+        "N158-same-state-silent-" + each.name(),
+        "a repaint of " + each + " would be announced every second");
+    }
+    check(CallUi.isNewStateAnnouncement(CallProtocol.State.IncomingRinging,
+        CallProtocol.State.Connected),
+      "N159-answer-is-announced", "picking up is the transition that most needs saying out loud");
+
+    // The chat control used to do nothing visible: showChat ends in render(), which rebuilt the
+    // call screen over the conversation in the same tap. The dismissal has to survive that render,
+    // and has to lapse by itself when the call ends or a different one starts.
+    String thisCall = "c0a11e00-0000-4000-8000-000000000010";
+    String otherCall = "c0a11e00-0000-4000-8000-0000000000ff";
+    check(CallUi.shouldStayDismissed(thisCall, connected),
+      "N160-chat-keeps-the-call-screen-down", "opening the conversation was undone by showChat's render");
+    check(!CallUi.shouldStayDismissed(thisCall, null),
+      "N161-dismissal-lapses-with-no-call", "a finished call must not suppress the next call's screen");
+    CallSession.Builder other = new CallSession.Builder(otherCall, "peer", false, now);
+    other.state = CallProtocol.State.Connected;
+    other.connectedAtMs = now;
+    check(!CallUi.shouldStayDismissed(thisCall, other.snapshot()),
+      "N162-dismissal-lapses-on-a-new-call", "one call's dismissal leaked into the next call");
+    check(!CallUi.shouldStayDismissed(null, connected),
+      "N163-no-dismissal-shows-the-screen", "an ordinary call must still get its call screen");
+
+    // The return-to-call bar showed "0:00" for the whole call because it keyed on call.state, an enum
+    // that stops changing at Connected, while the text beside it is the duration. It has to change
+    // as the clock changes, and stay put when nothing about it has.
+    String firstBar = CallUi.callBarWords(connected);
+    check(!firstBar.equals(CallUi.callBarWords(c.snapshot())),
+      "N164-call-bar-follows-the-clock",
+      "the call bar did not change while the clock advanced, so it froze at its first duration");
+    eq(CallUi.callBarWords(connected), firstBar, "N165-call-bar-stable-within-a-second");
+    check(CallUi.callBarWords(connected).contains(connected.peerId),
+      "N166-call-bar-names-the-peer", "the bar must rebuild for a different peer, not reuse its buttons");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and
