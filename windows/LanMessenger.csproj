@@ -9,4 +9,4 @@
     <AssemblyName>LanMessenger</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
-<ItemGroup><PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" /></ItemGroup></Project>
+<ItemGroup><PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" /><PackageReference Include="SIPSorcery" Version="10.0.17" /></ItemGroup></Project>

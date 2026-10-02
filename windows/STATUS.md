@@ -1,24 +1,53 @@
 # Windows status
 
-## Voice calls — not started; read this before picking up any call work (2026-10-02)
+## Voice calls — implemented and verified by a real cross-platform call (2026-10-03)
 
-Windows has **zero voice-call code** — no `CallController`/`CallSession`/`CallProtocol`/media
-adapter, nothing. Android's voice-call implementation (A00–A10, the reference call-screen
-redesign through its fifth bugfix pass, and a Messenger-style call-history feature added beyond
-the original plan) is functionally complete and shipped as Android release 2.2.42. All of it is
-**Android ↔ Android only** — no real two-party cross-platform call has ever been placed, since
-the Windows side literally doesn't exist yet.
+Windows now has a complete, working voice-call implementation, wire-compatible with Android's:
+`CallProtocol.cs`/`CallSignaling.cs` (same 4-byte-length+JSON framing, message types, timing/
+limit constants, admission/state-machine rules as Android, ported line-for-line), `CallSession.cs`,
+`CallChannel.cs` (the CALLCONNECT-handoff transport), `CallController.cs` (the state machine),
+`CallSettings.cs`, `CallAudioIo.cs` (continuous winmm capture/playback reusing the project's
+proven P/Invoke pattern), `WebRtcCallMedia.cs` (SIPSorcery-based `ICallMedia`, G722 audio codec —
+SIPSorcery's bundled encoder does not actually support Opus despite its constructor signature
+suggesting otherwise; G722 is a standard WebRTC fallback both sides offer, confirmed to interop),
+`PeerEngine.Calls.cs` (the CALLCONNECT handoff and local-only call-log entry), `CallLogMarker.cs`,
+and a minimal (correctness-first, not yet visually matching Android's reference teal-header/
+hang-up-disc design) `CallView.cs`/`ChatWindowCalls.cs` UI. SIPSorcery 10.0.17 and its full
+transitive dependency graph (92 packages) are vendored into `vendor/nuget` to preserve the
+project's offline-only build policy.
 
-Before starting Windows call work, read the **Addendum (2026-10-02)** at the end of
-`.ai-planner/sessions/20260930-091333-43c139/planning/plan-v006.md` (the shared voice-calls plan).
-It records, specifically for Windows to reuse rather than re-derive: the exact wire/signaling
-contract as actually implemented (framing, message types, timeouts, the invitation limiter), real
-bugs found only by running on physical hardware (a signaling-thread deadlock class, a dropped-
-INVITE dispatch bug, a liveness-check bug, build-pipeline footguns), the accepted reference call-
-screen layout for UI parity, a crash class from a media permission going missing at the exact
-moment of use rather than at build time, and the call-history feature's local-only design (no
-wire change) that Windows should mirror once it reaches that phase. Phase W0–W5 in that same
-document are the actual task breakdown; none of them have been started.
+**Verified by a real two-device call over the LAN** (Windows build machine ↔ a physical Android
+phone, both directions) using a headless console driver exercising the production
+`PeerEngine`/`CallController`/`WebRtcCallMedia` classes directly (there is no GUI-automation tool
+for native WinForms): Windows→Android reached `Connected` with a live, ticking in-call timer on
+the Android side and a clean `RemoteHangup` teardown with a real computed duration (33.5s);
+Android→Windows reached `Connected` the same way (15.4s), auto-accepted on the Windows side.
+Call-history entries ("X called you · duration") appeared correctly on Android for both
+directions. This confirms G722 codec/SDP negotiation actually converges between SIPSorcery and
+Android's libwebrtc — the single biggest flagged interop risk going in.
+
+**One real bug found and fixed by this test**: `SecureChannel`'s constructor hardcodes a 6-second
+`ReadTimeout`/`WriteTimeout` on the underlying network stream, sized for the ordinary quick
+HELLO/READY/message handshake. The CALLCONNECT handoff reuses that same stream/instance for the
+entire lifetime of the call-signaling channel, where frames are legitimately tens of seconds
+apart (ringing wait, human accept/decline time, silence between heartbeats) — so any call died
+with a spurious `SignalingLost`/socket-timeout the moment a human took longer than 6s to answer.
+Fixed by adding `SecureChannel.UseLongLivedTimeouts()` (sets both timeouts to infinite) called
+once, immediately after the CALLCONNECT line is written/read, on both the outgoing side
+(`PeerEngine.Calls.cs`'s `OpenCallConnectionAsync`) and the incoming side (`PeerEngine.cs`'s
+`Receive()` CALLCONNECT branch). This is a Windows-only bug (Android's equivalent handshake layer
+never imposed this timeout) — no wire or Android-side change needed.
+
+Remaining open items: `CallView.cs` does not yet visually match Android's reference call-screen
+design (functional parity only); `tests/run.ps1` has no automated call-protocol/state-machine
+test yet (W-phase test tasks from the plan below are not written); call quality under real-world
+conditions (packet loss, multiple devices, degraded Wi-Fi) has not been stress-tested, only a
+clean two-device LAN call.
+
+Before picking up further call work, read the **Addendum (2026-10-02)** at the end of
+`.ai-planner/sessions/20260930-091333-43c139/planning/plan-v006.md` (the shared voice-calls plan)
+for the full decision record this implementation was built from, and the W0–W5 task breakdown for
+what remains (test-writing tasks, UI-parity pass, stress testing are the main gaps).
 
 ## Voice Messages implemented in source (Phase 2 / W01-W10, WT01+WT06, not a release)
 
