@@ -4,13 +4,14 @@ Windows is untouched by this session. Branch `master`, local commits only, nothi
 
 ## Where things stand
 
-`tests/CallCheck.java` **PASS=387 FAIL=0** against the working tree. The shipping build is
-**2.2.34** (versionCode 61), installed on **both** phones, same signer as every prior release,
-arm64 only.
+`tests/CallCheck.java` **PASS=408 FAIL=0** against the working tree. The shipping build is
+**2.2.39** (versionCode 66), installed on **both** phones, same signer as every prior release,
+arm64 only. Local commits through `14d3201`.
 
 Tap-through and the drag behaviour are verified on hardware (`C0`–`C3`, `D0`/`D1`). The
 cold-start accept path is verified on hardware (`accept-coldstart.ps1`, `X0`–`X6` all pass on
-2.2.34).
+2.2.34). The floating bar, its drag, the 💬 control and Return-to-call are verified end to end by
+`chat-drag-check.ps1`, **25/25, twice in a row** — see "read pixels, never the dump" below.
 
 ## Two things the user reported, and what they turned out to be
 
@@ -85,6 +86,61 @@ How it was found: the scripted run failed, then a manual tap also failed, and th
 was `null` mid-run and sent me down a wrong path; it was the InputMethod display's value, not the
 app's. The proof came from forcing a re-entry: the *same tap* then produced `ACCEPT → ANSWER →
 MEDIA_READY`, which is what the re-entry fixes.
+
+## The floating bar trailed the finger
+
+The bar's drag accumulated the per-event deltas `GestureDetector.onScroll` hands over. That does not
+work: the detector only starts reporting once the finger has left the tap region, and up to that point
+it measures from a focus point it smooths as the gesture goes on. Accumulating its deltas left the bar
+well short of the finger and stopped it wherever the smoothing ran out — a 227px swipe moved the bar
+148px, and it stopped there rather than where the finger was. The bar is now placed against the
+finger's position relative to where it went **down** (`CallUi.draggedLeft`/`draggedTop`), which is
+also the only version that cannot drift across the events of a single gesture.
+
+Measured on the phone afterwards: a 646px drag moved the bar 636px, a 1087px one moved it 1082px, and
+a sideways drag tracked to 1px. `CallUi.isBarDrag` keeps the tap/drag decision at the 6dp slop on
+either axis, so a tap that reopens the call never nudges the bar and a short sideways drag is still a
+drag. Pure, so `CallCheck` asserts it — `N193`-`N204`.
+
+## Read pixels, never the dump
+
+Every screen this work has to tell apart carries the call's duration clock somewhere: the call screen
+in its header, the minimised bar in its own label, and since 2.2.36 the conversation's return strip.
+A window whose text changes once a second never goes idle, so `uiautomator dump` **cannot read any of
+them** — it prints `could not get idle state` and returns nothing, which is indistinguishable from
+"the other screen is up". It also *occasionally succeeds* on the same screen, so two runs of one
+script disagree with each other and with the phone. That is not a flaky harness, it is a dead signal.
+Do not build an assertion on it.
+
+What works instead, from a screenshot:
+
+- The call bar is the only thing drawn in `rgb(14,82,76)` (`CallView.BAR`), and the screen headers are
+  `rgb(7,94,84)` — within a tolerance of 14 per channel, so a teal band at the foot of the screen
+  spanning the full width is the call screen, and a narrow one is the floating bar.
+- Control positions are measured, not computed: the call screen's three controls are at x 130, 363,
+  594; the conversation's strip has Return at x 450 and End at x 615 under a 140px header.
+- **Find the floating bar by its hang-up button, not by its colour.** The position persists, so the
+  bar can come back over the top of the screen, where it and the header are the same colour in the
+  same rows and read as one full-width band. Red appears nowhere else in the chrome.
+
+Harness traps that each produced a wrong answer at least once:
+
+- **The bar's hang-up button reaches left over the bar's own geometric centre** (bar x 15–371,
+  button x 192–342). Tapping or swiping the middle of the bar presses End. That ended the call in one
+  run, which then reported the bar as still sitting where it started. Touch the bar's *text* area:
+  60px left of the button's left edge, on the button's row.
+- **A drag destination cannot be a fixed point.** The position persists across calls and restarts, so
+  a run starting where the last one finished swipes 2px, reads as a tap, and opens the call screen
+  instead of moving anything. Choose the far side of the stage from wherever the bar actually is.
+- **The notification shade counts as "a different window has the focus"** and survives a cold start
+  of the app. `cmd statusbar collapse` before checking focus, and poll rather than read once.
+- **Tapping "where the bar used to be" hits whatever is there now** — once that was an image
+  attachment, which opened full screen and made everything after it report the bar as gone. Ask
+  where the bar *is* from the frame; do not poke the conversation to find out.
+- Screenshots: on-device `screencap -p /sdcard/x.png` then `adb pull`. `exec-out screencap -p >` is
+  corrupt.
+- PowerShell: `"$gx,$gy: "` is a parse error (`: ` reads as a drive). And a helper returning
+  `@(a,b,c)` comes back as `Object[]` that will not divide — split it into typed helpers.
 
 ## What was asked for and done
 
@@ -200,15 +256,19 @@ build look broken, and the run that exposed them had already been reported as ev
    second. The minimised bar has the same clock, so it cannot be dumped either. The ring screen dumps
    fine only because its status line is the same string every second and so invalidates nothing.
    `settings put global *_animation_scale 0` does not help; the churn is our own `Handler` tick.
-   **This is also a usable signal, not just a limitation:** a screen that will not dump *is* a live
-   call screen, so "the dump succeeded" proves the call screen is not up. That is how the conversation
-   control is verified — after tapping 💬 the dump succeeds and shows conversation controls, which is
-   only possible if the call screen did not come back over it.
+   **It is NOT a usable signal, and an earlier version of this file said it was.** That was wrong, and
+   it cost more time than the limitation ever did. The detector *occasionally succeeds* on the same
+   live screen, so "the dump failed" does not mean the call is up and "the dump succeeded" does not
+   mean it is down — the same script run twice reports opposite things, and both reports are equally
+   unfounded. Worse, since 2.2.36 the *conversation* carries the clock too (its return strip shows the
+   duration), so both sides of every "which screen is this?" question are undumpable and the question
+   cannot be answered this way at all. Read pixels instead: see "Read pixels, never the dump" above.
    **Consequence: every connected-state assertion in `accept-layout.ps1` — `L4`, `L6`–`L10`, `L14`,
    all of `M*` and `T1`–`T9` — cannot pass as written, and its failures say nothing about the app.**
    `accept-coldstart.ps1` asserts the connected state from the signalling trace instead, which is
-   what actually establishes it. The *layout* of the connected screen is the user's manual
-   acceptance. Do not "fix" those failures in the app.
+   what actually establishes it. `chat-drag-check.ps1` decides the same question from a screenshot.
+   The *layout* of the connected screen is the user's manual acceptance. Do not "fix" those failures
+   in the app.
 1. **A failed dump silently returned the previous one.** `Dump` wrote to `/sdcard/t.xml` and then
    `cat`-ed it; when `uiautomator dump` failed, the old file was still there. The run asserted
    against a screen that had been gone for ten seconds — a *connected* call was reported as still
