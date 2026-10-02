@@ -1,5 +1,27 @@
 # Windows status
 
+## Release 2.2.42 (2026-10-03): first packaged build with voice calls
+
+Packaged the voice-call implementation below into an actual Windows release, numbered to match
+the current Android release (2.2.42) by explicit user request rather than continuing Windows'
+own independent counter. `windows/LanMessenger.csproj`'s `<Version>` and `Program.cs`'s
+`AppVersion` bumped 2.2.0 → 2.2.42. No wire/storage change beyond the voice-call feature itself
+(already cross-platform-verified below) — this is a packaging step.
+
+`dotnet build -c Release`: 0 errors (the one pre-existing benign `CS1998` warning in
+`ChatWindowVoice.cs`). Full `tests/run.ps1` suite passed clean, exit code 0 — every test
+including the native Windows UI suite, with no recurrence of the `group_membership.py` flake on
+this run. Published framework-dependent via `dotnet publish -c Release` (requires .NET Desktop
+Runtime 9, no self-contained bundling), matching the shape of every prior Windows release.
+Zipped flat (no parent folder) as `outputs/LanMessenger-Windows-2.2.42.zip` (7,209,116 bytes,
+SHA-256 `5e26794554fbcc868fdd9907df248518e2030d14ac9b2978fd14a4f6317ed3a6`), manifest at
+`outputs/SHA256SUMS-Windows-2.2.42.txt`.
+
+Manual two-device physical acceptance of this exact packaged build remains Pending — the live
+cross-platform call test below was run against the unpackaged `dotnet build` output via the
+`windriver` console driver, not this zip. No reason to expect a difference (packaging doesn't
+touch behavior), but it hasn't been separately exercised.
+
 ## Voice calls — implemented and verified by a real cross-platform call (2026-10-03)
 
 Windows now has a complete, working voice-call implementation, wire-compatible with Android's:
