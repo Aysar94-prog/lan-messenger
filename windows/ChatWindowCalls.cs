@@ -9,6 +9,7 @@ sealed partial class ChatWindow
     CallController? callController;
     CallSettings? callSettings;
     CallView? callView;
+    CallRingtone? ringtone;
 
     void InitializeCalls(string dataDirectory)
     {
@@ -45,12 +46,26 @@ sealed partial class ChatWindow
         if (!peer.Trusted) { MessageBox.Show(this, "Verify this device before calling.", "Call"); return; }
         if (!peer.Online) { MessageBox.Show(this, peer.Name + " is offline.", "Call"); return; }
         if (callController.HasActive()) { MessageBox.Show(this, "Already in a call.", "Call"); return; }
-        try
+        var peerId = selected;
+        // StartCall opens the outbound TCP+TLS connection synchronously (via the transport
+        // factory) while holding the controller's internal lock -- genuine network I/O that can
+        // take seconds or hang outright against an unresponsive peer. Calling it directly from
+        // this button's click handler would freeze the whole UI ("Not Responding") for that
+        // whole time; CallController is already internally thread-safe and marshals its own
+        // snapshot callback back to the UI thread, so the actual start can run on a background
+        // thread with only the failure path needing to come back here.
+        Task.Run(() =>
         {
-            var factory = new EngineTransportFactory(engine, callController) { peerIdForOpen = selected };
-            callController.StartCall(selected, factory);
-        }
-        catch (Exception e) { MessageBox.Show(this, e.Message, "Could not start the call"); }
+            try
+            {
+                var factory = new EngineTransportFactory(engine, callController) { peerIdForOpen = peerId };
+                callController.StartCall(peerId, factory);
+            }
+            catch (Exception e)
+            {
+                try { BeginInvoke(new Action(() => MessageBox.Show(this, e.Message, "Could not start the call"))); } catch { }
+            }
+        });
     }
 
     // The 1 Hz tick ChatWindow already runs (TickVoiceRecording/TickVoicePlayback/Render) also
@@ -89,6 +104,7 @@ sealed partial class ChatWindow
             callView.Show(this);
         }
         callView?.Render(snap, peerName);
+        UpdateRingtone(snap.State);
         if (snap.State.Terminal())
         {
             var closing = callView;
@@ -98,6 +114,26 @@ sealed partial class ChatWindow
                 closeTimer.Tick += (_, _) => { closeTimer.Stop(); closeTimer.Dispose(); try { closing.Close(); } catch { } };
                 closeTimer.Start();
             }
+        }
+    }
+
+    // Plays an audible ring tone for as long as the call is ringing on either end -- without this
+    // there is no audible cue at all that a call is incoming or being placed, only the (easy to
+    // miss) CallView window. Stops the instant the state leaves *Ringing, whether because it was
+    // answered, declined, canceled or timed out. Goes through CallAudioPlayback (the same winmm
+    // path real call audio uses) rather than the OS system-sound event -- real-device testing
+    // showed the latter can be silently inaudible regardless of speaker volume.
+    void UpdateRingtone(CallProtocol.State state)
+    {
+        bool shouldRing = state == CallProtocol.State.IncomingRinging || state == CallProtocol.State.OutgoingRinging;
+        if (shouldRing && ringtone == null)
+        {
+            ringtone = new CallRingtone();
+            ringtone.Start();
+        }
+        else if (!shouldRing && ringtone != null)
+        {
+            ringtone.Dispose(); ringtone = null;
         }
     }
 }
