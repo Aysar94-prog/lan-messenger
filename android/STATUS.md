@@ -625,3 +625,18 @@ lost each time -- and persisted so it survives calls and restarts.
 `tests/CallCheck.java` **PASS=396 FAIL=0**. Build 2.2.36 (versionCode 63) installed on SM-ultraaysar;
 SM-A075F went `unauthorized` on adb before it could be installed, so the two-device run of this round
 is outstanding.
+## Fifth pass on the same work (2026-10-02, 2.2.39)
+
+**The floating bar trailed the finger.** The drag accumulated the per-event deltas that
+`GestureDetector.onScroll` hands over. The detector only starts reporting once the finger has left the
+tap region, and up to that point it measures from a focus point it smooths as the gesture goes on,
+so the bar landed well short of the finger and stopped wherever the smoothing ran out: on the phone, a
+227px swipe moved the bar 148px. The bar is now placed against the finger's position relative to where
+it went down (`CallUi.draggedLeft`/`draggedTop`), which is also the only version that cannot drift
+across the events of one gesture. Measured on SM-ultraaysar: a 646px drag moved the bar 636px and a
+1087px one moved it 1082px -- within 1px across and 5-10px down.
+
+`CallUi.isBarDrag` holds the tap/drag decision at the 6dp slop, on either axis, so a tap that reopens
+the call never nudges the bar and a short sideways drag is still a drag. `N193`-`N204`.
+
+`tests/CallCheck.java` **PASS=408 FAIL=0**. Build 2.2.39 (versionCode 66) installed on both phones.
