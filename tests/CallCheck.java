@@ -1312,6 +1312,30 @@ public final class CallCheck {
     // A bar wider than the stage would be clamped to the left margin and still overflow, which is
     // the lesser evil: it stays reachable rather than being pushed off both sides.
     eq(CallUi.clampBarLeft(100, 900, 720, 8), 8, "N192-a-bar-wider-than-the-stage-stays-grabable");
+
+    // The bar has to land exactly under the finger. Accumulating the detector's own per-event deltas
+    // left it well short -- a 227px swipe on the phone moved the bar 148px and it stopped wherever the
+    // detector's smoothed focus ran out, so the gesture did not end where the user's finger did.
+    // Measured from the point the finger went down instead, the bar follows it.
+    // The casts matter: these return float, and a boxed Float never equals a boxed Integer.
+    eq((int) CallUi.draggedLeft(200, 40, 430), 270, "N193-drag-left-tracks-the-finger");
+    eq((int) CallUi.draggedTop(1427, 1354, 520), 447, "N194-drag-top-tracks-the-finger");
+    eq((int) CallUi.draggedLeft(200, 40, 200), 40, "N195-a-finger-that-has-not-moved-leaves-the-bar-alone");
+    eq((int) CallUi.draggedTop(1427, 1354, 1427), 1354, "N196-drag-top-holds-still-without-movement");
+    // A later event in the same gesture must be measured from where the finger went down, not from
+    // where the bar has got to. After a finger that reached 430 the bar sits at 270; a finger that
+    // then reaches 600 is 400 from the down point, so the bar belongs at 40+400 and not at 270+170
+    // measured off the previous event.
+    eq((int) CallUi.draggedLeft(200, 40, 600), 440, "N197-a-second-event-in-the-same-drag-measures-from-the-down-point");
+    // Straight up from the top edge, and a drag to the left of where the finger started, both work.
+    eq((int) CallUi.draggedTop(100, 500, 40), 440, "N198-a-drag-straight-up-from-the-top-edge");
+    eq((int) CallUi.draggedLeft(600, 10, 5), -585, "N199-a-drag-to-the-left-edge-is-measured-not-clamped-here");
+    // One control answers both "open the call" and "move me", so the slop decides which.
+    check(!CallUi.isBarDrag(200, 1427, 200, 1427, 12), "N200-still-touch-is-not-a-drag", "a finger that has not moved is not a drag");
+    check(!CallUi.isBarDrag(200, 1427, 206, 1433, 12), "N201-jitter-under-the-slop-is-not-a-drag", "6px of jitter is a tap, not a drag");
+    check(CallUi.isBarDrag(200, 1427, 220, 1427, 12), "N202-a-sideways-move-past-the-slop-is-a-drag", "20px sideways is a drag");
+    check(CallUi.isBarDrag(200, 1427, 200, 1410, 12), "N203-a-short-vertical-move-past-the-slop-is-a-drag", "17px up is a drag");
+    check(!CallUi.isBarDrag(200, 1427, 206, 1427, 12), "N204-just-inside-the-slop-is-still-a-tap", "6px sideways is a tap");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and
