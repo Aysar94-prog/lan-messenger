@@ -32,8 +32,8 @@ calls yet):
    `CallAudioPlayback` — the same proven winmm output path real call audio already uses
    successfully — rather than depending on any OS sound-event mechanism. Started/stopped from the
    same `UpdateRingtone`/`OnCallStateChanged` hook in `ChatWindowCalls.cs` as before, just backed
-   by a different, more reliable audio path. Not yet re-confirmed audible by the user as of this
-   entry — see the dated note below once it is.
+   by a different, more reliable audio path. **Confirmed audible by the user on the same real
+   hardware (2026-10-03)** — both this and bug 1 above are now user-confirmed fixed.
 
 Rebuilt (`dotnet build -c Release`, 0 errors) and republished over the existing 2.2.42 package —
 no version bump each time, since these correct a just-shipped release rather than add a feature.
@@ -48,8 +48,8 @@ coverage either way (no WinForms UI test exists yet for calls) — a clean `dotn
 only automated signal available for this specific change, same as for bug 1's original (reverted)
 fix attempt.
 
-Manual re-verification of these two specific fixes on real hardware is Pending (reported by the
-user from live use; not yet confirmed fixed by the user after this pass).
+**Both fixes confirmed by the user on real hardware (2026-10-03): "yes both fixed, ringing works
+now."** Call no longer freezes the app, and the incoming ring is now actually audible.
 
 ## Release 2.2.42 (2026-10-03): first packaged build with voice calls
 
