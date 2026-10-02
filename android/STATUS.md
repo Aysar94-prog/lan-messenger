@@ -350,6 +350,49 @@ since these fixes: the last attempt failed its online gate on both phones before
 placed. See [HANDOFF.md](../HANDOFF.md) for what is still open — chiefly the per-second TalkBack
 announcement of the duration clock, which is a regression this work introduced.
 
+## Second pass on the same work (2026-10-02, 2.2.31)
+
+**"Group members" was offered on a direct conversation.** `chatMenu` added it unconditionally, so
+opening the ⋮ menu on a one-to-one chat listed an item that could not work: `showMembers` looks for
+a group whose id matches the open conversation, finds none, and falls through to a toast telling
+the user the obvious. It is now guarded on the open conversation actually being a group. The menu
+dispatch also used to end in `else showMembers()`, so **any** title not matched above it silently
+opened the members dialog — adding one item meant forgetting to route it, and the wrong dialog
+appeared instead of nothing. Every title is now routed explicitly. Verified on a device: a direct
+chat offers Call / Verify device / Clear conversation, a group offers Group members / Clear
+conversation / Leave group and no Call.
+
+**TalkBack read the clock out loud once a second.** The status line carries the duration and was a
+permanently-live accessibility region, so a screen-reader user heard "0:04", "0:05", "0:06" for the
+whole call — the one thing that stops them hearing the person they are on a call with. The clock is
+still *shown* every second; it is the announcement that is now gated to state transitions
+(`CallUi.isNewStateAnnouncement`).
+
+**The return-to-call bar rebuilt three views every second.** Keying on the rendered words fixed the
+frozen `0:00`, but the words include the duration, so every tick of the clock did a `removeAllViews`
+plus three new Buttons and four LayoutParams on the UI thread for the length of a call. The summary
+is now built once and retargeted in place; the bar still rebuilds its buttons when the peer changes.
+
+**Smaller items.** The hang-up disc's accessibility label was overwritten with a bare "Hang up",
+so the specific "End the call with *name*" never reached a screen reader. `isCollapsed()` was dead
+code and is gone. `N147` asserted an exact `"0:03"` against a value recomputed from the wall clock,
+so it passed only inside a one-second window — it now accepts `0:03` or `0:04`, and a new `N146`
+places the reported bug directly: a call that rang 20 seconds and was answered must read 0:00, not
+0:20.
+
+**Coverage.** The three decisions above — when to announce, when to keep the call screen dismissed,
+and what the return-to-call bar shows — were moved out of `CallView` and `MainActivity` into
+`CallUi`, because the pure-Java harness cannot load either class (`NoClassDefFoundError:
+android/content/Context`), which is why they had no coverage at all. `N156`–`N166` now pin them.
+
+`CallCheck` **PASS=370 FAIL=0**. **2.2.31** (versionCode 58) installed on SM-ultraaysar only.
+
+**Not verified on device: the tap-through fix.** The other phone (192.168.1.44) is off the network —
+100% packet loss — so no call could be placed from ultra and the call overlay never appeared.
+`startCallTo` refuses an offline peer before creating a call, so this is not something to work
+around. The fix is one line (`holder.setClickable(true)`) and two independent analyses agree on both
+the mechanism and the fix, but it has not been exercised on hardware.
+
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 
 ## Implemented

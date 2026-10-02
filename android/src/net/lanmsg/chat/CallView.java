@@ -131,7 +131,7 @@ final class CallView {
     // across the top is what stands in for the call screen until they come back to it; putting the
     // overlay up again here would undo the tap that opened the chat.
     if (dismissedCallId != null && !dismissedCallId.equals(call.callId)) dismissedCallId = null;
-    if (dismissedCallId != null) return;
+    if (CallUi.shouldStayDismissed(dismissedCallId, call)) return;
 
     // While collapsed the bar stands in for the panel, and it refreshes the same way the panel
     // does. It is checked before the rebuild test below, because the bar reuses stateText and
@@ -143,6 +143,7 @@ final class CallView {
       }
       stateText.setText(CallUi.stateLabel(call));
       detailText.setText(CallUi.detailLabel(call));
+      announceStateChange(activity, call);
       return;
     }
 
@@ -157,6 +158,7 @@ final class CallView {
     stateText.setText(CallUi.stateLabel(call));
     detailText.setText(CallUi.detailLabel(call));
     routeText.setText(routeLabel(activity, call));
+    announceStateChange(activity, call);
     String hint = CallUi.qualityHint(call);
     qualityText.setText(hint == null ? "" : hint);
     qualityText.setVisibility(hint == null ? View.GONE : View.VISIBLE);
@@ -168,6 +170,31 @@ final class CallView {
         lastQualityAnnounceMs = now;
         announce(activity, "Connection quality reduced");
       }
+    }
+  }
+
+  /** The state the last announcement was made for, so a transition can be told from a repaint.
+   *
+   *  <p>render() runs once a second for the whole length of a call and the status line carries the
+   *  duration clock, so a permanently-live region had TalkBack read "0:04", then "0:05", then
+   *  "0:06", once a second, for as long as the call lasted.  That makes the screen least usable to
+   *  exactly the users the accessibility labels elsewhere in this file exist for: a screen-reader
+   *  user cannot hear the other person over their own clock.  The clock still has to be *visible*
+   *  every second, so it is the announcement that is gated, not the text. */
+  private static CallProtocol.State announcedState;
+
+  /** Announce a state transition, once, and only when the state really changed.
+   *
+   *  <p>The rule itself lives in {@link CallUi#isNewStateAnnouncement} because this class cannot be
+   *  loaded without an Android runtime, and the one check that proves the clock is not read aloud
+   *  every second has to be able to reach it. */
+  private static void announceStateChange(MainActivity activity, CallSession call) {
+    if (!CallUi.isNewStateAnnouncement(announcedState, call.state)) return;
+    announcedState = call.state;
+    // Connected is excluded deliberately: its line is a running clock rather than an event, and
+    // the transition into it was already announced when the view was rebuilt for the new state.
+    if (stateText != null && call.state != CallProtocol.State.Connected) {
+      announce(activity, CallUi.stateLabel(call));
     }
   }
 
@@ -232,8 +259,12 @@ final class CallView {
     // to stop a ringing call, and a second red target would be a third answer to the same question.
     if (call.state != CallProtocol.State.IncomingRinging
         && call.state != CallProtocol.State.OutgoingRinging) {
+      // The description passed here names the peer, and it is kept. It used to be overwritten with a
+      // bare "Hang up" a line later, so the specific "End the call with <name>" never reached a
+      // screen reader: on a call screen the only other control is the microphone, so "Hang up" told
+      // a screen-reader user nothing they could not work out, and the redundant second
+      // setContentDescription made it look deliberate.
       View hangup = activity.hangupCircle("End the call with " + peerName, HANGUP_DP);
-      hangup.setContentDescription("Hang up");
       hangup.setOnClickListener(v -> activity.runCallAction(ui::hangup, "Could not end the call."));
       FrameLayout.LayoutParams overStage =
         new FrameLayout.LayoutParams(activity.dp(HANGUP_DP), activity.dp(HANGUP_DP),
@@ -581,6 +612,7 @@ final class CallView {
     boundTerminal = false;
     collapsed = false;
     dismissedCallId = null;
+    announcedState = null;
   }
 
   /** Drop references to a view tree the Activity has already thrown away.  Called from frame()
@@ -596,13 +628,12 @@ final class CallView {
     boundTerminal = false;
     lastQualityAnnounceMs = 0;
     collapsed = false;
+    dismissedCallId = null;
+    announcedState = null;
   }
 
   /** Whether an overlay is currently attached. */
   static boolean isShowing() { return overlay != null; }
-
-  /** Whether the attached overlay is the collapsed bar rather than the full call screen. */
-  static boolean isCollapsed() { return collapsed; }
 
   /** Handle Back while a call is running.  Returns true when the overlay took the key.
    *

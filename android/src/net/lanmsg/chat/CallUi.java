@@ -133,6 +133,50 @@ public class CallUi {
     }
   }
 
+  /** True when this render announces a new state rather than repainting the same one.
+   *
+   *  <p>The call screen redraws once a second for the whole length of a call and the status line
+   *  carries the duration clock, so a permanently-live accessibility region had TalkBack read
+   *  "0:04", then "0:05", then "0:06", once a second, for as long as the call lasted.  That makes
+   *  the screen least usable to exactly the users the accessibility labels exist for: a
+   *  screen-reader user cannot hear the other person over their own clock.  The clock still has to be
+   *  *visible* every second, so it is the announcement that is gated, not the text.
+   *
+   *  <p>Equal states -- which is every one of the ~1800 renders a ten-minute call makes -- return
+   *  false, so nothing is announced and the repetition stops. */
+  public static boolean isNewStateAnnouncement(CallProtocol.State last, CallProtocol.State now) {
+    return now != null && now != last;
+  }
+
+  /** Whether the user asked to be in the conversation rather than on the call screen, for this call.
+   *
+   *  <p>The chat control records the request instead of only performing it, because performing it was
+   *  not enough: {@code showChat} ends in {@code render()}, which saw a live call with nothing
+   *  attached and rebuilt the full-screen panel straight back over the conversation the user had
+   *  just asked for, so the control did nothing visible.  Keyed by call ID so it lapses by itself
+   *  when that call ends or a different one starts -- a boolean would have needed clearing in every
+   *  path that ends a call, and one missed path would leave the next call with no screen at all.
+   *
+   *  <p>This is the exact test render() makes, which is why the two cannot drift apart. */
+  public static boolean shouldStayDismissed(String dismissedCallId, CallSession call) {
+    if (dismissedCallId == null || call == null) return false;
+    return dismissedCallId.equals(call.callId);
+  }
+
+  /** Everything the return-to-call bar shows, as one string to compare against.
+   *
+   *  <p>This is what decides whether the bar is stale, and it was wrong twice before. It first keyed
+   *  on {@code call.state}, an enum that stops changing the moment the call connects, while the text
+   *  beside it is the duration -- so the bar was built once and showed "0:00" for the whole call. It
+   *  then keyed only on whether the bar was the right visibility, so a bar whose words changed while
+   *  it was already showing never rebuilt. Both were found by a user, not by a test.
+   *
+   *  <p>Here rather than in MainActivity so the pure-Java harness can assert it: it cannot load an
+   *  Activity, so a rule that decides what a user sees has to live where the test can reach it. */
+  public static String callBarWords(CallSession call) {
+    return stateLabel(call) + "|" + detailLabel(call) + "|" + call.peerId;
+  }
+
   /** Duration formatted as MM:SS. */
   public static String formatDuration(long ms) {
     long sec = ms / 1000;

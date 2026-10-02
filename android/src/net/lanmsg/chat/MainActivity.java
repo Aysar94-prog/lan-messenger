@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
     // The call overlay lives on the stage, which frame() replaces wholesale, so its reference must
     // be dropped with the old tree. The retained terminal snapshot survives on the view-model, so
     // the end reason is still shown by the next render.
-    CallView.forgetOverlay();callBar=null;callBarTag=null;
+    CallView.forgetOverlay();callBar=null;callBarTag=null;callBarSummary=null;
     stage=new FrameLayout(this);chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);stage.addView(chrome,new FrameLayout.LayoutParams(-1,-1));setContentView(stage);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
@@ -361,6 +361,13 @@ public class MainActivity extends Activity {
   // people screen gets it: inside a chat the call overlay is already on top.
   LinearLayout callBar;
 
+  /** The bar's summary line, kept across renders so the 1 Hz clock updates text in place.
+   *
+   *  <p>Null means "the bar has no children": set after a build, and cleared when the bar goes away
+   *  so the next call builds its own buttons rather than reusing the previous peer's, whose Return
+   *  and End would then be labelling the wrong person. */
+  TextView callBarSummary;
+
   void renderCallBar(){
     if(callBar==null||root==null)return;
     CallUi ui=callUi;
@@ -375,7 +382,7 @@ public class MainActivity extends Activity {
     // changing the moment the call connected, while the summary beside it is the duration and
     // changes every second: the bar was built once at Connecting->Connected and then frozen at the
     // first "0:00" it ever showed, for as long as the call ran.
-    String want=live?CallUi.stateLabel(call)+"|"+CallUi.detailLabel(call)+"|"+call.peerId:null;
+    String want=live?CallUi.callBarWords(call):null;
     boolean visibilityChanged=callBar.getVisibility()!=(live?View.VISIBLE:View.GONE);
     boolean wordsChanged=callBarTag==null?want!=null:!callBarTag.equals(want);
     if(!visibilityChanged&&!wordsChanged)return;
@@ -383,21 +390,34 @@ public class MainActivity extends Activity {
     if(live){
       MessengerService service=host;
       String name=service==null?call.peerId:service.callPeerName(call.peerId);
-      callBar.removeAllViews();
-      TextView summary=label(CallUi.stateLabel(call),15);summary.setTextColor(Color.WHITE);
-      summary.setContentDescription("Call with "+name+" in progress. "+CallUi.stateLabel(call));
-      callBar.addView(summary,new LinearLayout.LayoutParams(0,-2,1));
-      Button returnToCall=button("Return");returnToCall.setTextColor(Color.WHITE);
-      returnToCall.setContentDescription("Return to the call with "+name);
-      returnToCall.setOnClickListener(v->showCallOverlay());
-      callBar.addView(returnToCall);
-      Button endCall=button("End");endCall.setTextColor(Color.WHITE);
-      endCall.setContentDescription("End the call with "+name);
-      endCall.setOnClickListener(v->runCallAction(ui::hangup,"Could not end the call."));
-      callBar.addView(endCall);
+      if(callBarSummary==null){
+        callBar.removeAllViews();
+        callBarSummary=label("",15);callBarSummary.setTextColor(Color.WHITE);
+        callBar.addView(callBarSummary,new LinearLayout.LayoutParams(0,-2,1));
+        Button returnToCall=button("Return");returnToCall.setTextColor(Color.WHITE);
+        returnToCall.setContentDescription("Return to the call with "+name);
+        returnToCall.setOnClickListener(v->showCallOverlay());
+        callBar.addView(returnToCall);
+        Button endCall=button("End");endCall.setTextColor(Color.WHITE);
+        endCall.setContentDescription("End the call with "+name);
+        endCall.setOnClickListener(v->runCallAction(ui::hangup,"Could not end the call."));
+        callBar.addView(endCall);
+      }
+      // Retargeted in place rather than rebuilt. The words change every second while connected --
+      // that is the whole point of the bar -- and rebuilding meant removeAllViews plus three new
+      // Buttons, four LayoutParams and a fresh content description allocated on the UI thread once
+      // a second for as long as the call lasted. Only the first render after the bar appears
+      // allocates; every one after it writes text.
+      callBarSummary.setText(CallUi.stateLabel(call));
+      callBarSummary.setContentDescription("Call with "+name+" in progress. "+CallUi.stateLabel(call));
     }
+    if(callBarSummary!=null&&!live)callBarSummary=null;
     callBar.setVisibility(live?View.VISIBLE:View.GONE);
   }
+
+  // The words themselves are computed by CallUi.callBarWords, which is pure and so is reachable
+    // from the Java test harness; keeping the string here would put it out of reach of the one
+    // check that can prove it changes with the clock.
   /** Put the call overlay on top of whatever screen is showing. */
   void showCallOverlay(){
     lastSignature="";
@@ -411,8 +431,26 @@ public class MainActivity extends Activity {
     // A08: the Call action exists only for a direct contact. Group calls are out of scope, and a
     // self-call is not a thing, so neither can offer it.
     if(isPeer)menu.getMenu().add("Call");
-    if(isPeer)menu.getMenu().add("Verify device");menu.getMenu().add("Group members");menu.getMenu().add("Clear conversation");if(selectedGroup!=null)menu.getMenu().add("Leave group");
-    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();if(title.equals("Call"))startCallTo(selected);else if(title.equals("Clear conversation"))clearChat();else if(title.equals("Verify device"))verifyDevice();else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);else showMembers();return true;});menu.show();}
+    if(isPeer)menu.getMenu().add("Verify device");
+    // Group-only. It used to be added unconditionally, so a direct conversation offered "Group
+    // members", and tapping it opened nothing at all: showMembers() looks for a group whose id
+    // matches `selected`, finds none, and falls through to a toast telling the user the obvious.
+    // There is nothing about a two-person conversation to list, and offering it invited the user to
+    // tap a control that cannot work. Guarded on selectedGroup, not isGroup, so it also disappears
+    // if the group is removed underneath us.
+    if(selectedGroup!=null)menu.getMenu().add("Group members");
+    menu.getMenu().add("Clear conversation");
+    if(selectedGroup!=null)menu.getMenu().add("Leave group");
+    // Each title is dispatched explicitly. This used to end in `else showMembers()`, so every
+    // title that was not matched above silently ran the members dialog -- adding one item meant
+    // forgetting to route it, and the wrong dialog opened instead of nothing.
+    menu.setOnMenuItemClickListener(item->{String title=item.getTitle().toString();
+      if(title.equals("Call"))startCallTo(selected);
+      else if(title.equals("Clear conversation"))clearChat();
+      else if(title.equals("Verify device"))verifyDevice();
+      else if(title.equals("Group members"))showMembers();
+      else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);
+      return true;});menu.show();}
 
   // ── Voice calls (A08-A10) ──────────────────────────────────────
 
