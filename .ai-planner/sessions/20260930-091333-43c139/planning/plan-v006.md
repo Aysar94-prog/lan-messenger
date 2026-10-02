@@ -605,3 +605,187 @@ Record revision, dependencies, device/OS/architecture, route, network and actual
 7. **BT02/BTQ01/BT03 and A11 → A12/W10 → B04:** validate and package after all MVP gates.
 8. **BH01:** extended hardening.
 9. **Video phases:** implement later using the same signaling and media foundation.
+
+## Addendum (2026-10-02): what Android actually built, and what it means for Windows
+
+This section records what happened during real Android implementation — decisions this plan left
+open, bugs found only by running on physical hardware, and one feature added beyond the original
+scope. Windows (Phase W0–W5, still **entirely Pending** — zero Windows call code exists) should
+treat the items below as settled precedent, not re-open them from scratch, except where a decision
+is explicitly Android-specific and has no Windows equivalent.
+
+### A. Dependency decision that was actually made (closes B01/B02 for Android)
+
+- **Chosen:** `io.github.webrtc-sdk:android:150.7871.01` (Maven Central), exactly the plan's
+  preferred Android candidate. Downloaded/cached by `android/prepare-webrtc.ps1`; integrated by
+  `android/build-voice.ps1`, the single AAR-aware build pipeline (javac + d8 + aapt + apksigner,
+  native `.so` packaged under `lib/<abi>/`).
+- **It is now a hard dependency** — `WebRtcCallMedia` uses direct `org.webrtc` imports, so there is
+  no "build without WebRTC" mode. `android/build.ps1` is a thin wrapper over `build-voice.ps1`.
+  **Windows precedent:** decide the equivalent up front (W03b) rather than leaving a toggle — a
+  partial/optional media stack is more code than a mandatory one and this plan's own contracts
+  (admission, policy, settings) all assume a real media adapter exists.
+- **ABI policy actually exercised, not yet finalized:** development/validation builds throughout
+  used `-Arm64Only` (≈6 MB APK: arm64-v8a only); the full-ABI build path exists in
+  `build-voice.ps1` (≈47 MB, all ABIs) but **has not been built or tested** this session. The
+  plan's "planned universal ABIs: armeabi-v7a, arm64-v8a, x86 and x86_64" (A11) is **still an open
+  decision**, not settled by precedent — only arm64-v8a has real device evidence. Do not read the
+  Android dev-build choice as a finalized ABI policy.
+- **This closes B02's Android half** (paired feasibility) for real audio, not just a prototype —
+  see section C below for the actual physical-device evidence, which went well past a feasibility
+  prototype into a shipped, iterated feature.
+
+### B. Wire/signaling contract as actually implemented (what B03 should freeze to match)
+
+The classes this plan proposed for A1 (`CallSession`, `CallController`, `CallProtocol`,
+`CallSignaling`, `CallMedia`/`ICallMedia`, `CallSettings`) were built essentially as named, plus
+`CallChannel` (owns the call socket + one reader thread + a serialized writer), `CallNotifier`,
+`CallView`, `CallUi` (service-owned view-model, see section D), `CallRoute`/`CallRoutePolicy`,
+`AudioOwnership`, and `CallQualityMonitor`. Confirmed-working specifics Windows should match
+byte-for-byte for interop, not re-derive:
+
+- **Framing:** 4-byte big-endian length + UTF-8 JSON, exactly as specified (`CallSignaling.java`).
+- **14 signaling message types** (INVITE through PONG) and **6 call states** — matches this plan's
+  `Idle → OutgoingRinging/IncomingRinging → Connecting → Connected → Ending → Idle` shape.
+- **Invitation limiter:** 5 per peer per rolling 60-second window — matches this plan's frozen
+  default exactly; implemented and tested (glare/duplicate-INVITE idempotency included).
+- **Caller presentation:** `CallUi`'s wording never discloses the incoming-call preference —
+  policy-decline and manual decline both read **"Declined"**, matching R5-02/A08's binding
+  resolution. `BUSY` is used for throttling/occupancy, plain silence for identity-mismatch.
+- **A real bug this surfaced, relevant to W01/W02:** the incoming INVITE was originally dropped
+  entirely because `onFrame` returned early on a null session without ever calling `onInvite` —
+  a reminder that the "session must already exist to dispatch a frame" assumption in early
+  signaling code is exactly backwards for the very first frame of a call. A policy decline that
+  sent nothing (silent) made the caller sit through the full 30 s ring timeout and report "No
+  answer" — **every decline path must send an explicit frame**, never rely on silence meaning
+  no. `sendFrame` originally counted an *outbound* write as evidence of a live inbound channel,
+  so a half-dead socket never tripped the liveness/heartbeat check — liveness evidence must come
+  from the read side only.
+
+### C. Physical validation actually completed (far beyond B02's "prove feasibility" bar)
+
+Android call quality and UI went through real user-driven iteration, not just a one-time
+feasibility proof:
+
+- Real two-phone loopback: SDP offer/answer (Opus), ICE (5+3 host candidates), DTLS-SRTP,
+  bidirectional audio to `packetsLost=0`, mute — on a physical Samsung SM-S908E.
+- A real signaling-thread deadlock was found and fixed: `PeerConnection.Observer` callbacks arrive
+  on the WebRTC signaling thread, and any blocking listener work on that thread deadlocks the media
+  thread against the caller. **Windows' native/bridge callback threading (W04) must assume the
+  same hazard** — never block inside a native WebRTC callback; hop to an owned executor first.
+- Ten real build-pipeline bugs were found and fixed on the Android side (PowerShell `continue`
+  inside `ForEach-Object` silently truncating the whole build script with exit code 0; native libs
+  packaged with backslashes an Android loader can't recognize; `-VersionName`/`-VersionCode` never
+  reaching the manifest; an aapt quirk requiring the manifest file be named exactly
+  `AndroidManifest.xml`). **None of these are Android-specific lessons** — they're generic
+  "a green build doesn't mean a correct build" reminders worth an explicit sanity pass in W03b's
+  per-RID publish pipeline (WT01b).
+- Call screen UI went through **five real device-acceptance passes** after the initial build,
+  each driven by an actual bug found only by a two-device physical run, not by review:
+  1. The floating hang-up disc covered Accept/Decline while ringing (tapping Accept hung up
+     instead of answering) — fixed by only adding it for non-ringing states.
+  2. A minimised call couldn't be reopened — a render-diff check treated an unchanged snapshot as
+     "nothing to rebuild" even though the view had been hidden.
+  3. Back abandoned a live call instead of minimising it.
+  4. The call clock started at ring, not at answer (`elapsedMs` must measure from
+     `connectedAtMs`, with the stored duration only a floor).
+  5. The call screen swallowed no touches it didn't use, so tapping beside the avatar fell through
+     to the conversation underneath; the chat shortcut (💬) re-triggered the very overlay it was
+     meant to dismiss because the dismissal flag was cleared by the same `render()` the chat-open
+     action caused; the return-to-call bar froze at `0:00` because it was keyed on an enum that
+     stops changing at `Connected` while the text beside it (duration) changes every second; a
+     floating draggable minimised bar's drag math needs to track the finger's position relative to
+     where it went down, not accumulate smoothed per-event deltas, or it trails behind the touch.
+  **For W08 (Windows call UI): budget real two-… this is not a one-pass UI task even once the
+  reference layout is agreed — expect several rounds of "looks right until you actually use it."**
+- **Accepted reference call-screen layout (for W08 parity — the user asked Windows to match this
+  once built):** a dark teal header (`#0E524C`) carrying the peer's name as an uppercase headline
+  with the timer/status line under it and a minimise control (🔽) at its right; the peer's picture
+  (falling back to a coloured initial disc) in the window between; one large red hang-up disc
+  (a 📞 rotated 135°, since no emoji reads as "hang up" the way a rotated phone glyph does — 📴
+  reads as "phone switched off") floating just above a teal control bar holding
+  chat / speaker-or-earpiece / mute-or-unmute in three equal-weight slots. Ring screens reuse the
+  same frame with worded **Accept**/**Decline**/**Cancel** rather than icon-only controls.
+- A cold-start defect worth flagging for W01 ownership design: a cold-started Activity/UI can bind
+  to a call view-model before the call-owning host has actually created one yet (the service only
+  builds its `CallUi` once it finishes building the LAN stack, seconds after the UI resumes), and
+  if the first bind attempt silently gives up and never asks again, **Accept does nothing on every
+  incoming call until the user manually leaves and re-enters** — with Decline still working,
+  because it closed over its own instance, making the defect very easy to miss from looking at
+  Decline working fine. **Windows' tray/app-owned controller (W01/W08) should retry its bind on
+  the same periodic tick that already redraws the UI, not only on a single lifecycle callback.**
+- An accessibility defect worth matching in W08/WT03: a status line carrying the live duration
+  clock, if left as a permanently-live accessibility region, gets read aloud every second by a
+  screen reader for the entire call — exactly the one thing a screen-reader user needs *not* to
+  hear over the person they're talking to. State-change announcements and the visibly-updating
+  clock text need to be two different code paths, not one.
+
+### D. A feature added beyond this plan's original scope: call-history entries
+
+This plan explicitly deferred "durable call history" (Phase 1 milestone table, "Deferred" list).
+**The user has since asked for it and it has been built and shipped on Android** (2026-10-02,
+Android release 2.2.42) as a Messenger-style inline chat entry: "You called X [· duration]",
+"X called you · duration", "Missed call" (shown in red), each with a timestamp, rendered as a
+centered system-style pill rather than a chat bubble.
+
+**Key design decision, directly relevant to Windows parity:** this is **purely local, per-device**
+— each side logs its own call outcome from its own `CallController`'s terminal snapshot (caller
+role, connected-or-not, duration are already known identically on both ends without either side
+telling the other), so **there is no wire/protocol addition** — nothing new is sent to the peer,
+`CallProtocol`/`CallSignaling` are untouched, and the entry is encoded into the existing per-message
+storage via a filename-marker convention (mirroring how voice-message markers already work),
+specifically so it is never queued for network delivery.
+
+**For Windows:** when W08/W09 are reached, add the equivalent — `PeerEngine.Calls.cs`'s
+termination path should append a local-only message row the same way, worded identically
+("You called X" / "X called you · duration" / "Missed call"), with no wire change on the Windows
+side either. This is now effectively **part of the MVP surface, not deferred** — update this
+plan's "Deferred" list mentally; a future revision of this document should move it out of that
+list and into the Phase 3/W3 task tables explicitly (not done in this addendum, to avoid
+renumbering the task IDs other handoffs already reference).
+
+### E. A real crash class found only via actual release packaging, relevant to both platforms
+
+Packaging Android's accumulated work as a real numbered release (not a dev-suffixed validation
+build) surfaced a crash that no amount of dev-build testing had hit: going online crashed the
+whole process with `SecurityException: Starting FGS with type microphone ... requires
+permissions ... RECORD_AUDIO` whenever that permission was not *currently granted* (not merely
+declared) at the exact moment the foreground service started — latent since the voice-call work
+landed, never triggered before because every test device already had the permission granted from
+earlier use. It surfaced only because a device got reset to a clean permission state.
+
+**The generalizable lesson for Windows, which has no foreground-service concept but has the exact
+same shape of risk:** a call feature must never let "the microphone permission/privacy toggle
+happens to be off right now" crash or wedge the whole app — probe the actual current permission
+state immediately before acquiring the device, not just once at install/build time, and degrade
+to "can't call right now" rather than throwing past the caller. W04/W06 (device/permission denial
+handling) already account for denial in the plan; this Android incident is a concrete reminder
+that the check must be **re-evaluated at the moment of use**, including moments that aren't the
+obvious "user tapped Call" path (Android's case was an automatic background transition, not a
+user action) — re-run W06's denial-recovery design mentally against "a permission can change
+between calls without any UI the user interacted with telling you so."
+
+### F. Actual current Android status vs. this plan's table (for anyone resuming Windows work)
+
+Treat the Phase A task-status column above as **stale** for anything related to calls — in
+practice: A00–A04 (media feasibility through real device audio), A08–A10 (entry point, UI,
+notifications), and A09/A09p–A09t (the reference UI redesign and its five bugfix passes) are all
+**functionally complete and shipped** (current Android release: 2.2.42, versionCode 69), not
+"Pending"/"In progress" as this table's original entries read. What remains genuinely open on
+Android, and therefore still blocks the **B-series "Both" milestones** this plan's MVP gate
+depends on:
+
+- **No real two-party cross-platform call has ever been placed** — every validated call in this
+  addendum's section C was Android ↔ Android. Windows literally has zero call code, so
+  `D01` (first integrated demonstration) and the entire MVP pairing matrix
+  ("Android ↔ Windows", "Windows ↔ Windows") remain **completely unstarted**, not partially done.
+- A07p (proximity), A07/Bluetooth routing physical validation, and the full ABI/16 KiB
+  packaging audit (A11) are still open on Android itself, independent of Windows.
+- Video (Phase A5/W5) has not been started in any form — confirmed separately, see the
+  investigation recorded the same day this addendum was written: no `VideoSource`/`VideoCapturer`/
+  `SurfaceViewRenderer` exists anywhere in the Android source, and `WebRtcCallMedia` registers no
+  video encoder/decoder factory. The audio call's protocol/transport layer needs little to no
+  change for video (SDP already carries video m-lines once a track exists), but the media adapter,
+  permissions/manifest, and the entire call UI would be new work on both platforms — treat AV01–
+  AV03/WV01–WV02/BV01–BV02 as genuinely greenfield when that work is eventually picked up, not a
+  small extension of the voice work.

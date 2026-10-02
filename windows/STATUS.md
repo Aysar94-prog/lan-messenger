@@ -1,5 +1,25 @@
 # Windows status
 
+## Voice calls — not started; read this before picking up any call work (2026-10-02)
+
+Windows has **zero voice-call code** — no `CallController`/`CallSession`/`CallProtocol`/media
+adapter, nothing. Android's voice-call implementation (A00–A10, the reference call-screen
+redesign through its fifth bugfix pass, and a Messenger-style call-history feature added beyond
+the original plan) is functionally complete and shipped as Android release 2.2.42. All of it is
+**Android ↔ Android only** — no real two-party cross-platform call has ever been placed, since
+the Windows side literally doesn't exist yet.
+
+Before starting Windows call work, read the **Addendum (2026-10-02)** at the end of
+`.ai-planner/sessions/20260930-091333-43c139/planning/plan-v006.md` (the shared voice-calls plan).
+It records, specifically for Windows to reuse rather than re-derive: the exact wire/signaling
+contract as actually implemented (framing, message types, timeouts, the invitation limiter), real
+bugs found only by running on physical hardware (a signaling-thread deadlock class, a dropped-
+INVITE dispatch bug, a liveness-check bug, build-pipeline footguns), the accepted reference call-
+screen layout for UI parity, a crash class from a media permission going missing at the exact
+moment of use rather than at build time, and the call-history feature's local-only design (no
+wire change) that Windows should mirror once it reaches that phase. Phase W0–W5 in that same
+document are the actual task breakdown; none of them have been started.
+
 ## Voice Messages implemented in source (Phase 2 / W01-W10, WT01+WT06, not a release)
 
 Windows Phase 2 of the shared Voice Messages feature (`plan-v003`, tracked at
