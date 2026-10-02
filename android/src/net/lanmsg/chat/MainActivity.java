@@ -382,7 +382,28 @@ public class MainActivity extends Activity {
     if(messages.isEmpty())feed.addView(label("Verify this device before chatting.\n\nQueued messages send after both verified devices reconnect. Delivered means saved on the other device.",17));
     int maxBubble=Math.min(dp(320),(int)(getResources().getDisplayMetrics().widthPixels*0.78));
     byte[] ownAvatarRaw=e.avatar();Bitmap ownAvatarBmp=ownAvatarRaw==null?null:inlineBitmap(ownAvatarRaw);
-    for(int messageIndex=start;messageIndex<messages.size();messageIndex++){PeerEngine.Message m=messages.get(messageIndex);boolean mine=m.from.equals(e.id);LinearLayout card=column();card.setPadding(dp(12),dp(6),dp(12),dp(8));card.setBackground(bg(mine?bubbleMine:Color.WHITE));
+    for(int messageIndex=start;messageIndex<messages.size();messageIndex++){PeerEngine.Message m=messages.get(messageIndex);
+      // A call-history entry (PeerEngine.appendCallLog) renders as a centered system-style pill,
+      // Messenger-style -- not a chat bubble: no sender name/avatar row, no delivery ticks, added
+      // directly to the feed rather than through the mine/theirs bubble wrapper below.
+      CallLogMarker.Info callInfo=CallLogMarker.tryParse(m.fileName);
+      if(callInfo!=null){
+        String peerName=peer!=null?peer.name:(group!=null?group.name:"them");
+        String label=callInfo.isCaller
+          ?("You called "+peerName+(callInfo.connected?" · "+formatCallDuration(callInfo.durationMs):""))
+          :(callInfo.connected?(peerName+" called you · "+formatCallDuration(callInfo.durationMs)):"Missed call");
+        boolean missed=!callInfo.isCaller&&!callInfo.connected;
+        LinearLayout pillColumn=new LinearLayout(this);pillColumn.setOrientation(LinearLayout.VERTICAL);pillColumn.setGravity(android.view.Gravity.CENTER);
+        TextView pill=label("📞  "+label,13);pill.setTextColor(missed?Color.rgb(211,47,47):Color.rgb(112,128,144));pill.setBackground(bg(Color.rgb(236,236,236)));pill.setPadding(dp(12),dp(6),dp(12),dp(6));
+        pillColumn.addView(pill);
+        TextView pillTime=label(android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString(),11);pillTime.setTextColor(Color.rgb(112,128,144));pillTime.setPadding(0,dp(2),0,0);pillTime.setGravity(android.view.Gravity.CENTER);
+        pillColumn.addView(pillTime);
+        LinearLayout pillRow=new LinearLayout(this);pillRow.setOrientation(LinearLayout.HORIZONTAL);pillRow.setGravity(android.view.Gravity.CENTER);pillRow.addView(pillColumn);
+        LinearLayout.LayoutParams pillWrapParams=new LinearLayout.LayoutParams(-1,-2);pillWrapParams.setMargins(0,dp(5),0,dp(5));
+        feed.addView(pillRow,pillWrapParams);
+        continue;
+      }
+      boolean mine=m.from.equals(e.id);LinearLayout card=column();card.setPadding(dp(12),dp(6),dp(12),dp(8));card.setBackground(bg(mine?bubbleMine:Color.WHITE));
       LinearLayout whoRow=new LinearLayout(this);whoRow.setOrientation(LinearLayout.HORIZONTAL);whoRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
       String whoName=mine?"You":e.displayName(m.from);int whoColor=mine?accent:nameColor(m.from);
       LinearLayout.LayoutParams miniAvatarParams=new LinearLayout.LayoutParams(dp(18),dp(18));miniAvatarParams.setMargins(0,0,dp(6),0);
@@ -431,6 +452,7 @@ public class MainActivity extends Activity {
   // rendering a whole conversation's history would otherwise decrypt every large file in it.
   Bitmap inlineBitmap(PeerEngine engine,PeerEngine.Message message){if(!PeerEngine.isImageAttachment(message)||message.fileSize>THUMBNAIL_PREVIEW_CAP||!engine.hasAttachment(message))return null;String key=message.from+"/"+message.id+"/"+message.fileHash;Bitmap cached=thumbnailCache.get(key);if(cached!=null&&!cached.isRecycled())return cached;try{Bitmap bitmap=inlineBitmap(engine.readAttachment(message));if(bitmap!=null)thumbnailCache.put(key,bitmap);return bitmap;}catch(Exception ignored){return null;}}
   static String formatSize(long bytes){return bytes>=1024*1024?String.format(Locale.ROOT,"%.1f MB",bytes/1024.0/1024.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
+  static String formatCallDuration(long ms){long s=Math.max(0,ms/1000);return s>=3600?String.format(Locale.ROOT,"%d:%02d:%02d",s/3600,(s%3600)/60,s%60):String.format(Locale.ROOT,"%d:%02d",s/60,s%60);}
   Bitmap inlineBitmap(byte[] bytes){try{BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0||(long)bounds.outWidth*bounds.outHeight>32000000)return null;bounds.inSampleSize=1;while(bounds.outWidth/bounds.inSampleSize>1000||bounds.outHeight/bounds.inSampleSize>800)bounds.inSampleSize*=2;bounds.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);}catch(Exception ignored){return null;}}
   void releaseImages(View view){if(view instanceof ImageView){((ImageView)view).setImageDrawable(null);}else if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)releaseImages(group.getChildAt(i));}}
   void verifyDevice(){PeerEngine e=engine();if(selected==null)return;if(host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to verify a device.",Toast.LENGTH_LONG).show();return;}if(e==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;final PeerEngine.Peer target=peer;

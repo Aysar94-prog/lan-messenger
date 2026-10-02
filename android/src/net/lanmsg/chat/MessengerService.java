@@ -188,6 +188,10 @@ public class MessengerService extends Service {
       case Ending:
         CallNotifier.clear(this);
         CallRoute.exitCallMode(this);
+        // A chat-visible call-history entry, Messenger-style -- purely local (see
+        // PeerEngine.appendCallLog's comment), so both ends of the same call each log their own
+        // side independently and nothing needs to be sent for the other device to see its own.
+        if(engine!=null)try{engine.appendCallLog(call.peerId,call.isCaller,call.connectedAtMs>0,call.durationMs);}catch(Exception ignored){}
         break;
       default:
         break;
