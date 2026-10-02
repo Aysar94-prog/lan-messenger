@@ -165,13 +165,25 @@ public class MainActivity extends Activity {
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
   void showChat(String id){saveDraft();if(recordingConversation!=null&&!recordingConversation.equals(id))VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
-    PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;
-    if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";}
-      if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);}}
+    PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;String chatName="this device";
+    if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";chatName=g.name;}
+      if(!isGroup)for(PeerEngine.Peer p:chatEngine.peers())if(p.id.equals(id)){chatColor=nameColor(p.id);chatInitial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);chatName=p.name;}}
     LinearLayout chatHeader=new LinearLayout(this);chatHeader.setOrientation(LinearLayout.HORIZONTAL);chatHeader.setGravity(android.view.Gravity.CENTER_VERTICAL);chatHeader.setBackgroundColor(headerDark);chatHeader.setPadding(dp(2),dp(6),dp(10),dp(6));
     Button back=new Button(this);back.setText("‹");back.setAllCaps(false);back.setTextSize(24);back.setTextColor(Color.WHITE);back.setBackgroundColor(Color.TRANSPARENT);back.setMinWidth(dp(46));back.setOnClickListener(v->showPeople());chatHeader.addView(back);
     FrameLayout chatAvatar=new FrameLayout(this);chatAvatar.setBackground(circleBg(chatColor,36));TextView chatAvatarText=new TextView(this);chatAvatarText.setText(chatInitial);chatAvatarText.setTextColor(Color.WHITE);chatAvatarText.setTypeface(null,Typeface.BOLD);chatAvatarText.setGravity(android.view.Gravity.CENTER);chatAvatar.addView(chatAvatarText,new FrameLayout.LayoutParams(-1,-1));LinearLayout.LayoutParams chatAvatarParams=new LinearLayout.LayoutParams(dp(36),dp(36));chatAvatarParams.setMargins(0,0,dp(10),0);chatHeader.addView(chatAvatar,chatAvatarParams);
     heading=new TextView(this);heading.setTextColor(Color.WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setTextSize(15);heading.setSingleLine(true);heading.setEllipsize(TextUtils.TruncateAt.END);chatHeader.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
+    // The call control sits beside the name it calls, the way a messenger chat header carries it.
+    // It used to be reachable only through the overflow menu, two taps in and easy to forget, which
+    // is why the app looked like it had no way to call at all. It stays enabled for a device that
+    // is offline, because then it says why rather than being silently dead. A group has no
+    // one-to-one voice call, so it does not get one.
+    if(!isGroup){
+      final String callTarget=id;
+      Button callNow=dotButton("📞","Call "+chatName,true,40);
+      callNow.setOnClickListener(v->startCallTo(callTarget));
+      LinearLayout.LayoutParams callParams=new LinearLayout.LayoutParams(dp(40),dp(40));callParams.setMargins(0,0,dp(8),0);
+      chatHeader.addView(callNow,callParams);
+    }
     Button more=new Button(this);more.setText("⋮");more.setAllCaps(false);more.setTextSize(20);more.setTextColor(Color.WHITE);more.setBackgroundColor(Color.TRANSPARENT);more.setOnClickListener(v->chatMenu(more));chatHeader.addView(more);
     chrome.addView(chatHeader,0);
     final boolean isGroupFinal=isGroup;
@@ -260,7 +272,7 @@ public class MainActivity extends Activity {
       }
       for(Object[] c:convos){
         if((Boolean)c[1]){PeerEngine.Group g=(PeerEngine.Group)c[3];Button contact=button(g.name+"\nGroup · "+g.members.length+" members"+(e.pendingOwnershipHandoff(g.id)?" · Leaving…":""));contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));contact.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(245,243,250)));PeopleListView.addContactRow(this,contact,e.unread(g.id),"G",Color.rgb(156,124,224));contact.setOnClickListener(v->showChat(g.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(g.id,g.name,true);return true;});}
-         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+("Online".equals(host.state)&&p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial),callButtonFor(p));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
+         else{PeerEngine.Peer p=(PeerEngine.Peer)c[3];Button contact=button(p.name+"  ·  "+("Online".equals(host.state)&&p.online()?"Online":"Offline")+"\n"+p.id.substring(0,8)+" · "+p.security());contact.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);contact.setPadding(dp(14),dp(10),dp(14),dp(10));String initial=p.name.isEmpty()?"?":p.name.substring(0,1).toUpperCase(Locale.ROOT);PeopleListView.addContactRow(this,contact,e.unread(p.id),PeopleListView.peerAvatarView(this,e,p,initial));contact.setOnClickListener(v->showChat(p.id));contact.setOnLongClickListener(v->{confirmDeleteConversation(p.id,p.name,false);return true;});}
       }
       return;
     }
@@ -405,17 +417,6 @@ public class MainActivity extends Activity {
 
   /** Place a call to a peer.  The microphone permission is obtained before inviting, and no
    *  capture starts until the peer accepts. */
-  /** The one-tap call control for a list row.
-   *
-   *  <p>Built here rather than in the row itself so the peer is captured as a final local: the row
-   *  is rebuilt on every render, and a listener closing over the loop variable would later act on
-   *  whichever peer happened to be last. */
-  Button callButtonFor(final PeerEngine.Peer p){
-    Button b=dotButton("📞","Call "+p.name,true,44);
-    b.setOnClickListener(v->startCallTo(p.id));
-    return b;
-  }
-
   void startCallTo(String peerId){
     if(peerId==null)return;
     if(host==null||"Online".equals(host.state)==false){Toast.makeText(this,"Go online to call.",Toast.LENGTH_SHORT).show();return;}
