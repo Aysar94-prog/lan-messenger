@@ -18,6 +18,11 @@ public class CallSession {
   public final String audioRoute;        // "System", "Phone", "Speaker", null=unknown
   public final CallProtocol.Quality quality;
   public final long durationMs;
+  /** When the call actually connected, or 0 while it has not.  The call clock runs from here, not
+   *  from {@link #createdAtMs}: a caller watching "0:35" after twenty seconds of ringing has been
+   *  told the call has been up for thirty-five seconds, which is not true and is exactly what a
+   *  phone caller's own handset would never do. */
+  public final long connectedAtMs;
 
   CallSession(Builder b) {
     this.callId = b.callId;
@@ -30,12 +35,21 @@ public class CallSession {
     this.audioRoute = b.audioRoute;
     this.quality = b.quality;
     this.durationMs = b.durationMs;
+    this.connectedAtMs = b.connectedAtMs;
   }
 
-  /** Current elapsed duration (0 if not connected). */
+  /** How long the call has been connected (0 unless Connected).
+   *
+   *  <p>This used to add the time since the call was <em>created</em> to the last refreshed
+   *  duration, so a call answered four seconds after it rang was already showing its fourth
+   *  second and a call that rang out counted toward the conversation.  The clock is now measured
+   *  from the moment the call connected, and the stored duration is only used as a floor so a
+   *  snapshot taken before {@code connectedAtMs} was set still reports the time it had. */
   public long elapsedMs() {
-    return state == CallProtocol.State.Connected ? durationMs +
-           Math.max(0, System.currentTimeMillis() - createdAtMs) : 0;
+    if (state != CallProtocol.State.Connected) return 0;
+    long sinceConnect = connectedAtMs > 0
+      ? Math.max(0, System.currentTimeMillis() - connectedAtMs) : 0;
+    return Math.max(durationMs, sinceConnect);
   }
 
   // ── Builder for mutable state held by controller ───────────────

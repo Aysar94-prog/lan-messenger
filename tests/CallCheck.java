@@ -1113,6 +1113,52 @@ public final class CallCheck {
     eq(CallUi.detailLabel(b.snapshot()), "Muted · Speaker", "N82c-both-toggles-named");
     b.audioRoute = "Earpiece";
     eq(CallUi.detailLabel(b.snapshot()), "Muted", "N82d-earpiece-is-not-named");
+
+    // The call clock must run from the moment the call was ANSWERED, not from the moment it was
+    // created.  It used to add the time since the invitation was created to the connected duration,
+    // so a call picked up four seconds after it rang was already showing "0:04" -- a caller was
+    // told the call had been up for longer than it had, and a call that rang out then got answered
+    // resumed from the ringing time instead of zero.
+    long now = System.currentTimeMillis();
+    CallSession.Builder c = new CallSession.Builder("c0a11e00-0000-4000-8000-000000000010", "peer", false, now - 20000);
+    c.state = CallProtocol.State.OutgoingRinging;
+    eq(c.snapshot().elapsedMs(), 0L, "N143-no-clock-while-ringing");
+    c.state = CallProtocol.State.Connected;
+    eq(c.snapshot().elapsedMs(), 0L, "N144-no-clock-without-a-connect-time");
+    c.connectedAtMs = now - 3000;
+    CallSession connected = c.snapshot();
+    check(connected.elapsedMs() >= 3000 && connected.elapsedMs() < 3000 + 2000,
+      "N145-clock-runs-from-answer", "expected ~3000ms of connected time, got " + connected.elapsedMs());
+    check(connected.elapsedMs() < 20000,
+      "N146-ringing-time-is-not-counted", "the 20s spent ringing leaked into the call clock");
+    eq(CallUi.stateLabel(connected), "0:03", "N147-timer-starts-at-answer");
+    c.state = CallProtocol.State.Ending;
+    eq(c.snapshot().elapsedMs(), 0L, "N148-no-clock-once-ended");
+
+    // Every end reason a user can be shown has to say what happened in words, not just name it.
+    // "Connection lost" was shown to callers whose own network was fine, because the phone at the
+    // other end had been killed; the label alone gave no way to tell, and no way to act.
+    for (CallProtocol.EndReason reason : CallProtocol.EndReason.values()) {
+      check(CallUi.endHint(reason) != null && !CallUi.endHint(reason).isEmpty(),
+        "N149-hint-for-" + reason.name(), "an end reason the user can see must explain itself");
+      check(CallUi.endLabel(reason) != null && !CallUi.endLabel(reason).isEmpty(),
+        "N150-label-for-" + reason.name(), "an end reason must still have a label");
+      check(!CallUi.endHint(reason).equals(CallUi.endLabel(reason)),
+        "N151-hint-differs-from-label-" + reason.name(), "the sentence must add to the label, not repeat it");
+    }
+    // SIGNALING_LOST is raised by the heartbeat timing out, by a local send failing and by the local
+    // channel closing, and all three happen just as well when *this* phone drops off Wi-Fi.  The
+    // sentence therefore must not name a side: it used to tell a user whose own network had failed
+    // to go and check the other phone, which is the one thing they cannot do about it.
+    check(!CallUi.endHint(CallProtocol.EndReason.SIGNALING_LOST).contains("other phone"),
+      "N152-lost-link-names-no-side", "a lost link cannot say whose side it was, so the wording must not");
+    check(CallUi.endHint(CallProtocol.EndReason.LOCAL_DECLINE).startsWith("You"),
+      "N154-decline-is-yours", "the phone that pressed Decline must not be told the other phone declined");
+    check(!CallUi.endHint(CallProtocol.EndReason.LOCAL_DECLINE)
+        .equals(CallUi.endHint(CallProtocol.EndReason.DECLINED)),
+      "N155-decline-two-sides-differ", "declining locally and being declined are different events");
+    check(!CallUi.endLabel(CallProtocol.EndReason.SIGNALING_LOST).contains("lost"),
+      "N153-lost-link-worded-plainly", "'Connection lost' reads as the local side failing");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and
