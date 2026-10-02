@@ -202,6 +202,37 @@ public class CallUi {
     return Math.max(margin, Math.min((int) top, stageH - barH - margin));
   }
 
+  /** Where a dragged bar goes horizontally, given where the finger went.
+   *
+   *  <p>Measured from where the finger went <b>down</b>, not from the per-event delta
+   *  {@code GestureDetector.onScroll} hands over.  The detector only starts reporting once the finger
+   *  has left the tap region, and up to that point it measures from a focus point it smooths as the
+   *  gesture goes on -- so accumulating its deltas leaves the bar short of the finger and stopping
+   *  wherever the smoothing happened to run out: a swipe of 227px on a real phone moved the bar
+   *  148px.  The finger is the thing the user is watching, so the bar is placed against the finger's
+   *  position relative to where it went down, which is also the only version that cannot drift.
+   *
+   *  <p>Pure so the harness, which can load neither a View nor a GestureDetector, can still assert
+   *  that the bar lands exactly under the finger. */
+  public static float draggedLeft(float downX, float startLeft, float fingerX) {
+    return startLeft + (fingerX - downX);
+  }
+
+  /** Vertical counterpart of {@link #draggedLeft}. */
+  public static float draggedTop(float downY, float startTop, float fingerY) {
+    return startTop + (fingerY - downY);
+  }
+
+  /** Whether a finger that has moved this far is dragging the bar rather than tapping it.
+   *
+   *  <p>One control has to answer both "open the call" and "move me", so a movement short of the
+   *  slop is read as the jitter of a tap and dropped.  Without it every tap to reopen nudges the bar
+   *  slightly and it walks away from where the user put it, one tap at a time.  The test is on either
+   *  axis rather than on the distance, so a straight sideways drag is a drag even when it is short. */
+  public static boolean isBarDrag(float downX, float downY, float fingerX, float fingerY, float slop) {
+    return Math.abs(fingerX - downX) >= slop || Math.abs(fingerY - downY) >= slop;
+  }
+
   /** Which view-model an "accept this call" action should go through.
    *
    *  <p>There were two references to the same model in play: the one a control was built from, and

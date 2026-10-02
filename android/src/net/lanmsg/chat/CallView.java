@@ -628,10 +628,15 @@ final class CallView {
    *  mistaken for pressing it. */
   private static void makeDraggable(final MainActivity activity, final View bar) {
     final float[] downAt = new float[2];
+    final float[] startAt = new float[2];
     android.view.GestureDetector gestures =
       new android.view.GestureDetector(activity, new android.view.GestureDetector.SimpleOnGestureListener() {
         @Override public boolean onDown(android.view.MotionEvent e) {
           downAt[0] = e.getRawX(); downAt[1] = e.getRawY();
+          // Where the bar was when the finger landed, not where it has got to by the next event.
+          // CallUi.draggedLeft/Top measure from here, so the bar tracks the finger exactly instead of
+          // trailing it by however much the detector's own focus smoothing lost.
+          startAt[0] = bar.getX(); startAt[1] = bar.getY();
           return true;
         }
         @Override public boolean onSingleTapUp(android.view.MotionEvent e) {
@@ -640,12 +645,14 @@ final class CallView {
         }
         @Override public boolean onScroll(android.view.MotionEvent from, android.view.MotionEvent to,
                                           float dx, float dy) {
+          // dx and dy are ignored on purpose: see CallUi.draggedLeft for why they add up short.
           if (to == null) return false;
           // Ignore the jitter of what was meant as a tap, so a tap that opens the call does not
           // also nudge the bar somewhere the user did not put it.
-          if (Math.abs(to.getRawX() - downAt[0]) < activity.dp(6)
-              && Math.abs(to.getRawY() - downAt[1]) < activity.dp(6)) return false;
-          placeCollapsed(activity, bar, bar.getX() - dx, bar.getY() - dy);
+          if (!CallUi.isBarDrag(downAt[0], downAt[1], to.getRawX(), to.getRawY(), activity.dp(6))) return false;
+          placeCollapsed(activity, bar,
+            CallUi.draggedLeft(downAt[0], startAt[0], to.getRawX()),
+            CallUi.draggedTop(downAt[1], startAt[1], to.getRawY()));
           return true;
         }
       });
