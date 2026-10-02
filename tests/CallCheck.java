@@ -1123,6 +1123,17 @@ public final class CallCheck {
       "N99-media-ready-while-connecting", "MEDIA_READY is what promotes Connecting to Connected");
     check(CallProtocol.allowedSender(CallProtocol.HANGUP, CallProtocol.State.Connected, false) != null,
       "N100-hangup-while-connected", "a hangup must be honoured mid-call");
+    // A caller that never processed the ACCEPT (broken or lost signalling) abandons the attempt
+    // with CANCEL while this side has already accepted and is Connecting.  That CANCEL must be
+    // honoured, or the call dies on a socket timeout and is reported as "Connection lost" instead
+    // of "Canceled".
+    check(CallProtocol.allowedSender(CallProtocol.CANCEL, CallProtocol.State.Connecting, false) != null,
+      "N100b-callee-hears-cancel-while-connecting",
+      "an accepted callee must still accept a cancel from the caller");
+    // ...but a CANCEL must not be able to kill a call that is already up.
+    check(CallProtocol.allowedSender(CallProtocol.CANCEL, CallProtocol.State.Connected, false) == null,
+      "N100c-stale-cancel-refused-when-connected",
+      "a cancel arriving after the call is up must not tear it down");
 
     // The mirrored checks must still be refused, so the fix is not just a blanket allow.
     check(CallProtocol.allowedSender(CallProtocol.OFFER, CallProtocol.State.Connecting, true) == null,

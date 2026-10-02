@@ -153,8 +153,13 @@ public final class CallProtocol {
       // Either side may decline while ringing, including during glare when both are ringing.
       case DECLINE:     return (state == State.IncomingRinging || state == State.OutgoingRinging)
                                ? "both" : null;
-      // Caller -> callee: the callee rings before the caller abandons the attempt.
-      case CANCEL:      return state == State.IncomingRinging && !isCaller ? "caller" : null;
+      // Caller -> callee: the callee rings before the caller abandons the attempt.  CANCEL is also
+      // admissible once the callee has accepted: a caller that never saw the ACCEPT (because its
+      // own signalling is broken, or the ACCEPT was lost) abandons the attempt with CANCEL while
+      // this side is already Connecting.  Dropping it there left the call to die on a socket
+      // timeout and be reported as "Connection lost" instead of "Canceled".
+      case CANCEL:      return (state == State.IncomingRinging || state == State.Connecting)
+                               && !isCaller ? "caller" : null;
       // SDP offer travels caller -> callee; answer travels callee -> caller.
       case OFFER:       return state == State.Connecting && !isCaller ? "caller" : null;
       case ANSWER:      return state == State.Connecting && isCaller ? "callee" : null;

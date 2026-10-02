@@ -266,13 +266,14 @@ public final class PeerEngine implements Closeable {
   public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;p.verified="";try{save();}catch(IOException e){p.verified=old;throw e;}try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
   synchronized boolean trusted(String peerId,String fingerprint){Peer p=peers.get(peerId);return p!=null&&!p.verified.isEmpty()&&p.verified.equals(fingerprint);}
-  void receive(Socket socket){try(SSLSocket s=(SSLSocket)socket){s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
-    if(!trusted(h[2],fingerprint)){write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
+  void receive(Socket socket){SSLSocket s=null;boolean handedOff=false;try{s=(SSLSocket)socket;s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
+    if(!trusted(h[2],fingerprint)){CallLog.w("call connection refused from "+h[2]+": peer not verified");write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
     String[] m=read(s).split("\t",-1);
     // ── Call handoff: LM4\tCALLCONNECT\t<call-id> ──────────────
     if(m.length==3&&m[0].equals("LM4")&&m[1].equals("CALLCONNECT")&&uuid(m[2])){
-      callHandler.accept(h[2],s);
-      return; // socket ownership transferred — do not close
+      CallLog.i("CALLCONNECT call="+m[2]+" from "+h[2]+" at "+s.getInetAddress().getHostAddress());
+      callHandler.accept(h[2],s);handedOff=true;
+      return; // ownership now belongs to the channel — the finally block must not close it // socket ownership transferred — do not close
     }
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
@@ -314,7 +315,13 @@ public final class PeerEngine implements Closeable {
 
     if(incoming!=null)try{received.accept(incoming);}catch(Exception ignored){}
     write(s,"LM4\tACK\t"+m[2]+"\t"+id);notifyChanged();
-  }catch(Exception ignored){}finally{activeSockets.remove(socket);}}
+  }catch(Exception ignored){}finally{activeSockets.remove(socket);
+    // A socket handed to a call channel must NOT be closed here. The channel's reader thread
+    // outlives this method, so closing it here kills the connection before the caller's opening
+    // INVITE can be read: the channel is adopted, its reader dies immediately, and the call is
+    // discarded without ever ringing. try-with-resources closed it on every path including this
+    // return, which is why nothing an incoming caller sent was ever parsed.
+    if(!handedOff&&s!=null)try{s.close();}catch(Exception ignored){}}}
   synchronized void markSeen(String messageId,String readerId)throws IOException{Message row=null;for(Message x:messages)if(x.id.equals(messageId)&&x.from.equals(id)&&x.to.equals(readerId)&&!x.status.equals("Seen")){row=x;break;}if(row==null)return;String old=row.status;row.status="Seen";try{save();}catch(IOException e){row.status=old;throw e;}}
   static byte[] canonicalBytes(String msgId,String group,String sender,long time,String text,String fileName,long fileSize,String fileHash){
     return (msgId+"\t"+group+"\t"+sender+"\t"+time+"\t"+enc(text)+"\t"+enc(fileName)+"\t"+fileSize+"\t"+fileHash).getBytes(StandardCharsets.UTF_8);

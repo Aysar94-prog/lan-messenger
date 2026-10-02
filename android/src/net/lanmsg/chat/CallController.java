@@ -207,6 +207,7 @@ public class CallController {
    *  frame can never precede the connection it is sent on.  A failure to open leaves no session
    *  behind: the caller sees the IOException and the controller stays Idle. */
   public String startCall(String peerId, TransportFactory factory) throws IOException {
+    CallLog.i("startCall to " + peerId);
     synchronized (lock) {
       if (session != null && !session.state.terminal())
         throw new IOException("Already in a call");
@@ -278,26 +279,34 @@ public class CallController {
                                Transport transport) throws IOException {
     synchronized (lock) {
       long now = clock.nowMs();
+      CallLog.i("INVITE call=" + frame.callId + " from " + authenticatedPeerId);
 
       // Validate
       String callerId = CallSignaling.getCaller(frame);
-      if (callerId == null || !callerId.equals(authenticatedPeerId))
+      if (callerId == null || !callerId.equals(authenticatedPeerId)) {
+        CallLog.w("INVITE refused: identity mismatch (" + callerId + " vs " + authenticatedPeerId + ")");
         return null; // mismatched identity — no reply
+      }
 
       // A call ID that is not a well-formed UUID is refused before a session exists. Admitting one
       // would produce a session whose own signaling frames the peer's parser cannot read, so the
       // call could never be accepted or ended by message — it would only expire.
-      if (!CallProtocol.validCallId(frame.callId))
+      if (!CallProtocol.validCallId(frame.callId)) {
+        CallLog.w("INVITE refused: malformed call id");
         return null; // malformed — no reply
+      }
 
       PeerEngine.Peer peer = engine.peers().stream()
         .filter(p -> p.id.equals(authenticatedPeerId)).findFirst().orElse(null);
-      if (peer == null || !peer.trusted())
+      if (peer == null || !peer.trusted()) {
+        CallLog.w("INVITE refused: peer not trusted");
         return null; // not verified — no reply
+      }
 
       // Admission policy. Checked before any ringing, notification, media or audio claim, and
       // before glare handling, so simultaneous dialing cannot slip past a disabled preference.
       if (!settings.allowIncoming()) {
+        CallLog.i("INVITE declined: incoming calls are switched off");
         reject(frame, authenticatedPeerId, transport, CallProtocol.DECLINE);
         return null;
       }
@@ -466,8 +475,11 @@ public class CallController {
   /** Dispatch an incoming call-signaling frame.  Called from PeerEngine's message handler. */
   public void onFrame(CallProtocol.Frame frame, String authenticatedPeerId) throws IOException {
     synchronized (lock) {
-      if (session == null || !session.peerId.equals(authenticatedPeerId))
+      if (session == null || !session.peerId.equals(authenticatedPeerId)) {
+        CallLog.w("dropped " + frame.type + ": no session for peer " + authenticatedPeerId
+          + " (local session=" + (session == null ? "none" : session.callId) + ")");
         return;
+      }
 
       // Any frame from the authenticated call peer proves the channel is alive. Recorded after
       // the session/peer check so an unrelated peer's traffic cannot keep this call's heartbeat
@@ -479,7 +491,11 @@ public class CallController {
       // (full duplicate/reorder tracking would track last-seen remote seq)
 
       String allowed = CallProtocol.allowedSender(frame.type, session.state, session.isCaller);
-      if (allowed == null) return; // invalid message for current state
+      if (allowed == null) {
+        CallLog.w("dropped " + frame.type + ": not admissible in state " + session.state
+          + " as " + (session.isCaller ? "caller" : "callee"));
+        return; // invalid message for current state
+      }
 
       switch (frame.type) {
         case CallProtocol.RINGING:
@@ -649,6 +665,8 @@ public class CallController {
       // Captured before the state is overwritten: an error the peer cannot infer only matters
       // once media is up, and a ringing/local-action end already sent its own frame.
       final boolean wasActive = session.state.active();
+      CallProtocol.State wasState = session.state;
+      CallLog.i("ending call " + session.callId + ": " + reason + " (was " + wasState + ")");
       session.state = CallProtocol.State.Ending;
       session.endReason = reason;
       session.durationMs = session.connectedAtMs > 0 ?
@@ -680,7 +698,11 @@ public class CallController {
       transport = null;
       negotiationGeneration = 0;
       activeTransport = null;
-      if (live instanceof java.io.Closeable) {
+      if (live instanceof CallChannel) {
+        // Half-close rather than close outright: a reset here can destroy the DECLINE or HANGUP
+        // just written, leaving the peer to ring on until its timeout.
+        try { ((CallChannel) live).beginGracefulClose(); } catch (Exception ignored) {}
+      } else if (live instanceof java.io.Closeable) {
         try { ((java.io.Closeable) live).close(); } catch (Exception ignored) {}
       }
     }
@@ -759,7 +781,11 @@ public class CallController {
 
   private void onTimeout(String phase) {
     synchronized (lock) {
-      if (session == null) return;
+      if (session == null) {
+        CallLog.w("timeout (" + phase + ") ignored: no session");
+        return;
+      }
+      CallLog.i("timeout fired in phase '" + phase + "' while " + session.state);
       try {
         switch (phase) {
           case "ringing":

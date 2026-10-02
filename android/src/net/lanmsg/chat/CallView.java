@@ -34,6 +34,24 @@ final class CallView {
   /** The call ID the Accept/Decline buttons act on, so a rebuilt view cannot act on a newer call. */
   private static String boundCallId;
 
+  /** The call state the attached overlay was built for.
+   *
+   *  <p>The overlay holds completely different controls in different states — Accept/Decline while
+   *  ringing, Cancel while ringing out, Mute and Speaker once media is up — so a state change has to
+   *  rebuild it.  Rebuilding only on a call-ID change left the ringing buttons on screen after the
+   *  call was answered, where tapping them did nothing because the state had already moved on, and
+   *  meant the in-call controls never appeared at all. */
+  private static CallProtocol.State boundState;
+
+  /** When true the call overlay is collapsed to a compact bar at the foot of the stage.
+   *
+   *  <p>The full-screen panel made a call impossible to walk away from: there was no way to shrink
+   *  it, so the only options were to answer, decline or force the app closed, and the screen could
+   *  not be left alone.  Collapsing keeps the call running and the rest of the app reachable while
+   *  still leaving a hang-up within one tap.  Reset by hide() and forgetOverlay(), so it can never
+   *  leak into the next call. */
+  private static boolean collapsed;
+
   /** Show or refresh the call overlay.  Safe to call on every render pass. */
   static void render(final MainActivity activity) {
     MessengerService host = activity.host;
@@ -53,6 +71,10 @@ final class CallView {
       CallSession ended = call != null && call.state.terminal() ? call : ui.getTerminal();
       long endedAt = ui.terminalAtMs();
       if (ended != null && endedAt > 0 && System.currentTimeMillis() - endedAt < TERMINAL_VISIBLE_MS) {
+        // A collapsed bar has nowhere to show why the call ended, so the banner always replaces it.
+        // boundCallId is cleared as well, because the bar is still bound to this call ID and would
+        // otherwise satisfy the identity test below and leave the bar standing.
+        if (collapsed) { collapsed = false; boundCallId = null; }
         if (overlay == null || !ended.callId.equals(boundCallId)) buildTerminal(activity, ended);
         return;
       }
@@ -61,8 +83,23 @@ final class CallView {
       return;
     }
 
-    // Rebuild only when the call identity or state changed; otherwise just refresh the clock.
-    if (overlay == null || !call.callId.equals(boundCallId) || stateText == null) {
+    // While collapsed the bar stands in for the panel, and it refreshes the same way the panel
+    // does. It is checked before the rebuild test below, because the bar reuses stateText and
+    // detailText to stay live, and that test would otherwise be satisfied and nothing would redraw.
+    if (collapsed) {
+      if (overlay == null || !call.callId.equals(boundCallId) || stateText == null) {
+        buildCollapsed(activity, call);
+        return;
+      }
+      stateText.setText(CallUi.stateLabel(call));
+      detailText.setText(CallUi.detailLabel(call));
+      return;
+    }
+
+    // Rebuild whenever the call identity OR the state changed: the controls on this overlay are
+    // state-specific, so keeping the old ones would leave dead buttons on screen.
+    if (overlay == null || !call.callId.equals(boundCallId) || call.state != boundState
+        || stateText == null) {
       build(activity, ui, call);
       return;
     }
@@ -86,6 +123,7 @@ final class CallView {
   private static void build(final MainActivity activity, CallUi ui, final CallSession call) {
     detach(activity);
     boundCallId = call.callId;
+    boundState = call.state;
 
     LinearLayout panel = activity.column();
     panel.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -154,7 +192,11 @@ final class CallView {
     } else {
       LinearLayout row = new LinearLayout(activity);
       row.setOrientation(LinearLayout.HORIZONTAL);
-      if (call.state == CallProtocol.State.Connected) {
+      // Mute and Speaker appear from the moment the call is answered, not only once it is fully
+      // connected. Waiting for Connected left the user with no way to silence themselves during a
+      // negotiation that can take seconds, and a stalled negotiation never reaches Connected at
+      // all, so the controls were simply absent for the whole time they were most wanted.
+      if (call.state.active()) {
         Button mute = activity.button(call.muted ? "Unmute" : "Mute");
         mute.setContentDescription(call.muted ? "Unmute microphone" : "Mute microphone");
         mute.setOnClickListener(v -> activity.runCallAction(ui::toggleMute, "Could not change the microphone."));
@@ -175,6 +217,14 @@ final class CallView {
       panel.addView(hangup, new LinearLayout.LayoutParams(-1, activity.dp(56)));
     }
 
+    // Offered in every live state, ringing or connected: the point is to be able to walk away from
+    // the screen without ending the call, and that has to be possible at any stage of it.
+    Button minimize = activity.button("Minimize");
+    minimize.setTextColor(Color.rgb(190, 200, 210));
+    minimize.setContentDescription("Minimize the call screen");
+    minimize.setOnClickListener(v -> { collapsed = true; buildCollapsed(activity, call); });
+    panel.addView(minimize, new LinearLayout.LayoutParams(-1, activity.dp(48)));
+
     android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
     holder.addView(panel, new android.widget.FrameLayout.LayoutParams(-1, -1));
     attach(activity, holder);
@@ -189,6 +239,7 @@ final class CallView {
   private static void buildTerminal(final MainActivity activity, CallSession call) {
     detach(activity);
     boundCallId = call.callId;
+    boundState = call.state;
     LinearLayout panel = activity.column();
     panel.setGravity(Gravity.CENTER_HORIZONTAL);
     panel.setPadding(activity.dp(24), activity.dp(20), activity.dp(24), activity.dp(20));
@@ -206,6 +257,61 @@ final class CallView {
     attach(activity, holder);
     // The label was just attached; announce it once so the end reason is not silent.
     label.post(() -> announce(activity, CallUi.stateLabel(call)));
+  }
+
+  /** The collapsed call: a compact bar pinned to the foot of the stage.
+ *
+ *  <p>Anchored to the bottom and only as tall as its text, so the header, the conversation and the
+ *  rest of the app stay visible and usable underneath — that is the whole point of collapsing.
+ *  Tapping the bar restores the full panel; hang-up stays one tap away without expanding. */
+  private static void buildCollapsed(final MainActivity activity, final CallSession call) {
+    detach(activity);
+    boundCallId = call.callId;
+    boundState = call.state;
+
+    String peerName = activity.host == null ? call.peerId : activity.host.callPeerName(call.peerId);
+
+    LinearLayout bar = new LinearLayout(activity);
+    bar.setOrientation(LinearLayout.HORIZONTAL);
+    bar.setGravity(Gravity.CENTER_VERTICAL);
+    bar.setPadding(activity.dp(16), activity.dp(8), activity.dp(12), activity.dp(8));
+    bar.setBackgroundColor(Color.rgb(17, 27, 33));
+
+    LinearLayout texts = activity.column();
+    TextView who = activity.label(peerName, 16);
+    who.setTextColor(Color.WHITE);
+    texts.addView(who);
+    stateText = activity.label(CallUi.stateLabel(call), 13);
+    stateText.setTextColor(Color.rgb(190, 200, 210));
+    stateText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    texts.addView(stateText);
+    detailText = activity.label(CallUi.detailLabel(call), 12);
+    detailText.setTextColor(Color.rgb(190, 200, 210));
+    detailText.setVisibility(View.GONE);
+    texts.addView(detailText);
+    bar.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
+
+    // Hang-up stays reachable without expanding, because the bar is what is left on screen.
+    Button hangup = activity.button("Hang up");
+    hangup.setTextColor(Color.WHITE);
+    hangup.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(211, 47, 47)));
+    hangup.setContentDescription("Hang up");
+    hangup.setOnClickListener(v -> {
+      CallUi ui = activity.host == null ? null : activity.host.calls();
+      if (ui == null) return;
+      activity.runCallAction(ui::hangup, "Could not end the call.");
+    });
+    bar.addView(hangup, new LinearLayout.LayoutParams(-2, activity.dp(48)));
+
+    bar.setContentDescription("Minimized call with " + peerName + ". Tap to reopen.");
+    bar.setOnClickListener(v -> { collapsed = false; render(activity); });
+
+    android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
+    android.widget.FrameLayout.LayoutParams atBottom =
+      new android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+    atBottom.setMargins(0, 0, 0, activity.dp(8));
+    holder.addView(bar, atBottom);
+    attach(activity, holder);
   }
 
   private static String routeLabel(MainActivity activity, CallSession call) {
@@ -231,6 +337,8 @@ final class CallView {
   static void hide(MainActivity activity) {
     detach(activity);
     boundCallId = null;
+    boundState = null;
+    collapsed = false;
   }
 
   /** Drop references to a view tree the Activity has already thrown away.  Called from frame()
@@ -240,7 +348,9 @@ final class CallView {
     overlay = null;
     stateText = null; detailText = null; qualityText = null; routeText = null;
     boundCallId = null;
+    boundState = null;
     lastQualityAnnounceMs = 0;
+    collapsed = false;
   }
 
   /** Whether an overlay is currently attached. */
