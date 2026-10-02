@@ -110,6 +110,21 @@ public final class PeerEngine implements Closeable {
   public void queueLocal(String peer,String text)throws IOException {
     queueContentStream(peer,text,"",null,0,null,false);
   }
+  // A call's caller/callee role, connect time and duration are already known identically on
+  // both ends the moment the call ends -- neither side needs the other to say so. So this is a
+  // purely local annotation: status is "Delivered" from the start (never "Queued"), which keeps
+  // it out of deliver()'s retry loop (PeerEngine.java:374, which only ever looks at Queued rows)
+  // forever -- it is never sent to the peer, never acked, never retried. `from`/`to` are set so
+  // the existing mine-vs-theirs bubble gate in MainActivity.render() falls out for free: an
+  // outgoing call's entry has `from=id` (mine), an incoming call's has `from=peerId` (theirs),
+  // exactly matching which side actually placed the call.
+  public synchronized void appendCallLog(String peerId,boolean isCaller,boolean connected,long durationMs)throws IOException {
+    String from=isCaller?id:peerId,to=isCaller?peerId:id;
+    Message m=new Message(UUID.randomUUID().toString(),from,to,"",System.currentTimeMillis(),"Delivered","",CallLogMarker.encode(isCaller,connected,durationMs),0,"","",false);
+    messages.add(m);
+    try{save();}catch(IOException e){messages.remove(m);throw e;}
+    notifyChanged();
+  }
 
   synchronized void load(File source)throws IOException {
     byte[] stored=SecureIdentity.readFile(source);if(stored.length>=MAGIC.length&&Arrays.equals(Arrays.copyOf(stored,MAGIC.length),MAGIC))try{stored=protector.unprotect(Arrays.copyOfRange(stored,MAGIC.length,stored.length));}catch(Exception e){throw new IOException("Could not decrypt saved data",e);}

@@ -641,6 +641,45 @@ the call never nudges the bar and a short sideways drag is still a drag. `N193`-
 
 `tests/CallCheck.java` **PASS=408 FAIL=0**. Build 2.2.39 (versionCode 66) installed on both phones.
 
+## Call history entries in chat, Messenger-style (2026-10-02)
+
+The user asked for inline call-history entries in the conversation, Messenger-style: "You called
+X", "X called you · 5:30", "Missed call". Implemented per
+[PLAN-CALL-LOG-ANDROID.md](../PLAN-CALL-LOG-ANDROID.md) as a **purely local** annotation — each
+device logs its own call outcome from its own `CallController`'s perspective (caller/callee role,
+connect time and duration are already known identically on both ends without either side telling
+the other), so there is no wire/protocol change and nothing new is ever sent to the peer.
+
+New `CallLogMarker.java` encodes `isCaller`/`connected`/`durationMs` into a message's `fileName`
+(mirroring `VoiceMarker`'s own filename-convention trick, not a new LMSTORE4 row type). New
+`PeerEngine.appendCallLog` builds and persists that `Message` directly with `status="Delivered"`
+from the start — never `"Queued"`, so `deliver()`'s retry loop (which only ever looks at Queued
+rows) never picks it up for network send. `from`/`to` are set so the existing mine-vs-theirs
+bubble gate falls out for free: an outgoing call's entry has `from=my id`, an incoming call's has
+`from=peerId`. Hooked into `MessengerService.onCallSnapshot`'s `case Ending:` — the single point
+where `CallController.endCall()` delivers a snapshot with both the final duration and whether the
+call ever connected together. `MainActivity.render()` detects a call-log message before the normal
+bubble path and renders it as a centered system-style pill (📞 icon, no sender name/avatar row, no
+delivery ticks, a timestamp underneath) — not a chat bubble, matching Messenger's actual visual
+treatment. Missed calls (callee side, never connected) are tinted red.
+
+**Verified on-device across a real multi-call test between both phones**, covering all four label
+variants in the same session: "Missed call" (a connection that failed before connecting), "You
+called ultra · 0:03" / "You called ultra" (caller side, with and without a connected duration),
+"ultra called you · 0:08" / "ultra called you · 0:02" (callee side, connected with duration), and
+a second "Missed call" from a declined ring — each with a matching timestamp on both devices, and
+full symmetry confirmed: the same four calls appear correctly worded from each side's own
+perspective (e.g. device A's history reads "You called ultra · 0:03" for the exact call device B's
+history reads as "SM-A075F called you · 0:03"). Real javac compile (0 errors) and a full
+`build-voice.ps1` build/sign/verify pass. No wire, storage-format, or Windows change.
+
+**Released as 2.2.42** (versionCode 69): `android/build.ps1` (the real release entry point)
+built, signed and verified (v2+v3, original signing key continuity confirmed via
+`apksigner verify --print-certs`). Installed on both physical devices over their existing
+installs (no uninstall needed); both relaunched cleanly with no crash, both back Online and
+mutually Verified. `outputs/LanMessenger-2.2.42.apk`,
+`outputs/SHA256SUMS-Android-2.2.42.txt`.
+
 ## Compose row: Messenger-style icons, camera photo+video, gallery photo+video (2026-10-02)
 
 The compose row was five text buttons (Camera, Photo, File, Fast file, plus a separate text Send
