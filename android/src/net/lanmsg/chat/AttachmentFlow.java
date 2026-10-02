@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.provider.MediaStore;
+import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -20,8 +21,21 @@ import java.util.UUID;
 final class AttachmentFlow {
   private AttachmentFlow(){}
   static void pickFastFile(MainActivity activity){if(activity.selected==null||activity.send==null||!activity.send.isEnabled())return;activity.attachmentTarget=activity.selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);try{activity.startActivityForResult(intent,46);}catch(Exception error){activity.problem(error);}}
-  static void pickFile(MainActivity activity,boolean photo){PeerEngine e=activity.engine();if(e==null||activity.selected==null)return;if(activity.send!=null&&!activity.send.isEnabled()){Toast.makeText(activity,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}activity.attachmentTarget=activity.selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(photo?"image/*":"*/*");try{activity.startActivityForResult(intent,photo?41:42);}catch(Exception error){activity.problem(error);}}
+  // `photo` here means "media" (the gallery icon): a picture or a video, same single picker
+  // Messenger itself offers, rather than two separate photo/video pickers. `false` (the File
+  // entry, folded under the "+" menu) stays unrestricted, as it always was.
+  static void pickFile(MainActivity activity,boolean photo){PeerEngine e=activity.engine();if(e==null||activity.selected==null)return;if(activity.send!=null&&!activity.send.isEnabled()){Toast.makeText(activity,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}activity.attachmentTarget=activity.selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");if(photo)intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"});try{activity.startActivityForResult(intent,photo?41:42);}catch(Exception error){activity.problem(error);}}
   static void capturePhoto(MainActivity activity){if(activity.selected==null||activity.send==null||!activity.send.isEnabled()){Toast.makeText(activity,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}try{activity.attachmentTarget=activity.selected;activity.cameraFile=new File(activity.getCacheDir(),"camera-"+UUID.randomUUID()+".jpg");activity.cameraUri=Uri.parse("content://"+activity.getPackageName()+".camera/capture/"+activity.cameraFile.getName());Intent intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT,activity.cameraUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);intent.setClipData(android.content.ClipData.newRawUri("Camera photo",activity.cameraUri));activity.startActivityForResult(intent,44);}catch(Exception error){if(activity.cameraFile!=null)activity.cameraFile.delete();activity.problem(error);}}
+  // Mirrors capturePhoto exactly, one new request code (48) and a .mp4 target instead of .jpg --
+  // CameraAttachmentProvider accepts either extension for the same reason (one provider, two
+  // capture targets). No custom in-app camera screen: this still hands off to the system camera
+  // app, same as the photo path already did, just asking it to record instead of shoot.
+  static void captureVideo(MainActivity activity){if(activity.selected==null||activity.send==null||!activity.send.isEnabled()){Toast.makeText(activity,"Verify this contact first.",Toast.LENGTH_LONG).show();return;}try{activity.attachmentTarget=activity.selected;activity.cameraFile=new File(activity.getCacheDir(),"camera-"+UUID.randomUUID()+".mp4");activity.cameraUri=Uri.parse("content://"+activity.getPackageName()+".camera/capture/"+activity.cameraFile.getName());Intent intent=new Intent(MediaStore.ACTION_VIDEO_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT,activity.cameraUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);intent.setClipData(android.content.ClipData.newRawUri("Camera video",activity.cameraUri));activity.startActivityForResult(intent,48);}catch(Exception error){if(activity.cameraFile!=null)activity.cameraFile.delete();activity.problem(error);}}
+  // The camera icon offers Photo or Video first, Messenger-style, rather than being a single
+  // fixed action -- each choice launches the matching system-camera intent above.
+  static void chooseCameraMode(MainActivity activity){
+    new AlertDialog.Builder(activity).setTitle("Camera").setItems(new CharSequence[]{"Take photo","Record video"},(d,which)->{if(which==0)capturePhoto(activity);else captureVideo(activity);}).show();
+  }
   static void exportFile(MainActivity activity,PeerEngine.Message message){activity.exportMessage=message;try{activity.startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,message.fileName),43);}catch(Exception error){activity.problem(error);}}
   static void fileAction(MainActivity activity,PeerEngine.Message message){
     PeerEngine e=activity.engine();if(e==null)return;
@@ -57,6 +71,7 @@ final class AttachmentFlow {
     prepareAttachment(activity,target,name,Uri.fromFile(tmp),bytes.length,tmp);
   }
   static void renderPendingAttachment(MainActivity activity){
+    activity.refreshSendIcon();
     if(activity.attachmentDraft==null)return;activity.releaseImages(activity.attachmentDraft);activity.attachmentDraft.removeAllViews();
     if(activity.pendingAttachmentUri==null)return;
     activity.attachmentDraft.setPadding(activity.dp(10),activity.dp(6),activity.dp(10),activity.dp(6));activity.attachmentDraft.setBackground(activity.bg(Color.rgb(235,240,250)));
@@ -65,7 +80,33 @@ final class AttachmentFlow {
     // Decoding even a small thumbnail is still blocking I/O — off the UI thread, then posted back
     // only if this is still the pending attachment (the user may have picked something else, or
     // sent/cleared it, by the time the decode finishes).
-    if(activity.pendingAttachmentSize>0&&activity.pendingAttachmentSize<=MainActivity.THUMBNAIL_PREVIEW_CAP){
+    if(PeerEngine.isVideoFile(activity.pendingAttachmentName)){
+      // A video draft is still a plain picked/captured file at this point — never encrypted or
+      // stored yet — so the frame comes straight from the content Uri via MediaMetadataRetriever,
+      // not from MediaCard's decrypt-then-extract path (that's for an already-sent attachment).
+      // No size cap, matching the user's earlier "no cap" decision for video thumbnails generally:
+      // extracting one frame seeks rather than reading the whole file into memory.
+      final Uri uri=activity.pendingAttachmentUri;final String forName=activity.pendingAttachmentName;
+      new Thread(()->{
+        Bitmap frame=null;
+        android.media.MediaMetadataRetriever retriever=new android.media.MediaMetadataRetriever();
+        try{retriever.setDataSource(activity,uri);frame=retriever.getFrameAtTime(0);}catch(Exception ignored){}
+        finally{try{retriever.release();}catch(Exception ignored){}}
+        if(frame==null)return;
+        final Bitmap finalFrame=frame;
+        activity.ui.post(()->{
+          if(uri!=activity.pendingAttachmentUri||activity.attachmentDraft==null){finalFrame.recycle();return;}
+          android.widget.FrameLayout holder=new android.widget.FrameLayout(activity);
+          ImageView image=new ImageView(activity);image.setImageBitmap(finalFrame);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setBackground(activity.bg(Color.rgb(220,226,237)));image.setClipToOutline(true);image.setContentDescription("Preview "+forName);
+          holder.addView(image,new LinearLayout.LayoutParams(-1,activity.dp(170)));
+          View playDisc=activity.circle("▶",Color.argb(170,0,0,0),48,18);
+          android.widget.FrameLayout.LayoutParams discParams=new android.widget.FrameLayout.LayoutParams(activity.dp(48),activity.dp(48),android.view.Gravity.CENTER);
+          holder.addView(playDisc,discParams);
+          holder.setOnClickListener(v->previewFrame(activity,finalFrame,forName));
+          activity.attachmentDraft.addView(holder,0);
+        });
+      },"lan-draft-video-thumbnail").start();
+    }else if(activity.pendingAttachmentSize>0&&activity.pendingAttachmentSize<=MainActivity.THUMBNAIL_PREVIEW_CAP){
       final Uri uri=activity.pendingAttachmentUri;final String forName=activity.pendingAttachmentName;
       new Thread(()->{
         byte[] bytes=null;try(InputStream in=activity.getContentResolver().openInputStream(uri)){if(in!=null)bytes=readLimited(in);}catch(Exception ignored){}
@@ -79,7 +120,47 @@ final class AttachmentFlow {
       },"lan-draft-thumbnail").start();
     }
   }
-  static void clearPendingAttachment(MainActivity activity){if(activity.pendingCameraFile!=null){activity.pendingCameraFile.delete();activity.pendingCameraFile=null;}activity.pendingAttachmentUri=null;activity.pendingAttachmentSize=0;activity.pendingAttachmentName="";activity.pendingAttachmentTarget=null;if(activity.attachmentDraft!=null){activity.releaseImages(activity.attachmentDraft);activity.attachmentDraft.removeAllViews();}}
-  static void previewImage(MainActivity activity,PeerEngine.Message message){PeerEngine e=activity.engine();if(e==null)return;new Thread(()->{try{byte[] bytes=e.readAttachment(message);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("Not a supported image. Use Save file.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");activity.ui.post(()->{if(activity.isFinishing()||activity.isDestroyed()){bitmap.recycle();return;}ImageView image=new ImageView(activity);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(activity.dp(500));AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(message.fileName).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){activity.ui.post(()->activity.problem(error));}},"lan-image-preview").start();}
+  // The pre-send video draft preview is a single already-decoded frame shared with the draft's
+  // own ImageView (unlike previewBytes, which owns and recycles its own decode) -- so this never
+  // recycles it, since the draft row is still showing the same Bitmap underneath the dialog.
+  static void previewFrame(MainActivity activity,Bitmap frame,String name){
+    ImageView image=new ImageView(activity);image.setImageBitmap(frame);image.setAdjustViewBounds(true);image.setMaxHeight(activity.dp(500));
+    new AlertDialog.Builder(activity).setTitle(name).setView(image).setPositiveButton("Close",null).show();
+  }
+  static void clearPendingAttachment(MainActivity activity){if(activity.pendingCameraFile!=null){activity.pendingCameraFile.delete();activity.pendingCameraFile=null;}activity.pendingAttachmentUri=null;activity.pendingAttachmentSize=0;activity.pendingAttachmentName="";activity.pendingAttachmentTarget=null;if(activity.attachmentDraft!=null){activity.releaseImages(activity.attachmentDraft);activity.attachmentDraft.removeAllViews();}activity.refreshSendIcon();}
+  // The fullscreen preview for an already-available photo or video-frame attachment. Messenger-
+  // style: the picture plus one explicit download control (a down-arrow), not a button row full
+  // of text — "Save"/"Export" already exists as exportFile, this just gives it a visible home
+  // on the view the user actually opened the attachment from.
+  static void previewImage(MainActivity activity,PeerEngine.Message message){PeerEngine e=activity.engine();if(e==null)return;new Thread(()->{try{byte[] bytes=e.readAttachment(message);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("Not a supported image. Use Save file.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");activity.ui.post(()->{if(activity.isFinishing()||activity.isDestroyed()){bitmap.recycle();return;}ImageView image=new ImageView(activity);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(activity.dp(500));AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(message.fileName).setView(image).setPositiveButton("Close",null).setNeutralButton("⬇ Download",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{exportFile(activity,message);dialog.dismiss();}));dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){activity.ui.post(()->activity.problem(error));}},"lan-image-preview").start();}
+  // Fullscreen view for a video attachment: double-tapping its inline thumbnail opens this. A
+  // real playable VideoView with the standard Android transport controls (play/pause/seek,
+  // tap-to-show), not a static frame -- a static picture is what a photo's previewImage shows
+  // because a photo has no "play" to offer; a video does, so a fullscreen view that only showed
+  // a frame was indistinguishable from a photo, which is exactly what the user flagged. Playback
+  // stops when the dialog is dismissed by any path (Close, Download, back, outside tap).
+  static void previewVideo(MainActivity activity,PeerEngine.Message message){
+    PeerEngine e=activity.engine();if(e==null)return;
+    new Thread(()->{
+      File decoded;
+      try{decoded=MediaCard.decryptedVideoFile(activity,e,message);}
+      catch(Exception error){activity.ui.post(()->activity.problem(error));return;}
+      activity.ui.post(()->{
+        if(activity.isFinishing()||activity.isDestroyed())return;
+        android.widget.VideoView video=new android.widget.VideoView(activity);
+        video.setLayoutParams(new android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT,activity.dp(400)));
+        android.widget.MediaController controller=new android.widget.MediaController(activity);
+        controller.setAnchorView(video);video.setMediaController(controller);
+        video.setVideoPath(decoded.getAbsolutePath());
+        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(message.fileName).setView(video).setPositiveButton("Close",null).setNeutralButton("⬇ Download",null).create();
+        dialog.setOnShowListener(d->{
+          dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{exportFile(activity,message);dialog.dismiss();});
+          video.start();
+        });
+        dialog.setOnDismissListener(d->{try{video.stopPlayback();}catch(Exception ignored){}});
+        dialog.show();
+      });
+    },"lan-video-preview").start();
+  }
   static void previewBytes(MainActivity activity,byte[] bytes,String name){new Thread(()->{try{BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)throw new IOException("This file is not a supported image.");options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;final Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(bitmap==null)throw new IOException("Cannot preview image");activity.ui.post(()->{ImageView image=new ImageView(activity);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxHeight(activity.dp(500));AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(name).setView(image).setPositiveButton("Close",null).create();dialog.setOnDismissListener(d->{image.setImageDrawable(null);bitmap.recycle();});dialog.show();});}catch(Exception error){activity.ui.post(()->activity.problem(error));}},"lan-draft-preview").start();}
 }

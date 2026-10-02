@@ -476,6 +476,14 @@ public final class PeerEngine implements Closeable {
   final Object schedulerGate=new Object();
   int consecutiveAutoVoiceAdmissions;
   public static boolean isImageAttachment(Message m){String name=m.fileName.toLowerCase(Locale.ROOT);int dot=name.lastIndexOf('.');return dot>=0&&Arrays.asList(".jpg",".jpeg",".png",".gif",".bmp",".webp",".tif",".tiff",".heic",".heif",".avif").contains(name.substring(dot));}
+  // There is no dedicated video-capture/send flow: a video only ever reaches a chat as a plain
+  // file attachment (the same "File" picker as any other document), so this is purely a
+  // receive-side classification, mirroring isImageAttachment exactly, used to decide whether to
+  // render a first-frame thumbnail instead of the generic file card.
+  public static boolean isVideoAttachment(Message m){return isVideoFile(m.fileName);}
+  // Factored out from isVideoAttachment so the pre-send draft preview (a plain picked/captured
+  // file, not yet a Message) can use the same extension check.
+  public static boolean isVideoFile(String fileName){String name=fileName.toLowerCase(Locale.ROOT);int dot=name.lastIndexOf('.');return dot>=0&&Arrays.asList(".mp4",".mov",".3gp",".3g2",".mkv",".webm",".avi",".m4v").contains(name.substring(dot));}
   public boolean downloading(Message m){return TransferManager.downloading(this,m);}
   public void cancelDownload(Message m){TransferManager.cancelDownload(this,m);}
   void deleteParts(Message m)throws IOException{TransferManager.deleteParts(this,m);}

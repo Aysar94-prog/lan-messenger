@@ -40,7 +40,11 @@ final class TransferManager {
     java.util.ArrayList<PeerEngine.Message> voices=new java.util.ArrayList<>();
     for(PeerEngine.Message m:snapshot){
       String key=m.from+"/"+m.id;
-      if(PeerEngine.isImageAttachment(m)){if(!e.imageAttempts.contains(key)&&candidateReady(e,m))images.add(m);}
+      // A video attachment is scheduled exactly like a photo -- same pool, same attempts set,
+      // same fairness accounting against voice -- per the user's explicit ask that a video must
+      // be fetched automatically like a photo, never left waiting on a manual Download tap the
+      // way a plain File/Fast-file attachment is.
+      if(PeerEngine.isImageAttachment(m)||PeerEngine.isVideoAttachment(m)){if(!e.imageAttempts.contains(key)&&candidateReady(e,m))images.add(m);}
       else if(isVoiceCandidate(m)){if(!e.voiceAttempts.contains(key)&&candidateReady(e,m))voices.add(m);}
     }
     int vi=0,ii=0;
