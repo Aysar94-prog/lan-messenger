@@ -1292,6 +1292,26 @@ public final class CallCheck {
       "the model that rendered the screen is the one that knows the call on it");
     check(CallUi.resolveForAccept(null, null, null) == null,
       "N183-no-model-anywhere", "the caller reports this rather than ignoring it");
+
+    // The draggable minimised bar. A minimised call parked at the foot of the stage sat exactly
+    // where the message box and keyboard appear, so the two could not both be used; making it
+    // draggable means the user decides, but then it can be dropped where nothing is left to grab
+    // it, so every position has to be pulled back inside the stage.
+    eq(CallUi.clampBarLeft(100, 300, 720, 8), 100, "N184-a-dragged-position-is-kept");
+    eq(CallUi.clampBarLeft(-500, 300, 720, 8), 8, "N185-cannot-be-dragged-off-the-left");
+    eq(CallUi.clampBarLeft(9999, 300, 720, 8), 720 - 300 - 8,
+      "N186-cannot-be-dragged-off-the-right");
+    eq(CallUi.clampBarTop(-500, 80, 1500, 8), 8, "N187-cannot-be-dragged-off-the-top");
+    eq(CallUi.clampBarTop(9999, 80, 1500, 8), 1500 - 80 - 8,
+      "N188-cannot-be-dragged-off-the-bottom");
+    // Before the first layout pass neither size is known. Clamping then would pin the bar into the
+    // corner, so the position has to pass through untouched and be corrected on the next pass.
+    eq(CallUi.clampBarLeft(100, 0, 720, 8), 100, "N189-unmeasured-bar-is-not-clamped");
+    eq(CallUi.clampBarLeft(100, 300, 0, 8), 100, "N190-unmeasured-stage-is-not-clamped");
+    eq(CallUi.clampBarLeft(-500, 0, 0, 8), 8, "N191-a-negative-position-stays-off-the-edge");
+    // A bar wider than the stage would be clamped to the left margin and still overflow, which is
+    // the lesser evil: it stays reachable rather than being pushed off both sides.
+    eq(CallUi.clampBarLeft(100, 900, 720, 8), 8, "N192-a-bar-wider-than-the-stage-stays-grabable");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and

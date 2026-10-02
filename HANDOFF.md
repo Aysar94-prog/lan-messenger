@@ -12,6 +12,45 @@ Tap-through and the drag behaviour are verified on hardware (`C0`–`C3`, `D0`/`
 cold-start accept path is verified on hardware (`accept-coldstart.ps1`, `X0`–`X6` all pass on
 2.2.34).
 
+## Two things the user reported, and what they turned out to be
+
+**"The 💬 did not redirect me to the conversation — why?"** The tap did exactly what it says, and
+then lost it. `showChat()` ends in `frame()`, which ends in `CallView.forgetOverlay()` — and
+`forgetOverlay()` cleared `dismissedCallId`, the record the button had just made. The next `render()`
+therefore rebuilt the full call panel straight back over the conversation, in the same tap. A comment
+above that button already described this exact failure and claimed it was fixed; the fix was undone
+by `forgetOverlay()` three methods away. `forgetOverlay()` now drops only view references: `collapsed`
+and `dismissedCallId` record what the *user asked for*, not anything about the discarded tree.
+
+That fix alone would have broken **Return to call** — `render()` holds the overlay down while the
+dismissal stands, and `forgetOverlay()` wiping it was the only thing letting Return through. So
+`CallView.returnToCall()` now lifts the dismissal, and `showCallOverlay()` calls it: asking for the
+call screen *is* the act of un-dismissing.
+
+Verified on hardware: tapping 💬 opens the conversation, the call screen does not come back, and the
+call keeps running (`chat-drag-check.ps1`, `Y3`/`Y3b`/`Y4`).
+
+**"I want the minimise dialog to float — can be moved, to easily type or do anything else."** The
+minimised bar was a full-width strip anchored to the foot of the stage, which is exactly where the
+message box and its keyboard appear, so a call and typing could not both be used. It is now sized to
+itself and free-floating, and draggable:
+
+- A `GestureDetector` distinguishes a tap (reopen) from a drag (move), with a 6 dp slop so a tap that
+  reopens does not also nudge the bar. The click listener is kept alongside it, so TalkBack
+  activation still works. The hang-up button is a child and takes its own touches first.
+- `CallUi.clampBarLeft`/`clampBarTop` pull the bar back inside the stage — draggable means it can
+  otherwise be dropped where there is nothing left to grab it. Before the first layout pass neither
+  size is known, so nothing is clamped and the next pass corrects it (`N184`–`N192`).
+- The position lives outside the view tree, because the bar is rebuilt on every state change and a
+  position held in the view would be lost each time, and is persisted in `lan_messenger_ui` so it
+  survives calls and restarts.
+
+**A third defect this uncovered, which would have trapped the user:** `callBar` was built **only**
+into `showPeople()`, and its comment claimed it "stays across the top of every screen". It did not.
+So with the chat control fixed, a live call had no way back into the call screen once you opened the
+conversation from it — the tap now works, and leads somewhere with no controls, which is
+indistinguishable from the call having ended. `buildCallBar()` is shared by both screens now.
+
 ## The most serious defect found in this session: a cold start could not answer a call
 
 **You could not answer an incoming call at all until you left the app and came back.**
@@ -155,12 +194,16 @@ sees belongs where the test can see it.
 Read this before trusting any acceptance run. Four separate harness defects each made a *correct*
 build look broken, and the run that exposed them had already been reported as evidence.
 
-0. **`uiautomator` cannot dump the connected call screen at all.** It waits for the window to go
+0. **`uiautomator` cannot dump the live call screens at all.** It waits for the window to go
    idle, gives up after ~10 s and prints `could not get idle state`, leaving no file to read — and
-   the connected screen is the one that *never* goes idle, because the duration clock rewrites its
-   text once a second. The ring screen dumps fine only because its status line is the same string
-   every second and so invalidates nothing. `settings put global *_animation_scale 0` does not help;
-   the churn is our own `Handler` tick.
+   the connected screen *never* goes idle, because the duration clock rewrites its text once a
+   second. The minimised bar has the same clock, so it cannot be dumped either. The ring screen dumps
+   fine only because its status line is the same string every second and so invalidates nothing.
+   `settings put global *_animation_scale 0` does not help; the churn is our own `Handler` tick.
+   **This is also a usable signal, not just a limitation:** a screen that will not dump *is* a live
+   call screen, so "the dump succeeded" proves the call screen is not up. That is how the conversation
+   control is verified — after tapping 💬 the dump succeeds and shows conversation controls, which is
+   only possible if the call screen did not come back over it.
    **Consequence: every connected-state assertion in `accept-layout.ps1` — `L4`, `L6`–`L10`, `L14`,
    all of `M*` and `T1`–`T9` — cannot pass as written, and its failures say nothing about the app.**
    `accept-coldstart.ps1` asserts the connected state from the signalling trace instead, which is
@@ -194,6 +237,14 @@ Also still true:
 - `dumpsys activity top` is a fallback that reads the view tree without waiting for idle, but it
   reports whichever activity is top — a Chrome custom tab left open on the phone will silently
   become the subject of the dump.
+- **This model cannot read images** (`ERROR: ... this model does not support image input`), so a
+  screenshot proves nothing to the agent. Capture them for the *user* and use logcat or the dump
+  for anything the agent has to decide.
+- `run-as net.lanmsg.chat` fails: `package not debuggable`. The app's own `SharedPreferences`
+  cannot be read back off the device, so a persisted value (the bar's saved position) cannot be
+  asserted by reading it — it can only be checked by the user seeing it.
+- Clear logcat with `logcat -c` **before** placing a call. A `logcat -d` check of "the call did not
+  end" is otherwise satisfied by the previous run's call, and will report a healthy call as broken.
 
 **The two-device acceptance run is invalid.** Both phones failed the online gate (`E0-caller-online`,
 `E1-callee-online`), so no call was placed and the ring and layout assertions that followed tested a
