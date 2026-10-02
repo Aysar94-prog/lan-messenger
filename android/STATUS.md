@@ -557,3 +557,41 @@ Build: `prepare-webrtc.ps1` downloads the WebRTC AAR; `build-voice.ps1` produces
 integrated APK with native .so libraries. See
 `.ai-planner/sessions/20260930-091333-43c139/state/` for all handoffs and the A00
 evaluation report.
+
+## Third pass on the same work (2026-10-02, 2.2.34)
+
+**A cold start could not answer an incoming call.** Tapping **Accept** did nothing at all — no
+`ACCEPT` frame, no toast, no error, no visual change, and the call rang out. **Decline worked**, and
+every screenshot looked correct, so nothing about the screen hinted at it.
+
+Two references to one view-model were involved. `CallView.render` reads the service's instance via
+`activity.host.calls()`, while `acceptCall` read the Activity's own `callUi` field and returned
+silently when that was null. The field is bound only from `onResume` and `onServiceConnected`, but
+the service does not create its `CallUi` until it builds the LAN stack — seconds after both of those
+— so neither attempt found one, and **nothing ever asked again**. Decline survived because it
+captures the instance it was built with. The same defect made the notification's Accept action inert
+and made Back navigate away from a live call instead of minimising it, for as long as the user did
+not leave and return.
+
+Fixed three ways: `render()` retries the bind on its one-second pass; the Accept button acts on the
+model that drew it (`CallUi.resolveForAccept`, `N179`-`N183`); and no path returns silently any more
+— the notification action and `onBackPressed` fall back to the service's instance and, failing that,
+say so instead of doing nothing. Verified on both phones from a cold start, with one tap and no
+re-entry (`accept-coldstart.ps1`, `X0`-`X6`, all pass on 2.2.34).
+
+**The peer's name could go stale for a whole call.** The call screen's rebuild test was a chain of
+`||` clauses over call ID, state, mute and route, and the peer's *name* was not among them: a contact
+renamed mid-call kept the old name, the old initial on the picture, and three accessibility labels
+naming them wrongly until something unrelated forced a rebuild. Replaced by a single
+`CallUi.overlayKey` string (`N171`-`N178`).
+
+**TalkBack fix completed.** The earlier fix gated a new announcement on state transitions but left
+the status line as a permanent live region being rewritten once a second, so the clock was still
+read aloud every second and the new code merely added a second announcement path. The live region is
+now removed from both the full screen and the collapsed bar, the announcement moved above the
+collapsed/full split and the rebuild test (both return early, so transitions that rebuild — including
+answering — were never spoken), and `CallUi.stateSpokenLabel` says "Connected" rather than the clock
+value `stateLabel` would give (`N167`-`N170`).
+
+`tests/CallCheck.java` **PASS=387 FAIL=0**. Build 2.2.34 (versionCode 61) installed on both phones,
+same signer as every prior release.

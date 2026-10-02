@@ -49,22 +49,15 @@ final class CallView {
   /** The call ID the Accept/Decline buttons act on, so a rebuilt view cannot act on a newer call. */
   private static String boundCallId;
 
-  /** The call state the attached overlay was built for.
+  /** The peer's current display name, or their ID before the service has one.
    *
-   *  <p>The overlay holds completely different controls in different states — Accept/Decline while
-   *  ringing, Cancel while ringing out, Mute and Speaker once media is up — so a state change has to
-   *  rebuild it.  Rebuilding only on a call-ID change left the ringing buttons on screen after the
-   *  call was answered, where tapping them did nothing because the state had already moved on, and
-   *  meant the in-call controls never appeared at all. */
-  private static CallProtocol.State boundState;
+   *  <p>Read on every render, not just at build time, so a rename is noticed. That is the whole point
+   *  of putting it in {@link CallUi#overlayKey}. */
+  private static String peerNameOf(MainActivity activity, CallSession call) {
+    return activity == null || activity.host == null ? call.peerId : activity.host.callPeerName(call.peerId);
+  }
 
-  /** Mute and audio route as last built.
-   *
-   *  <p>The round in-call toggles draw their glyph from these two values, so flipping either one
-   *  has to rebuild the overlay: without it the control kept showing the state it was built with,
-   *  which looked exactly like a toggle that does nothing. */
-  private static boolean boundMuted;
-  private static String boundRoute;
+  private static String boundKey;
 
   /** Whether the attached overlay is the end-reason banner rather than a live call panel.
    *
@@ -73,9 +66,6 @@ final class CallView {
    *  stale panel: nothing was rebuilt, and the user was left looking at a finished call still
    *  showing its duration, its toggles and a live-looking Hang up, with no end reason anywhere. */
   private static boolean boundTerminal;
-
-  /** Null-safe string equality, so an unknown route and a known one compare as different. */
-  private static boolean sameRoute(String a, String b) { return a == null ? b == null : a.equals(b); }
 
   /** When true the call overlay is collapsed to a compact bar at the foot of the stage.
    *
@@ -133,32 +123,37 @@ final class CallView {
     if (dismissedCallId != null && !dismissedCallId.equals(call.callId)) dismissedCallId = null;
     if (CallUi.shouldStayDismissed(dismissedCallId, call)) return;
 
+    // Announce a state change once, here, on the single path every render takes. It sits above the
+    // collapsed/full split and above the rebuild test because both of those return early: announcing
+    // after them missed every transition that happened to rebuild the screen, which is most of them
+    // -- picking up a call rebuilds, so "Connected" was the one update a screen-reader user never
+    // heard. It also has to sit above the clock, or the clock is announced once a second.
+    announceStateChange(activity, call);
+
     // While collapsed the bar stands in for the panel, and it refreshes the same way the panel
     // does. It is checked before the rebuild test below, because the bar reuses stateText and
     // detailText to stay live, and that test would otherwise be satisfied and nothing would redraw.
     if (collapsed) {
       if (overlay == null || !call.callId.equals(boundCallId) || stateText == null) {
-        buildCollapsed(activity, call);
+        buildCollapsed(activity, ui, call);
         return;
       }
       stateText.setText(CallUi.stateLabel(call));
       detailText.setText(CallUi.detailLabel(call));
-      announceStateChange(activity, call);
       return;
     }
 
-    // Rebuild whenever the call identity OR the state changed: the controls on this overlay are
-    // state-specific, so keeping the old ones would leave dead buttons on screen.
-    if (overlay == null || boundTerminal || !call.callId.equals(boundCallId) || call.state != boundState
-        || call.muted != boundMuted || !sameRoute(call.audioRoute, boundRoute)
-        || stateText == null) {
+    // Rebuild whenever anything the overlay was built from has changed: the controls on it are
+    // state-specific, so keeping the old ones would leave dead buttons on screen. Compared as one
+    // key string rather than a chain of clauses -- see boundKey for why.
+    if (overlay == null || boundTerminal || stateText == null
+        || !CallUi.overlayKey(call, peerNameOf(activity, call)).equals(boundKey)) {
       build(activity, ui, call);
       return;
     }
     stateText.setText(CallUi.stateLabel(call));
     detailText.setText(CallUi.detailLabel(call));
     routeText.setText(routeLabel(activity, call));
-    announceStateChange(activity, call);
     String hint = CallUi.qualityHint(call);
     qualityText.setText(hint == null ? "" : hint);
     qualityText.setVisibility(hint == null ? View.GONE : View.VISIBLE);
@@ -176,37 +171,37 @@ final class CallView {
   /** The state the last announcement was made for, so a transition can be told from a repaint.
    *
    *  <p>render() runs once a second for the whole length of a call and the status line carries the
-   *  duration clock, so a permanently-live region had TalkBack read "0:04", then "0:05", then
-   *  "0:06", once a second, for as long as the call lasted.  That makes the screen least usable to
-   *  exactly the users the accessibility labels elsewhere in this file exist for: a screen-reader
-   *  user cannot hear the other person over their own clock.  The clock still has to be *visible*
-   *  every second, so it is the announcement that is gated, not the text. */
+   *  duration clock, so the status line cannot be an accessibility live region: that had TalkBack
+   *  read "0:04", then "0:05", then "0:06", once a second, for as long as the call lasted.  That
+   *  makes the screen least usable to exactly the users the accessibility labels elsewhere in this
+   *  file exist for: a screen-reader user cannot hear the other person over their own clock.  The
+   *  clock still has to be *visible* every second, so it is the announcement that is gated, not the
+   *  text. */
   private static CallProtocol.State announcedState;
 
   /** Announce a state transition, once, and only when the state really changed.
    *
-   *  <p>The rule itself lives in {@link CallUi#isNewStateAnnouncement} because this class cannot be
-   *  loaded without an Android runtime, and the one check that proves the clock is not read aloud
-   *  every second has to be able to reach it. */
+   *  <p>The rule itself lives in {@link CallUi#isNewStateAnnouncement} and the wording in
+   *  {@link CallUi#stateSpokenLabel}, because this class cannot be loaded without an Android runtime
+   *  and the checks that prove the clock is not read aloud every second have to be able to reach
+   *  them.
+   *
+   *  <p>Every state is spoken, Connected included.  With the live region gone there is nothing else
+   *  that would say the call connected, and answering is the update that most needs saying out loud. */
   private static void announceStateChange(MainActivity activity, CallSession call) {
     if (!CallUi.isNewStateAnnouncement(announcedState, call.state)) return;
     announcedState = call.state;
-    // Connected is excluded deliberately: its line is a running clock rather than an event, and
-    // the transition into it was already announced when the view was rebuilt for the new state.
-    if (stateText != null && call.state != CallProtocol.State.Connected) {
-      announce(activity, CallUi.stateLabel(call));
-    }
+    announce(activity, CallUi.stateSpokenLabel(call));
   }
 
   private static void build(final MainActivity activity, CallUi ui, final CallSession call) {
     detach(activity);
     boundCallId = call.callId;
-    boundState = call.state;
-    boundMuted = call.muted;
-    boundRoute = call.audioRoute;
     boundTerminal = false;
 
-    String peerName = activity.host == null ? call.peerId : activity.host.callPeerName(call.peerId);
+    String peerName = peerNameOf(activity, call);
+    // Bound last, after the name is resolved, so the key and the views agree on this build.
+    boundKey = CallUi.overlayKey(call, peerName);
 
     // Root is a FrameLayout so the end-call disc can float over the picture while the header and
     // the control bar stay pinned to the edges, which a single LinearLayout cannot do.
@@ -225,7 +220,7 @@ final class CallView {
     LinearLayout panel = new LinearLayout(activity);
     panel.setOrientation(LinearLayout.VERTICAL);
 
-    panel.addView(header(activity, call, peerName), new LinearLayout.LayoutParams(-1, -2));
+    panel.addView(header(activity, ui, call, peerName), new LinearLayout.LayoutParams(-1, -2));
 
     // The picture takes all the space that is left, so the screen stays balanced on a short
     // device and on a tall one without the controls drifting away from the bottom edge.
@@ -284,7 +279,7 @@ final class CallView {
    *  three real controls and adding a fourth would break the shape the layout is recognised by.
    *  It stays available in every live state, ringing included, or the call could not be walked
    *  away from at any stage. */
-  private static View header(final MainActivity activity, final CallSession call, String peerName) {
+  private static View header(final MainActivity activity, final CallUi ui, final CallSession call, String peerName) {
     LinearLayout bar = new LinearLayout(activity);
     bar.setOrientation(LinearLayout.VERTICAL);
     bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -303,9 +298,10 @@ final class CallView {
     stateText = activity.label(CallUi.stateLabel(call), 16);
     stateText.setTextColor(BAR_DIM);
     stateText.setGravity(Gravity.LEFT);
-    // The status line changes on its own while connected (the duration clock) and on every
-    // transition, so it is a live region.
-    stateText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    // Deliberately NOT an accessibility live region. render() rewrites this line once a second for
+    // the whole length of a call, so a live region made TalkBack read the duration aloud every
+    // second -- a screen-reader user could not hear the person they were on a call with. State
+    // transitions are announced instead, once each, by announceStateChange().
     names.addView(stateText, new LinearLayout.LayoutParams(-1, -2));
     top.addView(names, new LinearLayout.LayoutParams(0, -2, 1));
 
@@ -313,7 +309,7 @@ final class CallView {
     // small ambiguous mark, so the control that lets the user walk away from a call looked like
     // decoration and was never found.  A down arrow onto a bar is the same idea every phone uses.
     Button minimize = activity.dotButton("🔽", "Minimize the call screen", false, 44);
-    minimize.setOnClickListener(v -> { collapsed = true; buildCollapsed(activity, call); });
+    minimize.setOnClickListener(v -> { collapsed = true; buildCollapsed(activity, ui, call); });
     top.addView(minimize, new LinearLayout.LayoutParams(activity.dp(44), activity.dp(44)));
     bar.addView(top, new LinearLayout.LayoutParams(-1, -2));
 
@@ -418,7 +414,10 @@ final class CallView {
       accept.setTextSize(16);
       accept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(37, 211, 102)));
       accept.setContentDescription("Accept incoming call");
-      accept.setOnClickListener(v -> activity.acceptCall(call.callId));
+      // Acts on the view-model this button was built from, exactly as Decline does. Routing it
+      // through the Activity's own field instead made Accept inert whenever that second reference
+      // was not bound -- a cold start never bound it -- so the user could not answer a call at all.
+      accept.setOnClickListener(v -> activity.acceptCall(ui, call.callId));
       row.addView(accept, new LinearLayout.LayoutParams(-1, activity.dp(56)));
 
       Button decline = activity.button("Decline  📴");
@@ -477,10 +476,8 @@ final class CallView {
                                     final CallUi ui) {
     detach(activity);
     boundCallId = call.callId;
-    boundState = call.state;
-    boundMuted = call.muted;
-    boundRoute = call.audioRoute;
     boundTerminal = true;
+    boundKey = CallUi.overlayKey(call, peerNameOf(activity, call));
     LinearLayout panel = activity.column();
     panel.setGravity(Gravity.CENTER_HORIZONTAL);
     panel.setPadding(activity.dp(24), activity.dp(20), activity.dp(24), activity.dp(20));
@@ -524,15 +521,13 @@ final class CallView {
  *  <p>Anchored to the bottom and only as tall as its text, so the header, the conversation and the
  *  rest of the app stay visible and usable underneath — that is the whole point of collapsing.
  *  Tapping the bar restores the full panel; hang-up stays one tap away without expanding. */
-  private static void buildCollapsed(final MainActivity activity, final CallSession call) {
+  private static void buildCollapsed(final MainActivity activity, CallUi ui, final CallSession call) {
     detach(activity);
     boundCallId = call.callId;
-    boundState = call.state;
-    boundMuted = call.muted;
-    boundRoute = call.audioRoute;
     boundTerminal = false;
 
-    String peerName = activity.host == null ? call.peerId : activity.host.callPeerName(call.peerId);
+    String peerName = peerNameOf(activity, call);
+    boundKey = CallUi.overlayKey(call, peerName);
 
     LinearLayout bar = new LinearLayout(activity);
     bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -546,7 +541,8 @@ final class CallView {
     texts.addView(who);
     stateText = activity.label(CallUi.stateLabel(call), 13);
     stateText.setTextColor(BAR_DIM);
-    stateText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+    // Same reason as the full screen's status line: this one carries the clock too, and it is
+    // rewritten every second for as long as the call is minimised.
     texts.addView(stateText);
     detailText = activity.label(CallUi.detailLabel(call), 12);
     detailText.setTextColor(BAR_DIM);
@@ -555,15 +551,14 @@ final class CallView {
     bar.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
 
     // Hang-up stays reachable without expanding, because the bar is what is left on screen.
-    Button hangup = activity.button("Hang up");
+    // Named like the disc on the full screen.  A bare "Hang up" gives a screen-reader user no idea
+    // whose call they are about to end, and the bar is the only call screen left while minimised --
+    // so this is the one control they have.
+    Button hangup = activity.button("End call");
     hangup.setTextColor(Color.WHITE);
     hangup.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(211, 47, 47)));
-    hangup.setContentDescription("Hang up");
-    hangup.setOnClickListener(v -> {
-      CallUi ui = activity.host == null ? null : activity.host.calls();
-      if (ui == null) return;
-      activity.runCallAction(ui::hangup, "Could not end the call.");
-    });
+    hangup.setContentDescription("End the call with " + peerName);
+    hangup.setOnClickListener(v -> activity.runCallAction(ui::hangup, "Could not end the call."));
     bar.addView(hangup, new LinearLayout.LayoutParams(-2, activity.dp(48)));
 
     bar.setContentDescription("Minimized call with " + peerName + ". Tap to reopen.");
@@ -606,9 +601,7 @@ final class CallView {
   static void hide(MainActivity activity) {
     detach(activity);
     boundCallId = null;
-    boundState = null;
-    boundMuted = false;
-    boundRoute = null;
+    boundKey = null;
     boundTerminal = false;
     collapsed = false;
     dismissedCallId = null;
@@ -622,9 +615,7 @@ final class CallView {
     overlay = null;
     stateText = null; detailText = null; qualityText = null; routeText = null;
     boundCallId = null;
-    boundState = null;
-    boundMuted = false;
-    boundRoute = null;
+    boundKey = null;
     boundTerminal = false;
     lastQualityAnnounceMs = 0;
     collapsed = false;
