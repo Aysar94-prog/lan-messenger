@@ -640,3 +640,172 @@ across the events of one gesture. Measured on SM-ultraaysar: a 646px drag moved 
 the call never nudges the bar and a short sideways drag is still a drag. `N193`-`N204`.
 
 `tests/CallCheck.java` **PASS=408 FAIL=0**. Build 2.2.39 (versionCode 66) installed on both phones.
+
+## Compose row: Messenger-style icons, camera photo+video, gallery photo+video (2026-10-02)
+
+The compose row was five text buttons (Camera, Photo, File, Fast file, plus a separate text Send
+button); the user asked for it to look and behave like Messenger's, specifically: icons instead
+of text, the camera icon letting them record a video or take a photo (previously photo-only —
+there was no video capture anywhere in the app), and the gallery icon letting them pick a photo
+or a video to upload (previously image-only).
+
+Implemented per [PLAN-COMPOSE-ICONS-ANDROID.md](../PLAN-COMPOSE-ICONS-ANDROID.md) (C01-C05, all
+done), after confirming three design choices with the user: the system camera with a Photo/Video
+chooser first (not a full custom in-app camera screen), Send becoming an icon too
+(paper-plane/thumbs-up), and File/Fast file folding into a "+" popup menu.
+
+`AttachmentFlow.captureVideo` (new) mirrors the existing `capturePhoto` but with
+`MediaStore.ACTION_VIDEO_CAPTURE`; `chooseCameraMode` (new) is the Photo/Video chooser dialog
+the camera icon opens. `CameraAttachmentProvider` (the content provider that grants the system
+camera app write access to one app-private capture file) now accepts both `.jpg` and `.mp4`
+capture targets and reports the right MIME type for each — still keyed only by this app's own
+generated cache filename. `pickFile`'s `photo` parameter now means "media": the gallery picker
+requests `{"image/*","video/*"}` instead of `image/*` alone, so one picker returns either, same
+as Messenger's single gallery entry. The row itself uses a new `composeIcon` helper (neutral
+light-gray circle) rather than `dotButton`'s translucent-on-dark style, which was tuned for the
+call screen and would have been invisible against this screen's light background. Send gained a
+`refreshSendIcon()` that swaps ➤/👍 based on whether there's a message or attachment ready,
+wired to the composer's text watcher and to the attachment draft being set/cleared.
+
+**A real bug was found and fixed during this work, not a pre-existing separate report:**
+`render()` had its own hardcoded `send.setText("Send")` on every per-second refresh pass, left
+over from the old text-button Send, which silently overwrote the new glyph back to literal
+"Send" text every render tick. Caught by observing the on-device screenshot (not by the
+compile), fixed by replacing it with a conditional `refreshSendIcon()` call.
+
+**Verified:** real javac compile of all 42 production files, 0 errors; full `build-voice.ps1`
+build/sign/verify succeeded (twice — once before, once after the render() fix). **On-device
+acceptance** (one device; this is OS-intent/UI behavior, not peer-dependent, so no two-device
+run was needed): Send correctly shows 👍 empty / ➤ with content, live as you type; `+` opens
+File/Fast file; camera icon's "Take photo" still works (regression-checked) and "Record video"
+opens the system camera in actual video mode, and a real ~3 s recording was captured, attached,
+sent, and rendered correctly as a first-frame thumbnail with the play-disc overlay (full
+integration with the prior media-preview work, no regression); the gallery picker now shows both
+"Images" and "Videos" category chips, where only images were selectable before.
+
+## Video polish: draft preview, real play/pause, automatic receive, time bar (2026-10-02)
+
+Four gaps found immediately after using the shipped camera/gallery/media-preview work, all fixed
+in the same session — see [PLAN-MEDIA-PREVIEW-ANDROID.md](../PLAN-MEDIA-PREVIEW-ANDROID.md)'s
+"Follow-up round" section for the full write-up (M07-M10). Summary:
+
+- A video attached via the camera or gallery icon now shows a real first-frame preview **before**
+  Send, same as a photo always did (`AttachmentFlow.renderPendingAttachment`, new
+  `PeerEngine.isVideoFile`, new `AttachmentFlow.previewFrame`).
+- A single tap on an inline video now genuinely pauses and resumes in place — the first version
+  always rebuilt a fresh player on every tap, so a second tap during playback started a duplicate
+  overlapping playback instead of pausing. Fixed with an explicit state machine
+  (`MediaCard.InlineVideo`/`toggleInline`: `IDLE → LOADING → PLAYING ↔ PAUSED`).
+- A received video now auto-downloads exactly like a photo (`TransferManager.queueAutomaticMedia`
+  widened from `isImageAttachment` alone to `isImageAttachment||isVideoAttachment`, same pool/
+  fairness/retry rules) rather than sitting behind a manual Download tap the way a plain File or
+  Fast-file attachment does.
+- The inline player gained a WhatsApp/Messenger-style time bar: an elapsed/duration label and a
+  draggable `SeekBar`, visible even before the first tap, updated live via a self-rescheduling
+  300 ms poll while playing (`MediaCard.tick`), reset cleanly on natural completion.
+
+All verified on-device: two different real camera recordings showed correct draft previews before
+sending; play → pause (frame froze, confirmed static across a timed wait with no tap) → resume
+(continued from the same point, not a restart) → natural completion (clean reset) all behaved
+correctly; a received video rendered as a clean thumbnail with no Download button before an
+unrelated ADB "incremental install" serving-session glitch interrupted that specific device (not
+an app exception — resolved by a clean uninstall/reinstall); the time bar tracked live playback
+position end-to-end on a full play-through and reset correctly on completion. Real javac compile
+(42 files, 0 errors) and a full signed `build-voice.ps1` pass after each change. No wire, storage,
+or Windows change.
+
+## Release 2.2.41: a real on-device crash found and fixed during release testing (2026-10-02)
+
+Packaging today's work as a real numbered release (2.2.40, then 2.2.41) surfaced a genuine crash
+that none of the dev-build testing above had hit: going online on a device with no previously
+granted `RECORD_AUDIO` crashed the whole process with `SecurityException: Starting FGS with type
+microphone ... requires permissions ... RECORD_AUDIO`. The manifest declares the service's
+foreground-service type as `connectedDevice|microphone` (added for voice calls/messages), and
+Android 14+ refuses to start a foreground service with a declared type whose matching dangerous
+permission isn't *currently granted* — not merely declared — killing the app outright rather than
+degrading. This is latent in every build since the voice-call work landed; it was never hit
+before because every device used for testing already had `RECORD_AUDIO` granted from earlier
+voice-message/call use. It surfaced here because an earlier uninstall/reinstall (done to clear an
+unrelated ADB "incremental install" artifact) reset that device to a clean permission state.
+
+Fixed in `MessengerService.java`: new `startForegroundSafely()` checks `RECORD_AUDIO` at the
+moment `startForeground` is actually called (API 29+) and only includes
+`FOREGROUND_SERVICE_TYPE_MICROPHONE` in the type bitmask when it is genuinely granted right now —
+`FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE` alone (this service's whole reason for being
+foreground) is always a safe subset of what the manifest declares, so going online can never
+depend on a microphone permission unrelated to networking. Also closes an existing gap: per-call
+`onRequestPermissionsResult` handling (`MainActivity.java`, both the voice-message recording grant
+and the call microphone grant) now calls `startForegroundSafely()` again right after the user
+grants `RECORD_AUDIO` mid-session, upgrading the already-running foreground service to add the
+microphone type — this is the "A06 runtime microphone FGS promotion" item earlier status entries
+had flagged as untested/unimplemented; it was actually just missing.
+
+**Verified:** real javac compile (42 files, 0 errors); `build.ps1` (the real release entry point,
+not `build-voice.ps1`'s dev-suffixed path) built, signed and verified **2.2.40** then **2.2.41**
+(after this fix), both v2+v3, same original signing key continuity. Installed 2.2.41 on both
+physical devices. The previously-crashing device now opens cleanly and goes Online without
+incident. Full round-trip re-verified on the release build itself: re-discovered the peer (whose
+identity necessarily changed after the earlier uninstall), mutual safety-code verification on
+both devices, and a real text message sent from the reinstalled device arrived and showed
+**Delivered** on the other — confirming the actual release artifacts work end-to-end, not just the
+dev builds used during feature development.
+
+`outputs/LanMessenger-2.2.41.apk` is the current release; `outputs/SHA256SUMS-Android-2.2.41.txt`
+has its hash. 2.2.40 (pre-fix) is superseded and was not device-tested before 2.2.41 replaced it.
+
+**Fifth gap (same day): the fullscreen double-tap view opened like a photo, not a video.**
+`AttachmentFlow.previewVideo` showed only a static frame plus Download/Close — no actual playback,
+which is exactly what a photo's fullscreen view shows too, so the two were indistinguishable.
+Rebuilt around a real `VideoView` (same cached decrypted file as inline playback) with Android's
+standard `MediaController` transport overlay, autoplaying on open and stopping cleanly on any
+dismiss path. Verified on-device: screenshots taken seconds apart showed the frame had genuinely
+advanced each time, through to content matching the clip's final seconds — real continuous
+playback, not a picture. Compile/build/sign verified the same way as every other fix in this
+round.
+
+## Media preview cleanup: photo/video thumbnails, Messenger-style (2026-10-02)
+
+A received photo rendered its inline thumbnail correctly, but a generic attachment card
+(filename/size line, button row) still rendered underneath it regardless, and that row grew a
+**second, redundant "Open" button** whenever the thumbnail existed — one tied to the generic
+download/open-file action, one tied to the inline preview, both visible at once. Root cause:
+`MainActivity.render()`'s non-voice attachment branch always built the generic card and only
+conditionally bolted the extra button on, rather than treating "a preview exists" as a reason to
+skip the generic card entirely. Video attachments had no preview concept at all — `isImageAttachment`
+only recognized image extensions, so any video fell straight through to the plain file card.
+There is no video-capture/send flow on Android (confirmed with the user); a video only ever
+arrives as an ordinary file-picker attachment.
+
+Fixed per [PLAN-MEDIA-PREVIEW-ANDROID.md](../PLAN-MEDIA-PREVIEW-ANDROID.md) (M01-M06, M06 skipped
+as unnecessary scope): new `MediaCard.java` renders a single Messenger-style thumbnail with no
+surrounding text/buttons when a preview exists (photo: the existing `inlineBitmap` decode; video:
+a first-frame extraction via `MediaMetadataRetriever` against a one-time decrypted cache copy of
+the attachment, `PeerEngine.isVideoAttachment` added for the extension check). A video thumbnail
+gets a centered play-disc overlay; single tap plays it inline via `VideoView` (auto-restoring the
+thumbnail on completion or error), double tap opens the same fullscreen view as a photo
+(`AttachmentFlow.previewVideo`, new — a video's bytes are never valid image bytes, so it reuses
+the cached frame rather than calling `previewImage`). `AttachmentFlow.previewImage`'s fullscreen
+dialog gained a **⬇ Download** button next to Close, wired to the existing `exportFile`. The
+original generic file card (filename, size, Open/Download/Resume) is unchanged and is still what
+renders for anything with no local preview yet (not downloaded, too large for the image cap, or
+an unsupported type) — confirmed on-device for an un-downloaded video, which correctly shows
+Download rather than attempting a broken preview.
+
+No size cap was added for video thumbnail generation (explicit user decision): extracting a frame
+streams the decrypted attachment to a cache file rather than holding it fully in memory, unlike
+the image path's `THUMBNAIL_PREVIEW_CAP`-guarded `inlineBitmap`.
+
+**Verified:** real javac compile of all 42 production files against `android.jar` + the WebRTC
+AAR, 0 errors; full `build-voice.ps1` pipeline (javac/d8/aapt/zipalign/apksigner) succeeded,
+v2+v3 signature verified. Built as `LanMessenger-2.2.39-media-preview-dev.apk` (a validation
+build, not a numbered release). **Two-device on-hardware acceptance passed in both directions**:
+existing photo history renders thumbnail-only on both phones; a real 3.8 MB `.mp4` sent as a file
+attachment rendered thumbnail+play-disc immediately on the sender and as the correct
+download-first generic card on the receiver, converting to the same thumbnail+play-disc card once
+downloaded; single tap played it inline on both phones (confirmed via `dumpsys audio` showing a
+real `USAGE_MEDIA/CONTENT_TYPE_MOVIE` audio-focus request/release spanning the clip's actual
+duration) and cleanly restored the thumbnail afterward; double tap opened the fullscreen view with
+filename, ⬇ DOWNLOAD, and CLOSE on both the photo and the video. One transient, self-recovering
+ANR was observed once after a heavy manual history scroll — consistent with pre-existing
+synchronous image-thumbnail decoding in `render()` (true before this change too), not a
+regression, and not seen again in the rest of the session.

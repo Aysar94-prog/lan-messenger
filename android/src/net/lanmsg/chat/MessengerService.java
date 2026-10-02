@@ -2,6 +2,8 @@ package net.lanmsg.chat;
 
 import android.app.*;
 import android.content.*;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.net.wifi.WifiManager;
 import android.os.*;
 
@@ -309,6 +311,25 @@ public class MessengerService extends Service {
   }
   @Override public IBinder onBind(Intent intent){return binder;}
   @Override public boolean onUnbind(Intent intent){if(!"Online".equals(state))stopSelf();return true;}
+  // The manifest declares both connectedDevice and microphone foreground-service types (the
+  // latter for voice calls/messages), but Android 14+ throws a SecurityException and kills the
+  // whole process if a microphone-typed FGS is started while RECORD_AUDIO is not currently
+  // granted -- not merely declared in the manifest, actually granted at this moment. That
+  // permission can go missing for reasons unrelated to anything the user did in this app: the OS
+  // auto-revokes runtime permissions for an app that hasn't been opened in a while, and a fresh
+  // install/reinstall always starts with nothing granted until the user records a voice message
+  // or makes a call for the first time. Since going online must never depend on that, the
+  // microphone type is only ever requested when RECORD_AUDIO is actually granted right now;
+  // connectedDevice alone (this service's whole reason for being foreground at all) is always a
+  // safe subset of what the manifest declares.
+  void startForegroundSafely(){
+    if(Build.VERSION.SDK_INT>=29){
+      int type=ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
+      if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)type|=ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+      startForeground(1,notification(),type);
+    }else startForeground(1,notification());
+    foreground=true;
+  }
   // All requests (notification and Activity) meet here; engine creation remains in onCreate only.
   synchronized void transition(boolean online){
     requestedOnline=online;
@@ -317,11 +338,11 @@ public class MessengerService extends Service {
       // Socket teardown can take time while a transfer is active. If an Online request arrives
       // during that teardown, remember it and let the Offline worker restart cleanly afterwards.
       if("Stopping".equals(state)){
-        if(!foreground){startForeground(1,notification());foreground=true;handler.post(update);}
+        if(!foreground){startForegroundSafely();handler.post(update);}
         return;
       }
       if(engine==null)state="Starting";
-      if(!foreground){startForeground(1,notification());foreground=true;handler.post(update);}
+      if(!foreground){startForegroundSafely();handler.post(update);}
       if(engine==null)return;
       if("Online".equals(state)||"Starting".equals(state))return;
       state="Starting";problem="";

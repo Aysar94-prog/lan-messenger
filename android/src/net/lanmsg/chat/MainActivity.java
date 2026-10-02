@@ -87,6 +87,10 @@ public class MainActivity extends Activity {
    *  which is in force -- because a single toggle whose state only lives in its icon is
    *  indistinguishable from one that does nothing when pressed. */
   Button dotButton(String glyph,String description,boolean on){return dotButton(glyph,description,on,56);}
+  // A neutral light-gray circular icon button for the compose row (dotButton's translucent-white
+  // "off" look is tuned for the call screen's dark background, invisible against this screen's
+  // light one).
+  Button composeIcon(String glyph,String description){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(18);b.setPadding(0,0,0,0);b.setGravity(android.view.Gravity.CENTER);b.setContentDescription(description);b.setBackground(circleBg(Color.rgb(241,242,245),44));b.setTextColor(ink);return b;}
   Button dotButton(String glyph,String description,boolean on,int diameterDp){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(diameterDp>=56?24:20);b.setPadding(0,0,0,0);b.setGravity(android.view.Gravity.CENTER);b.setContentDescription(description);b.setBackground(circleBg(on?accent:Color.argb(70,255,255,255),diameterDp));b.setTextColor(on?Color.WHITE:Color.rgb(214,224,232));return b;}
   TextView circle(String letter,int color,int diameterDp,int textSize){TextView t=new TextView(this);t.setText(letter);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(textSize);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(color,diameterDp));return t;}
   /** The peer's name on the call screen's header bar: bold, uppercase, white, flush left.
@@ -241,12 +245,52 @@ public class MainActivity extends Activity {
       loadingEarlier=true;int previousHeight=feed.getHeight();visibleMessageCounts.put(selected,current+20);lastSignature="";render();
       scroll.post(()->{scroll.scrollTo(0,Math.max(0,feed.getHeight()-previousHeight));loadingEarlier=false;});
     });
-    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);LinearLayout composeActions=new LinearLayout(this);Button camera=button("Camera"),photo=button("Photo"),file=button("File");composeActions.addView(camera);composeActions.addView(photo);composeActions.addView(file);camera.setOnClickListener(v->AttachmentFlow.capturePhoto(this));photo.setOnClickListener(v->AttachmentFlow.pickFile(this,true));file.setOnClickListener(v->AttachmentFlow.pickFile(this,false));send=button("Send");send.setTextColor(Color.WHITE);send.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));Button fast=button("Fast file");composeActions.addView(fast);fast.setOnClickListener(v->AttachmentFlow.pickFastFile(this));recordVoice=button("🎤");recordVoice.setContentDescription("Record a voice message");composeActions.addView(recordVoice);recordVoice.setOnClickListener(v->VoiceUi.startVoiceRecording(this));HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);LinearLayout actionRow=new LinearLayout(this);actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(48),1));actionRow.addView(send,new LinearLayout.LayoutParams(dp(80),dp(48)));root.addView(actionRow);
+    attachmentDraft=column();root.addView(attachmentDraft);composer=input("Write a message or caption…",2000);composer.setSingleLine(false);composer.setMaxLines(4);composer.setText(drafts.containsKey(id)?drafts.get(id):"");root.addView(composer);
+    composer.addTextChangedListener(new android.text.TextWatcher(){
+      @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+      @Override public void onTextChanged(CharSequence s,int start,int before,int count){}
+      @Override public void afterTextChanged(android.text.Editable s){refreshSendIcon();}
+    });
+    // Messenger-style icon row: a "+" folding in the two less-common attachment actions (File,
+    // Fast file), a camera icon offering a Photo/Video choice before handing off to the system
+    // camera, and a gallery icon whose picker now accepts photos and videos alike (see
+    // AttachmentFlow.pickFile's `photo` parameter, which really means "media" now). Voice
+    // recording keeps its own always-visible icon rather than displacing Send the way Messenger's
+    // own mic-in-the-send-slot does, since recording and sending are two independent actions here.
+    LinearLayout composeActions=new LinearLayout(this);composeActions.setGravity(android.view.Gravity.CENTER_VERTICAL);
+    Button plus=composeIcon("+","More attachment options");
+    plus.setOnClickListener(v->{
+      android.widget.PopupMenu menu=new android.widget.PopupMenu(this,plus);
+      menu.getMenu().add(0,1,0,"File");menu.getMenu().add(0,2,0,"Fast file");
+      menu.setOnMenuItemClickListener(item->{if(item.getItemId()==1)AttachmentFlow.pickFile(this,false);else AttachmentFlow.pickFastFile(this);return true;});
+      menu.show();
+    });
+    Button cameraIcon=composeIcon("📷","Camera: take a photo or record a video");
+    cameraIcon.setOnClickListener(v->AttachmentFlow.chooseCameraMode(this));
+    Button galleryIcon=composeIcon("🖼","Choose a photo or video to send");
+    galleryIcon.setOnClickListener(v->AttachmentFlow.pickFile(this,true));
+    LinearLayout.LayoutParams plusParams=new LinearLayout.LayoutParams(dp(44),dp(44));plusParams.setMargins(0,0,dp(8),0);
+    LinearLayout.LayoutParams cameraParams=new LinearLayout.LayoutParams(dp(44),dp(44));cameraParams.setMargins(0,0,dp(8),0);
+    LinearLayout.LayoutParams galleryParams=new LinearLayout.LayoutParams(dp(44),dp(44));galleryParams.setMargins(0,0,dp(8),0);
+    composeActions.addView(plus,plusParams);composeActions.addView(cameraIcon,cameraParams);composeActions.addView(galleryIcon,galleryParams);
+    recordVoice=composeIcon("🎤","Record a voice message");
+    LinearLayout.LayoutParams micParams=new LinearLayout.LayoutParams(dp(44),dp(44));composeActions.addView(recordVoice,micParams);
+    recordVoice.setOnClickListener(v->VoiceUi.startVoiceRecording(this));
+    // Paper-plane when there's something to send, thumbs-up otherwise -- Messenger's own quiet
+    // nudge that an empty composer still has a one-tap action, though unlike Messenger's actual
+    // like-message this app has no sticker/like message type, so tapping it while empty is a
+    // harmless no-op via the same guard the click listener below already had.
+    send=dotButton("➤","Send message",true,48);
+    HorizontalScrollView actionScroll=new HorizontalScrollView(this);actionScroll.setHorizontalScrollBarEnabled(false);actionScroll.addView(composeActions);
+    LinearLayout actionRow=new LinearLayout(this);actionRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+    actionRow.addView(actionScroll,new LinearLayout.LayoutParams(0,dp(52),1));
+    LinearLayout.LayoutParams sendParams=new LinearLayout.LayoutParams(dp(48),dp(48));sendParams.setMargins(dp(8),0,0,0);
+    actionRow.addView(send,sendParams);root.addView(actionRow);
     send.setOnClickListener(v->{
       PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_SHORT).show();return;}
       if(pendingAttachmentUri==null&&composer.getText().toString().trim().isEmpty())return;
       String target=selected;String caption=composer.getText().toString();Uri uri=pendingAttachmentUri;long size=pendingAttachmentSize;String name=pendingAttachmentName;File cameraFile2=pendingCameraFile;boolean fastMode=pendingFast;
-      sendBusy=true;send.setEnabled(false);composer.setEnabled(false);send.setText("Preparing…");
+      sendBusy=true;send.setEnabled(false);composer.setEnabled(false);
       // Runs the actual encrypt+store (and, for a large file, real work) off the UI thread — this
       // used to happen synchronously in this click listener, which could freeze the app or trigger
       // an ANR on a large attachment.
@@ -259,11 +303,11 @@ public class MainActivity extends Activity {
             }
             if(cameraFile2!=null)cameraFile2.delete();
           }else e.queueLocal(target,caption);
-          ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)AttachmentFlow.clearPendingAttachment(this);sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);lastSignature="";render();});
+          ui.post(()->{if(target.equals(selected)){composer.setText("");drafts.remove(target);}if(uri==pendingAttachmentUri)AttachmentFlow.clearPendingAttachment(this);sendBusy=false;send.setEnabled(true);refreshSendIcon();if(composer!=null)composer.setEnabled(true);lastSignature="";render();});
           if(uri==null)try{e.flush();}catch(Exception ignored){}
-        }catch(Exception error){ui.post(()->{sendBusy=false;send.setEnabled(true);send.setText("Send");if(composer!=null)composer.setEnabled(true);problem(error);});}
+        }catch(Exception error){ui.post(()->{sendBusy=false;send.setEnabled(true);refreshSendIcon();if(composer!=null)composer.setEnabled(true);problem(error);});}
       },"lan-send").start();
-    });AttachmentFlow.renderPendingAttachment(this);VoiceUi.renderVoicePanel(this);render();
+    });AttachmentFlow.renderPendingAttachment(this);VoiceUi.renderVoicePanel(this);refreshSendIcon();render();
     // The header is now a single always-compact bar, so keyboard-open only needs to hide the group
     // notice and snap to the latest message — there is no separate button row left to collapse.
     View decor=getWindow().getDecorView();final boolean[] keyboardWasVisible={false};
@@ -332,7 +376,7 @@ public class MainActivity extends Activity {
     }
     PeerEngine.Peer peer=null;for(PeerEngine.Peer p:people)if(p.id.equals(selected))peer=p;PeerEngine.Group group=null;for(PeerEngine.Group g:e.groups())if(g.id.equals(selected))group=g;if(peer==null&&group==null)return;
     boolean leavingPending=group!=null&&e.pendingOwnershipHandoff(group.id);
-    heading.setText(group!=null?group.name+" · "+group.members.length+" members"+(leavingPending?" · Leaving — waiting for members to catch up":""):peer.name+" · "+("Online".equals(host.state)&&peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&!leavingPending&&(group!=null||peer.trusted()));send.setText(sendBusy?"Preparing…":"Send");composer.setEnabled(!sendBusy&&!leavingPending);if(recordVoice!=null)recordVoice.setEnabled(send.isEnabled()&&recordingDraftId==null);List<PeerEngine.Message> messages=e.messages(selected);
+    heading.setText(group!=null?group.name+" · "+group.members.length+" members"+(leavingPending?" · Leaving — waiting for members to catch up":""):peer.name+" · "+("Online".equals(host.state)&&peer.online()?"Online":"Offline")+" · "+peer.security());send.setEnabled(!sendBusy&&!leavingPending&&(group!=null||peer.trusted()));if(!sendBusy)refreshSendIcon();composer.setEnabled(!sendBusy&&!leavingPending);if(recordVoice!=null)recordVoice.setEnabled(send.isEnabled()&&recordingDraftId==null);List<PeerEngine.Message> messages=e.messages(selected);
     int visibleCount=visibleMessageCounts.getOrDefault(selected,10);int start=Math.max(0,messages.size()-visibleCount);
     StringBuilder signature=new StringBuilder(selected).append(start);for(int i=start;i<messages.size();i++){PeerEngine.Message m=messages.get(i);signature.append(m.id).append(m.status).append(e.hasAttachment(m)).append(e.downloading(m));}if(signature.toString().equals(lastSignature))return;lastSignature=signature.toString();boolean bottom=feed.getHeight()-scroll.getScrollY()-scroll.getHeight()<dp(120);releaseImages(feed);feed.removeAllViews();progressLabels.clear();
     if(messages.isEmpty())feed.addView(label("Verify this device before chatting.\n\nQueued messages send after both verified devices reconnect. Delivered means saved on the other device.",17));
@@ -347,12 +391,29 @@ public class MainActivity extends Activity {
       else if(peerAvatarBmp!=null){ImageView miniAvatar=new ImageView(this);miniAvatar.setImageBitmap(peerAvatarBmp);miniAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);miniAvatar.setClipToOutline(true);whoRow.addView(miniAvatar,miniAvatarParams);}
       else whoRow.addView(circle(whoName.isEmpty()?"?":whoName.substring(0,1).toUpperCase(Locale.ROOT),whoColor,18,9),miniAvatarParams);
       TextView who=label(whoName,14);who.setPadding(0,0,0,0);who.setTypeface(null,Typeface.BOLD);who.setTextColor(whoColor);whoRow.addView(who);
-      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else if(VoiceMarker.classify(m.fileName,"Normal",m.id).equals(VoiceMarker.CANDIDATE)){VoiceCard.addVoiceCard(this,card,m);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}else{Bitmap thumbnail=inlineBitmap(e,m);if(thumbnail!=null){ImageView image=new ImageView(this);image.setImageBitmap(thumbnail);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);int height=Math.max(dp(150),Math.min(dp(320),(int)((long)maxBubble*thumbnail.getHeight()/Math.max(1,thumbnail.getWidth()))));image.setLayoutParams(new LinearLayout.LayoutParams(maxBubble,height));image.setBackground(bg(Color.rgb(232,236,243)));image.setClipToOutline(true);image.setContentDescription("Open "+m.fileName);image.setOnClickListener(v->AttachmentFlow.previewImage(this,m));card.addView(image);}TextView name=label(m.fileName+"  ·  "+formatSize(m.fileSize),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);name.setOnClickListener(v->{if(e.hasAttachment(m))AttachmentFlow.fileAction(this,m);});card.addView(name);LinearLayout fileActions=new LinearLayout(this);boolean available=e.hasAttachment(m);Button save=button(available?"Open":e.downloading(m)?"Pause":e.pendingDestination(m).isEmpty()?"Download":"Resume");fileActions.addView(save);save.setOnClickListener(v->AttachmentFlow.fileAction(this,m));if(thumbnail!=null){Button open=button("Open");fileActions.addView(open);open.setOnClickListener(v->AttachmentFlow.previewImage(this,m));}card.addView(fileActions);TextView progressLine=label("",13);card.addView(progressLine);progressLabels.put(m.id,progressLine);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";String statusText=m.status;long[] progress=m.status.equals("Queued")&&!m.fileName.isEmpty()?transferProgress.get(m.id):null;if(progress!=null&&progress[1]>0)statusText="Sending "+(progress[0]*100/progress[1])+"%";TextView statusLine=label(when+"  ·  "+ticks+" "+statusText,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
+      card.addView(whoRow);if(m.fileName.isEmpty()){TextView text=label(m.text,17);text.setMaxWidth(maxBubble);text.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);text.setTextIsSelectable(true);card.addView(text);}else if(VoiceMarker.classify(m.fileName,"Normal",m.id).equals(VoiceMarker.CANDIDATE)){VoiceCard.addVoiceCard(this,card,m);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}else{Bitmap thumbnail=inlineBitmap(e,m);boolean videoPreview=thumbnail==null&&PeerEngine.isVideoAttachment(m)&&e.hasAttachment(m);
+      // Messenger-style: a usable preview is the whole card -- no filename/size line, no
+      // button row underneath it. Only an attachment with no local preview (not yet
+      // downloaded, over the image size cap, or an unsupported type) falls back to the
+      // ordinary generic file card below.
+      if(thumbnail!=null)MediaCard.addImageCard(this,card,m,thumbnail,maxBubble);
+      else if(videoPreview)MediaCard.addVideoCard(this,card,m,maxBubble);
+      else{TextView name=label(m.fileName+"  ·  "+formatSize(m.fileSize),15);name.setMaxWidth(maxBubble);name.setTextIsSelectable(true);name.setOnClickListener(v->{if(e.hasAttachment(m))AttachmentFlow.fileAction(this,m);});card.addView(name);LinearLayout fileActions=new LinearLayout(this);boolean available=e.hasAttachment(m);Button save=button(available?"Open":e.downloading(m)?"Pause":e.pendingDestination(m).isEmpty()?"Download":"Resume");fileActions.addView(save);save.setOnClickListener(v->AttachmentFlow.fileAction(this,m));card.addView(fileActions);}
+      TextView progressLine=label("",13);card.addView(progressLine);progressLabels.put(m.id,progressLine);if(!m.text.isEmpty()){TextView caption=label(m.text,17);caption.setMaxWidth(maxBubble);caption.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);caption.setTextIsSelectable(true);card.addView(caption);}}String when=android.text.format.DateFormat.format("MMM d, HH:mm",m.time).toString();if(mine){boolean seen=m.status.startsWith("Seen");String ticks=seen||m.status.startsWith("Delivered")?"✓✓":"✓";String statusText=m.status;long[] progress=m.status.equals("Queued")&&!m.fileName.isEmpty()?transferProgress.get(m.id):null;if(progress!=null&&progress[1]>0)statusText="Sending "+(progress[0]*100/progress[1])+"%";TextView statusLine=label(when+"  ·  "+ticks+" "+statusText,13);statusLine.setTextColor(seen?seenBlue:Color.rgb(112,128,144));card.addView(statusLine);}else{TextView statusLine=label(when,13);statusLine.setTextColor(Color.rgb(112,128,144));card.addView(statusLine);}
       LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);View spacer=new View(this);
       if(mine){row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));row.addView(card,new LinearLayout.LayoutParams(-2,-2));}else{row.addView(card,new LinearLayout.LayoutParams(-2,-2));row.addView(spacer,new LinearLayout.LayoutParams(0,0,1));}
       LinearLayout.LayoutParams rowParams=new LinearLayout.LayoutParams(-1,-2);rowParams.setMargins(0,dp(5),0,dp(5));feed.addView(row,rowParams);}
     updateProgressLabels(e);
     if(bottom&&!loadingEarlier)scroll.post(()->scroll.fullScroll(View.FOCUS_DOWN));
+  }
+  // Paper-plane once there's a message or attachment ready to go, thumbs-up otherwise -- called
+  // on every composer keystroke and whenever the pending attachment is set or cleared, since
+  // either one alone can make the difference between "nothing to send" and "something to send".
+  void refreshSendIcon(){
+    if(send==null)return;
+    boolean hasContent=pendingAttachmentUri!=null||(composer!=null&&!composer.getText().toString().trim().isEmpty());
+    send.setText(hasContent?"➤":"👍");
+    send.setContentDescription(hasContent?"Send message":"Nothing to send yet");
   }
   void updateProgressLabels(PeerEngine e){
     if(selected==null)return;
@@ -678,7 +739,7 @@ public class MainActivity extends Activity {
     AlertDialog dialog=new AlertDialog.Builder(this).setTitle("New group · select 2–15 contacts").setView(name).setMultiChoiceItems(names,checked,(d,which,on)->checked[which]=on).setNegativeButton("Cancel",null).setPositiveButton("Create",null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{try{ArrayList<String> ids=new ArrayList<>();for(int i=0;i<checked.length;i++)if(checked[i])ids.add(peers.get(i).id);String id=e.createGroup(name.getText().toString(),ids);dialog.dismiss();showChat(id);}catch(Exception error){problem(error);}}));dialog.show();
   }
   void problem(Exception error){Toast.makeText(this,error.getMessage()==null?"Operation failed":error.getMessage(),Toast.LENGTH_LONG).show();}
-   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if(request==44&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_LONG).show();return;}
+   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK){if((request==44||request==48)&&cameraFile!=null)cameraFile.delete();return;}final Uri uri=data==null?null:data.getData();final PeerEngine e=engine();if(e==null){Toast.makeText(this,"Local messages are still loading.",Toast.LENGTH_LONG).show();return;}
     final String target=attachmentTarget;final PeerEngine.Message exporting=exportMessage;final File captured=cameraFile;
     new Thread(()->{try{
       if(request==47&&exporting!=null&&uri!=null){
@@ -707,12 +768,13 @@ public class MainActivity extends Activity {
         else{File tmp=File.createTempFile("attachment-",".tmp",getCacheDir());long count=0;try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(tmp)){if(in==null)throw new IOException("Cannot open attachment");byte[] buffer=new byte[262144];int n;while((n=in.read(buffer))!=-1){count+=n;if(count>limit)throw new IOException("File too large");out.write(buffer,0,n);}}catch(Exception error){tmp.delete();throw error;}AttachmentFlow.prepareAttachment(this,target,name,Uri.fromFile(tmp),count,tmp);}
 
       }
-      else if(request==44&&target!=null&&captured!=null){
-        String name="Photo-"+new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+".jpg";
+      else if((request==44||request==48)&&target!=null&&captured!=null){
+        boolean video=request==48;
+        String name=(video?"Video-":"Photo-")+new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+(video?".mp4":".jpg");
         AttachmentFlow.prepareAttachment(this,target,name,Uri.fromFile(captured),captured.length(),captured);
       }
       else if(request==45&&uri!=null){byte[] raw;try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open image");raw=AttachmentFlow.readLimited(in);}Bitmap bitmap=inlineBitmap(raw);if(bitmap==null)throw new IOException("This file is not a supported image.");ByteArrayOutputStream png=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,90,png);e.setAvatar(png.toByteArray());bitmap.recycle();ui.post(()->{Toast.makeText(this,"Profile picture updated",Toast.LENGTH_SHORT).show();if(selected==null)showPeople();});}
-    }catch(Exception error){if(captured!=null&&request==44)captured.delete();ui.post(()->problem(error));}},"lan-attachment").start();
+    }catch(Exception error){if(captured!=null&&(request==44||request==48))captured.delete();ui.post(()->problem(error));}},"lan-attachment").start();
   }
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);pendingOpen=intent.getStringExtra("conversation");
     // Tapping the ongoing-call notification brings the user back to the call. The call ID is
@@ -783,7 +845,11 @@ public class MainActivity extends Activity {
       return;
     }
     if(requestCode==VoiceUi.RECORD_AUDIO_REQUEST){
-      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)VoiceUi.startVoiceRecording(this);
+      // The service may already be foreground without the microphone FGS type (it never requests
+      // that type unless RECORD_AUDIO is granted at the moment it goes online -- see
+      // MessengerService.startForegroundSafely). Granting it here, mid-session, must upgrade the
+      // already-running foreground service to include it, since nothing else will.
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();VoiceUi.startVoiceRecording(this);}
       else VoiceUi.permissionDenied(this);
       return;
     }
@@ -793,7 +859,7 @@ public class MainActivity extends Activity {
     if(requestCode==CALL_MIC_REQUEST){
       String peerId=pendingCallPeerId;pendingCallPeerId=null;
       if(peerId==null)return;
-      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)placeCall(peerId);
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();placeCall(peerId);}
       else Toast.makeText(this,"Calling needs the microphone. Enable it in Android settings to call.",Toast.LENGTH_LONG).show();
     }
   }
