@@ -23,6 +23,12 @@ public sealed partial class PeerEngine : IDisposable
     CancellationTokenSource stop=new();
     readonly object networkGate=new();
     readonly HashSet<TcpClient> activeClients=[];
+    // Call sockets are long-lived (the lifetime of a call), unlike the ordinary short-transaction
+    // sockets in `activeClients` above -- tracked separately so GoOffline() still tears them
+    // down, but the ordinary `inbound` semaphore budget is never held by one for a call's whole
+    // duration. (The rest of the call feature lives in PeerEngine.Calls.cs; this field stays here
+    // because PeerEngine.cs alone is also compiled standalone by tests/CsharpHarness.)
+    readonly HashSet<TcpClient> activeCallClients=[];
     readonly HashSet<TcpListener> temporaryListeners=[];
     bool disposed;
     readonly ConcurrentDictionary<string,long> sending=new();
@@ -46,6 +52,10 @@ public sealed partial class PeerEngine : IDisposable
     // (messageId, bytesTransferred, totalBytes) — fired while streaming an attachment over the
     // network, in either direction. Purely informational/UI, never persisted.
     public event Action<string,long,long>? TransferProgress;
+    // Fired synchronously (after the network lock is released) when GoOffline tears down
+    // networking, so the call controller can end any active call the same way Android's
+    // CallController.onOffline() does -- a call's native sockets must not outlive Offline.
+    public event Action? CallEngineOffline;
     readonly ConcurrentDictionary<string,int> lastReportedPercent=new();
     // Throttled to at most ~101 events per transfer regardless of chunk count/size.
     void ReportProgress(string messageId,long done,long total)
@@ -104,9 +114,11 @@ public sealed partial class PeerEngine : IDisposable
             if(!Running)return;
             NetworkState="Stopping";Running=false;stop.Cancel();listener?.Stop();udp?.Dispose();listener=null;udp=null;
             foreach(var socket in activeClients)socket.Dispose();activeClients.Clear();
+            foreach(var socket in activeCallClients)socket.Dispose();activeCallClients.Clear();
             foreach(var temporary in temporaryListeners)temporary.Stop();temporaryListeners.Clear();
             sending.Clear();NetworkState="Offline";
         }
+        try{CallEngineOffline?.Invoke();}catch{}
         Notify();
     }
     void Track(TcpClient client){lock(networkGate){if(!Running){client.Dispose();throw new IOException("Network is offline.");}activeClients.RemoveWhere(c=>c.Client?.SafeHandle.IsClosed??true);activeClients.Add(client);}}
@@ -163,13 +175,25 @@ public sealed partial class PeerEngine : IDisposable
     public void Revoke(string peerId){lock(gate){var p=peers[peerId];peers[peerId]=p with{Verified=""};try{Save();}catch{peers[peerId]=p;throw;}}Notify();}
     void RecordCertificate(string peerId,string fingerprint,byte[] publicKey){lock(gate){var p=peers[peerId];var encodedKey=publicKey.Length>0?Convert.ToBase64String(publicKey):p.PublicKey;if(p.Fingerprint==fingerprint&&p.PublicKey==encodedKey)return;peers[peerId]=p with{Fingerprint=fingerprint,PublicKey=encodedKey};try{Save();}catch{peers[peerId]=p;throw;}}Notify();}
     bool Trusted(string peerId,string fingerprint){lock(gate)return peers.TryGetValue(peerId,out var p)&&p.Verified.Length>0&&p.Verified==fingerprint;}
+    // Fired when an inbound CALLCONNECT handoff is recognized: (peerId, authenticated stream,
+    // callId). The engine's own `Receive` dispatch loop stops owning the socket at that point --
+    // whatever handles this event (the call layer) becomes responsible for its lifetime, same as
+    // Android's PeerEngine.callHandler hands a raw authenticated socket to CallChannel.adoptIncoming.
+    public event Action<string,Stream,string>? CallConnectReceived;
     async Task Receive(TcpClient client)
     {
-        using(client)try{
-        using var tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,true);var fingerprint=SecureIdentity.Remote(tls);
+        SecureChannel? tls=null;bool handedOff=false;
+        try{
+        tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,true);var fingerprint=SecureIdentity.Remote(tls);
         var h=(await Read(tls)).Split('\t');if(!ValidHello(h)||h[2]==Id)return;Remember(h[2],Dec(h[3]),((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString(),int.Parse(h[4]));RecordCertificate(h[2],fingerprint,SecureIdentity.RemotePublicKey(tls));await Write(tls,Hello());
         if(!Trusted(h[2],fingerprint)){await Write(tls,"LM4\tPAIR");return;}await Write(tls,"LM4\tREADY");
         var a=(await Read(tls)).Split('\t');
+        if(a.Length==3&&a[0]=="LM4"&&a[1]=="CALLCONNECT"&&Uuid(a[2])){
+            handedOff=true;lock(networkGate){activeClients.Remove(client);activeCallClients.Add(client);}
+            tls.UseLongLivedTimeouts();
+            try{CallConnectReceived?.Invoke(h[2],tls,a[2]);}catch{}
+            return;
+        }
         if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CAPS"){await Write(tls,"LM4\tCAPS\t2");return;}
         if((a.Length==6||a.Length==7)&&a[0]=="LM4"&&a[1]=="GROUP"){AcceptGroup(a,h[2],fingerprint);await Write(tls,"LM4\tGROUPACK\t"+a[2]);Notify();return;}
         if(!SimulateLegacyBuild&&(a.Length==5||a.Length==6)&&a[0]=="LM4"&&a[1]=="MEMBERSUPDATE"){HandleMembersUpdate(a,h[2],fingerprint);await Write(tls,$"LM4\tMEMBERSUPDATEACK\t{a[2]}\t{a[3]}");Notify();return;}
@@ -205,7 +229,9 @@ public sealed partial class PeerEngine : IDisposable
             else if(name.Length>0&&!stillPresent)try{File.Delete(AttachmentPath(m));}catch{}}
 
         if(incoming is not null)try{Received?.Invoke(incoming);}catch{}
-        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");QueueAutomaticMedia();Notify();}catch(Exception e){LastConnectionError=e.ToString();}
+        await Write(tls,$"LM4\tACK\t{a[2]}\t{Id}");QueueAutomaticMedia();Notify();
+        }catch(Exception e){LastConnectionError=e.ToString();}
+        finally{if(!handedOff){tls?.Dispose();client.Dispose();}}
     }
     // A generous floor plus ~1s/MB tolerates slow Wi-Fi without making small transfers wait needlessly.
     static TimeSpan TransferTimeout(int size)=>TimeSpan.FromSeconds(Math.Max(60,30+size/1_000_000));

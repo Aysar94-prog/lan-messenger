@@ -25,8 +25,33 @@ sealed partial class ChatWindow
         row.Controls.Add(MessageLabel(name,10,color,width-avatarSize-8,true));
         return row;
     }
+    // A call-history entry (PeerEngine.AppendCallLog) renders as a centered system-style pill, not
+    // a chat bubble — no sender name/avatar, no delivery ticks — matching both Messenger's actual
+    // treatment and the Android implementation of the same feature exactly (including its red tint
+    // for a missed call).
+    Control? CallLogCard(PeerEngine.Message message)
+    {
+        var info=CallLogMarker.TryParse(message.FileName);
+        if(info==null)return null;
+        var peerId=message.From==engine.Id?message.To:message.From;
+        var peerName=engine.Peers.FirstOrDefault(p=>p.Id==peerId)?.Name??engine.DisplayName(peerId);
+        string label=info.IsCaller
+            ?("You called "+peerName+(info.Connected?" · "+FormatCallDuration(info.DurationMs):""))
+            :(info.Connected?(peerName+" called you · "+FormatCallDuration(info.DurationMs)):"Missed call");
+        bool missed=!info.IsCaller&&!info.Connected;
+        var pill=MessageLabel("📞  "+label,10,missed?Color.FromArgb(211,47,47):Color.SlateGray,260);
+        pill.BackColor=Color.FromArgb(236,236,236);pill.Padding=new Padding(10,5,10,5);pill.AutoSize=true;
+        var time=MessageLabel(DateTimeOffset.FromUnixTimeMilliseconds(message.Time).LocalDateTime.ToString("MMM d, HH:mm"),8,Color.SlateGray,260);
+        time.Margin=new Padding(10,0,0,0);
+        var column=new FlowLayoutPanel{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Margin=new Padding(Math.Max(8,(feed.Width-220)/2),6,8,6)};
+        column.Controls.Add(pill);column.Controls.Add(time);
+        return column;
+    }
+    static string FormatCallDuration(long ms){var s=Math.Max(0,ms/1000);return s>=3600?$"{s/3600}:{(s%3600)/60:D2}:{s%60:D2}":$"{s/60}:{s%60:D2}";}
+
     Control MessageCard(PeerEngine.Message message)
     {
+        if(CallLogCard(message) is {} callLog)return callLog;
         bool mine=message.From==engine.Id;int width=Math.Max(260,Math.Min(460,feed.Width-65));
         var card=new MessageBubble{FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MinimumSize=new Size(width,0),MaximumSize=new Size(width,10000),Padding=new Padding(12,8,12,8),Margin=new Padding(mine?Math.Max(8,feed.Width-width-60):4,6,4,6),BackColor=mine?BubbleMine:BubbleOther};
         card.Controls.Add(SenderRow(mine,message.From,mine?"You":engine.DisplayName(message.From),mine?Accent:NameColor(message.From),width-24));

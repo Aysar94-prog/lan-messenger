@@ -1,4 +1,8 @@
-"""Photos auto-download for group members; a video remains a manual offer."""
+"""Photos auto-download for group members. A disguised non-image (double extension) remains a
+manual offer on both platforms. A real video now auto-downloads like a photo on Android (2026-10-02
+product change, explicitly requested: "the receiver must treat any video like photos") but Windows
+has no equivalent feature yet and still treats it as a manual offer -- platforms are independent
+and do not imply feature parity, same as every other platform-exclusive feature in this project."""
 import pathlib
 exec(pathlib.Path(__file__).with_name('integration.py').read_text(encoding='utf-8').split('# Seed a real 0.2 snapshot')[0])
 def file(p,g,name):
@@ -18,8 +22,11 @@ try:
     a.command('FILE\t'+g+'\t'+b64('photo.png.exe')+'\t'+png)
     wait_for(lambda:all(file(p,g,'video.mp4') and file(p,g,'photo.png.exe') for p in [b,c]),'Non-image offers arrive')
     time.sleep(3)
-    assert all(not available(p,g,'video.mp4') and not available(p,g,'photo.png.exe') for p in [b,c])
-    print('PASS: videos and double-extension non-images remain manual on both platforms',flush=True)
+    assert all(not available(p,g,'photo.png.exe') for p in [b,c]),'a disguised non-image must never auto-download on either platform'
+    for p in [b,c]:
+        expect_auto=(p.kind=='java') # Android auto-downloads video like a photo; Windows does not yet.
+        assert available(p,g,'video.mp4')==expect_auto,f'video.mp4 auto-download on {p.kind} should be {expect_auto}'
+    print('PASS: a disguised non-image stays manual on both platforms; a real video now auto-downloads on Android (matching a photo) but stays manual on Windows, which has no equivalent feature yet',flush=True)
 finally:
     for p in processes:
         if p.poll() is None:p.kill()

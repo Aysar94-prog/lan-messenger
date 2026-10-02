@@ -19,6 +19,10 @@ public sealed class SecureChannel : Stream
     public string PeerFingerprint {get;private set;}="";
     public byte[] PeerPublicKey {get;private set;}=[];
     public SecureChannel(Stream network,SecureIdentity identity){this.network=network;this.identity=identity;if(network.CanTimeout){network.ReadTimeout=6000;network.WriteTimeout=6000;}}
+    // Call signaling frames can legitimately be tens of seconds apart (ringing, human response
+    // time, idle time between heartbeats) -- far longer than the short handshake timeout above,
+    // which would otherwise kill a ringing call with a spurious socket timeout.
+    public void UseLongLivedTimeouts(){if(network.CanTimeout){network.ReadTimeout=System.Threading.Timeout.Infinite;network.WriteTimeout=System.Threading.Timeout.Infinite;}}
     public void Open(bool server)
     {
         if(server){var p=new TlsServerProtocol(network);protocol=p;p.Accept(new Server(this));}
