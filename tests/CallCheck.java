@@ -1047,6 +1047,18 @@ public final class CallCheck {
     check(ctrl.snapshot() != null && "Speaker".equals(ctrl.snapshot().audioRoute),
       "N60-route-in-snapshot", "route=" + (ctrl.snapshot() == null ? "?" : ctrl.snapshot().audioRoute));
 
+    // Mute draws its glyph from the snapshot as well, so flipping it has to publish one.  It did
+    // not: the round control kept showing the state it was built with, so tapping it looked like
+    // the toggle was simply broken.
+    final int[] delivered = { 0 };
+    ctrl.addListener(snap -> delivered[0]++);
+    int before = delivered[0];
+    ctrl.setMute(true);
+    check(delivered[0] > before, "N60a-mute-publishes-a-snapshot",
+      "the mute glyph is drawn from the snapshot, so nothing redraws unless one is published");
+    check(ctrl.snapshot() != null && ctrl.snapshot().muted, "N60b-mute-visible-in-snapshot",
+      "muted=" + (ctrl.snapshot() == null ? "?" : String.valueOf(ctrl.snapshot().muted)));
+
     cleanup(eng, ctrl);
   }
 
@@ -1089,6 +1101,18 @@ public final class CallCheck {
     b.audioRoute = "Speaker";
     b.state = CallProtocol.State.Connected;
     eq(b.snapshot().audioRoute, "Speaker", "N82-route-visible");
+
+    // Mute and the speaker route are two independent toggles, and the collapsed bar has no control
+    // of its own to read a glyph off, so the detail line names whichever of them are in force.
+    b.audioRoute = null;
+    b.muted = false;
+    eq(CallUi.detailLabel(b.snapshot()), "", "N82a-neither-toggle-on");
+    b.audioRoute = "Speaker";
+    eq(CallUi.detailLabel(b.snapshot()), "Speaker", "N82b-speaker-route-named");
+    b.muted = true;
+    eq(CallUi.detailLabel(b.snapshot()), "Muted · Speaker", "N82c-both-toggles-named");
+    b.audioRoute = "Earpiece";
+    eq(CallUi.detailLabel(b.snapshot()), "Muted", "N82d-earpiece-is-not-named");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and
@@ -1286,6 +1310,21 @@ public final class CallCheck {
     eq(ui.terminalAtMs(), 0L, "N137-end-time-cleared");
     check(ui.getTerminal() == null, "N138-terminal-cleared", "");
     check(ui.takeTerminal() == null, "N139-terminal-consumed-once", "");
+
+    // The end banner now stays on screen until the user dismisses it, so the terminal snapshot is
+    // re-read on every render. The controller publishes the end state and then drops its own
+    // session without ever publishing an idle one, so getCurrent() keeps handing back that same
+    // terminal snapshot; takeTerminal has to drop it as well or the banner comes straight back and
+    // Close does nothing.
+    check(ui.getCurrent() == null, "N139a-terminal-current-cleared",
+      "the end snapshot left in getCurrent() would re-arm the banner after it was dismissed");
+
+    // The mirror image: taking an end reason must never clear a call that is still in progress.
+    b.state = CallProtocol.State.OutgoingRinging;
+    b.endReason = null;
+    ui.onSnapshot(b.snapshot());
+    check(ui.takeTerminal() == null, "N139b-no-end-reason-while-live", "");
+    check(ui.getCurrent() != null && ui.hasActive(), "N139c-live-call-survives-take", "");
 
     // A new call invalidates any retained end reason.
     b.state = CallProtocol.State.OutgoingRinging;

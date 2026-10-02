@@ -452,7 +452,9 @@ public class CallController {
     }
   }
 
-  /** Toggle mute. */
+  /** Toggle mute.  Publishes a snapshot so the control that was pressed redraws itself: the mute
+   *  glyph is drawn from the session, and without a new snapshot the round control kept showing the
+   *  state it was built with and looked like a toggle that does nothing. */
   public void setMute(boolean muted) throws IOException {
     synchronized (lock) {
       if (session != null) session.muted = muted;
@@ -461,6 +463,7 @@ public class CallController {
           throw new IOException("Mute failed: " + e.getMessage(), e);
         }
       }
+      if (session != null) notifyCallback(session.snapshot());
     }
   }
 
