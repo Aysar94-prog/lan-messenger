@@ -163,6 +163,59 @@ public class CallUi {
     return dismissedCallId.equals(call.callId);
   }
 
+  /** What a screen reader is told when the call changes state.
+   *
+   *  <p>Not {@link #stateLabel}. That is the line on screen, which while Connected is the duration
+   *  clock -- "0:03". Speaking the clock at the moment of connecting tells the user nothing about
+   *  what just happened, and from then on the clock is shown silently, so they would hear "0:03"
+   *  once and then nothing for the rest of the call.
+   *
+   *  <p>Pure so the harness can assert it: {@code CallView} cannot be loaded without an Android
+   *  runtime, and this is the word a user with a screen reader actually hears. */
+  public static String stateSpokenLabel(CallSession call) {
+    if (call == null || call.state == null) return "";
+    if (call.state == CallProtocol.State.Connected) return "Connected";
+    return stateLabel(call);
+  }
+
+  /** Which view-model an "accept this call" action should go through.
+   *
+   *  <p>There were two references to the same model in play: the one a control was built from, and
+   *  the Activity's own separately-bound field.  Preferring the field was what made Accept inert on
+   *  a cold start -- the field was never bound, because the service creates its model after both of
+   *  the Activity's only two bind attempts -- and the user could not answer an incoming call at all.
+   *  A control that is on screen must act on the instance that put it there.
+   *
+   *  <p>Pure so the ordering is pinned by the harness: {@code MainActivity} cannot be loaded without
+   *  an Android runtime, and this is the rule that decides whether the one control a ringing call
+   *  offers works at all.  Returns null only when no reference exists anywhere, which the callers
+   *  report to the user rather than ignoring. */
+  public static CallUi resolveForAccept(CallUi fromControl, CallUi bound, CallUi service) {
+    if (fromControl != null) return fromControl;
+    if (bound != null) return bound;
+    return service;
+  }
+
+  /** Everything the call screen was built from, as one string to compare against.
+   *
+   *  <p>This replaces an eight-clause {@code ||} chain in {@code render()}. Nothing flags a clause
+   *  that was forgotten, and one was: the peer's *name* was never in it, so a contact renamed
+   *  mid-call left the old name and the old initial disc on screen until some unrelated change
+   *  happened to force a rebuild. The name is the first thing a user reads on a call screen, and it
+   *  is also the initial on the picture and the words in three accessibility labels, so all of them
+   *  were wrong together.
+   *
+   *  <p>The route is compared by value rather than by identity because it arrives nullable from the
+   *  audio route policy.
+   *
+   *  <p>Pure so the harness can assert it — {@code CallView} cannot be loaded without an Android
+   *  runtime, and this is the rule that decides whether what the user sees is current. */
+  public static String overlayKey(CallSession call, String peerName) {
+    if (call == null) return "";
+    return call.callId + "|" + call.state + "|" + call.muted + "|"
+      + (call.audioRoute == null ? "" : call.audioRoute) + "|" + (peerName == null ? "" : peerName);
+  }
+
   /** Everything the return-to-call bar shows, as one string to compare against.
    *
    *  <p>This is what decides whether the bar is stale, and it was wrong twice before. It first keyed

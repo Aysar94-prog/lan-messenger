@@ -1219,6 +1219,79 @@ public final class CallCheck {
     eq(CallUi.callBarWords(connected), firstBar, "N165-call-bar-stable-within-a-second");
     check(CallUi.callBarWords(connected).contains(connected.peerId),
       "N166-call-bar-names-the-peer", "the bar must rebuild for a different peer, not reuse its buttons");
+
+    // With the status line no longer a live region, the announcement is the only thing that tells a
+    // screen-reader user the call connected. Speaking the on-screen label would say "0:00" at the
+    // moment of answering, which describes the clock rather than the event.
+    eq(CallUi.stateSpokenLabel(connected), "Connected",
+      "N167-answering-is-announced-as-connected");
+    check(!CallUi.stateSpokenLabel(connected).matches("\\d+:\\d\\d"),
+      "N168-the-clock-is-not-spoken",
+      "the clock is announced instead of the event, so the user hears a duration when the call connects");
+    CallSession.Builder ringingBuilder =
+      new CallSession.Builder("c0a11e00-0000-4000-8000-0000000000bb", "peer", false, now);
+    ringingBuilder.state = CallProtocol.State.IncomingRinging;
+    eq(CallUi.stateSpokenLabel(ringingBuilder.snapshot()), CallUi.stateLabel(ringingBuilder.snapshot()),
+      "N169-ringing-is-spoken-as-shown");
+    eq(CallUi.stateSpokenLabel(null), "", "N170-no-call-says-nothing");
+
+    // The call screen's rebuild test. It used to be a chain of || clauses over the call ID, state,
+    // mute and route, and the peer's NAME was not in it -- so a contact renamed during a call kept
+    // the old name, the old initial on the picture, and three accessibility labels naming them
+    // wrongly, until something unrelated forced a rebuild.
+    String keyAt = CallUi.overlayKey(connected, "Ada");
+    eq(CallUi.overlayKey(connected, "Ada"), keyAt,
+      "N171-overlay-key-is-stable-within-a-render");
+    check(!CallUi.overlayKey(connected, "Ada").equals(CallUi.overlayKey(connected, "Grace")),
+      "N172-rename-rebuilds", "a renamed peer left the old name and initial on the call screen");
+    check(!CallUi.overlayKey(connected, "Ada").equals(
+        CallUi.overlayKey(c.snapshot(), "Ada")),
+      "N173-state-change-rebuilds",
+      "the ring buttons stayed on screen after the call was answered");
+    CallSession.Builder mutedBuilder = new CallSession.Builder(connected.callId, "peer", false, now);
+    mutedBuilder.state = CallProtocol.State.Connected;
+    mutedBuilder.muted = true;
+    mutedBuilder.connectedAtMs = now;
+    check(!CallUi.overlayKey(connected, "Ada").equals(CallUi.overlayKey(mutedBuilder.snapshot(), "Ada")),
+      "N174-mute-rebuilds",
+      "the microphone glyph kept showing the state it was built with, so it looked inert");
+    CallSession.Builder otherRoute = new CallSession.Builder(connected.callId, "peer", false, now);
+    otherRoute.state = CallProtocol.State.Connected;
+    otherRoute.connectedAtMs = now;
+    otherRoute.audioRoute = "Speaker";
+    check(!CallUi.overlayKey(connected, "Ada").equals(CallUi.overlayKey(otherRoute.snapshot(), "Ada")),
+      "N175-route-rebuilds", "the speaker glyph did not follow a route change");
+    eq(CallUi.overlayKey(null, "Ada"), "", "N176-no-call-has-no-key");
+    // A null route and an empty one must not compare equal by accident, and a null name must not
+    // throw: both arrive from the audio route policy and the service respectively.
+    CallSession.Builder noRoute = new CallSession.Builder(connected.callId, "peer", false, now);
+    noRoute.state = CallProtocol.State.Connected;
+    noRoute.connectedAtMs = now;
+    eq(CallUi.overlayKey(noRoute.snapshot(), null), CallUi.overlayKey(noRoute.snapshot(), ""),
+      "N177-nulls-are-safe");
+    check(CallUi.overlayKey(connected, "Ada").contains(connected.callId),
+      "N178-key-carries-the-call", "a second call could reuse the first call's overlay");
+
+    // Which view-model an Accept action goes through. On a cold start the Activity's field was
+    // never bound -- the service creates its model after both of the Activity's only two bind
+    // attempts -- so preferring that field made Accept a button that did nothing, and a ringing
+    // call could not be answered at all until the user left and came back.
+    CallUi drawn = new CallUi();
+    check(CallUi.resolveForAccept(drawn, null, null) == drawn,
+      "N179-accept-uses-the-model-that-drew-the-button",
+      "Accept acted on a different reference than the one that rendered it");
+    CallUi boundOnly = new CallUi();
+    check(CallUi.resolveForAccept(null, boundOnly, null) == boundOnly,
+      "N180-accept-falls-back-to-the-bound-model",
+      "the notification's Accept action was a silent no-op while unbound");
+    check(CallUi.resolveForAccept(null, null, boundOnly) == boundOnly,
+      "N181-accept-falls-back-to-the-service",
+      "Accept must still work when neither the button's nor the Activity's reference is available");
+    check(CallUi.resolveForAccept(drawn, null, boundOnly) == drawn,
+      "N182-the-button-wins-over-the-service",
+      "the model that rendered the screen is the one that knows the call on it");
+    check(CallUi.resolveForAccept(null, null, null) == null,
+      "N183-no-model-anywhere", "the caller reports this rather than ignoring it");
   }
 
   /** Regression: allowedSender is evaluated on the RECEIVING device, against the LOCAL state and

@@ -262,6 +262,16 @@ public class MainActivity extends Activity {
   }
   PeerEngine transferProgressWiredFor;
   void render(){if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);
+    // The service only creates its CallUi once it builds the LAN stack, which is several seconds
+    // after the Activity has already resumed and been connected to. bindCalls() therefore finds
+    // null on both of its only two callers and gives up -- and nothing ever asked again, so for the
+    // rest of the process this Activity had no call view-model at all. The incoming-call screen
+    // still appeared, because CallView.render reads the service's instance directly, so the defect
+    // presented as one dead button: Accept did nothing on every incoming call until the user left
+    // and came back, and the notification's own Accept action was dead for as long as they did not.
+    // Retried here, on the pass that already runs once a second, so the view-model is picked up as
+    // soon as the service has one. bindCalls() returns immediately when there is nothing to do.
+    if(callUi==null)bindCalls();
     // A09: the call overlay is refreshed on every pass, including the one-second tick, so the
     // duration clock advances and a snapshot change appears without any Activity-side state.
     renderCallBar();CallView.render(this);
@@ -523,9 +533,25 @@ public class MainActivity extends Activity {
 
   /** Accept an incoming call.  Revalidated against the live preference and call ID by the
    *  controller, so a notification action raised for an earlier call cannot accept this one. */
-  void acceptCall(final String callId){
-    if(callUi==null)return;
-    runCallAction(()->callUi.accept(callId),"Could not accept the call.");
+  void acceptCall(final String callId){ acceptCall(null, callId); }
+
+  /** Accept, acting on a named view-model.
+   *
+   *  <p>source is the instance that built the Accept button, and it is preferred over the field on
+   *  purpose.  The button is on screen because *that* instance reported a ringing call, so it is the
+   *  one that can act on it.  The field is a second, independently-bound reference to the same model
+   *  which was routinely null on a cold start, and reading it instead made this button silently
+   *  inert -- the single control on the incoming-call screen that could not be pressed -- with no
+   *  error and no visible change, while Decline beside it worked because it captured the instance it
+   *  was built with.  The call ID is still passed on, so the controller's revalidation is intact and
+   *  a rebuilt view cannot accept a newer call.
+   *
+   *  <p>Failing to reach any view-model now says so.  A button that silently does nothing is
+   *  indistinguishable from one that is broken. */
+  void acceptCall(CallUi source, final String callId){
+    CallUi target=CallUi.resolveForAccept(source,callUi,host==null?null:host.calls());
+    if(target==null){Toast.makeText(this,"Calls are not available yet.",Toast.LENGTH_SHORT).show();return;}
+    runCallAction(()->target.accept(callId),"Could not accept the call.");
   }
 
   /** Change the incoming-call preference from the people menu.
@@ -692,9 +718,10 @@ public class MainActivity extends Activity {
   // rather than taking it away, so a running call is always visible somewhere and Back can never be
   // mistaken for hanging up; then dismisses an end-reason banner; only then existing navigation.
   @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}
-    if(CallView.isShowing()&&callUi!=null){
-      if(callUi.hasActive()){CallView.backWhileLive(this);}
-      else{CallView.dismiss(this,callUi);}
+    CallUi live=callUi!=null?callUi:(host==null?null:host.calls());
+    if(CallView.isShowing()&&live!=null){
+      if(live.hasActive()){CallView.backWhileLive(this);}
+      else{CallView.dismiss(this,live);}
       renderCallBar();lastSignature="";render();return;}
     if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;bindCalls();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
@@ -703,8 +730,13 @@ public class MainActivity extends Activity {
    *  notification left over from a call that has already ended simply does nothing. */
   void handlePendingCallAccept(){
     String expected=pendingCallAcceptId;
-    if(expected==null||callUi==null)return;
-    CallSession call=callUi.getCurrent();
+    if(expected==null)return;
+    // Falls back to the service's instance for the same reason the Accept button does: the field
+    // was unbound on a cold start, and that made the notification's Accept action a silent no-op --
+    // so a call announced by a notification could not be answered from the notification at all.
+    CallUi current=callUi!=null?callUi:(host==null?null:host.calls());
+    if(current==null)return;
+    CallSession call=current.getCurrent();
     if(call==null||!expected.equals(call.callId)){pendingCallAcceptId=null;lastSignature="";render();return;}
     pendingCallAcceptId=null;
     lastSignature="";CallView.render(this);
