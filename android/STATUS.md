@@ -266,6 +266,90 @@ as every prior release. Still awaiting the user's re-test, but this is the first
 chain built on a mechanism (fresh player construction) already independently confirmed to work
 on the user's own device, rather than on a new theory about the failure.
 
+## Voice calls A09 — call screen rebuilt to the Messenger reference layout (2026-10-02, 2.2.30)
+
+The user supplied a reference call screen and asked for the app's call screen to look like it. It
+did not: every label was stacked and centred in one dark slab with wide full-width text buttons,
+there was no picture of who was being called, the toggles were crowded to one side, and ending the
+call was a rectangle in a stack rather than a single unmistakable target. `CallView.build` is now
+the reference layout: a dark teal header (`BAR` = `#0E524C`) carrying the peer's name as an
+uppercase headline with the timer or status line under it and a 🔽 minimise control at its right;
+the peer's synced picture (`avatarView`, falling back to the same coloured initial disc the people
+list uses) in the window between; one large red `hangupCircle` disc — a 📞 rotated 135° inside a red
+circle, because there is no hang-up emoji and 📴 reads as *phone switched off* — floating just above
+a teal `controlBar` holding 💬 / 🔈|🔊 / 🎤|🔇 in three weight-1 slots. Ring screens use the same
+frame with worded **Accept**/**Decline** and **Cancel**, and the minimised bar is the same teal.
+The 💬 control opens that peer's conversation and leaves the call running; the Activity's
+`Return / End` call bar keeps the call visible from there.
+
+**Four defects the on-device acceptance run found, all of which had been live before this work:**
+
+1. **The floating hang-up disc covered Accept and Decline while ringing.** It was floated at the
+   same offset over the action zone in every state, so it sat on top of both buttons — tapping
+   **Accept** hung the ringing call up instead of answering it (`LOCAL_HANGUP (was
+   IncomingRinging)` in `LANCALL`). It is now added only for a non-ringing state; there is also
+   nothing for it to mean while ringing, since Decline and Cancel already stop a ringing call.
+2. **A minimised call could not be reopened.** Tapping the bar set `collapsed = false` and
+   re-rendered, but `render()` compares call ID, state, mute and route against what the overlay was
+   built for, and the bar matched all of them, so it decided there was nothing to rebuild and the
+   bar stayed exactly where it was — a running call with no way back into it. It now hides and
+   re-renders (`hide` then `render`).
+3. **Back abandoned a live call.** `onBackPressed` called `CallView.hide()` while the call was still
+   running, leaving the only full-screen indication that a call existed gone; the chat screen that
+   remained looks exactly like the call had ended. Back now toggles — expand a minimised call,
+   minimise a full one — via `CallView.backWhileLive`. A call deliberately off screen (opened with
+   💬) is left alone so Back still navigates.
+4. **The call clock started when the call was created, not when it was answered.**
+   `CallSession.elapsedMs()` added `now - createdAtMs` to the connected duration, so a call picked
+   up four seconds after ringing already showed `0:04`. It now measures from `connectedAtMs`, and
+   the stored duration is only a floor for a snapshot taken before the connect time was set.
+
+**Wording.** `SIGNALING_LOST` said **"Connection lost"**, which the user asked what it meant: it is
+the signalling TCP pipe dying without either side hanging up — the far phone's app killed or
+crashed, or it dropped off Wi-Fi — but the wording reads as *your* connection failing and gives no
+way to act. It is now **"Disconnected"**, and `CallUi.endHint` gives **every** end reason a plain
+sentence beneath the label (e.g. *"Lost the link to the other phone. Its app closed, or it went off
+Wi-Fi."*), because a label alone could not distinguish the cases. Also fixed: the `Return / End`
+bar is rebuilt when its words change and not only when it appears, so it no longer reads "Incoming
+call" beside a running timer.
+
+**Verification.** `tests/CallCheck.java` **PASS=352 FAIL=0** (50 new checks: `N143`–`N153` for the
+answer-time clock and the end-reason sentences). Layout is presentation-only and cannot be asserted
+from pure-Java tests, so acceptance is a two-device driver
+(`outputs/.build/accept-layout.ps1`) that places a real call from SM-A075F to SM-ultraaysar and
+asserts the hierarchy: all four regions present, bar order and spacing, the picture above the disc
+and the disc above the bar, no wide `Hang up`/`Minimize` button surviving, toggles flipping glyph
+and accessibility label, minimise/restore/Back (`M1`–`M8`), chat-without-ending, and the end reason
+plus its sentence persisting. Packaged as **Android 2.2.30** (versionCode 57), same signer as every
+prior release. Live audio quality, proximity routing and microphone foreground promotion are still
+**not** assessed on device.
+
+**Defects found after the redesign, one of them reported by the user afterwards.**
+
+5. **The call screen passed every tap it did not use to the conversation behind it.** `attach()`
+   adds the overlay to the stage at `-1,-1`, but a background colour does not make a view swallow
+   touches and `FrameLayout.onTouchEvent` returns `false`, so anything that missed a child — the
+   wall around the picture, the header padding, the gaps beside the disc — went back to `stage` and
+   from there to the chat underneath. Tapping beside the avatar opened the conversation behind the
+   call. The full-screen panel's holder is now clickable; `buildCollapsed` and `buildTerminal`
+   deliberately are not, because the chat is meant to stay usable under those two.
+6. **💬 did nothing.** It called `hide()` then `showChat()`, which ends in `render()`, which rebuilt
+   the full-screen panel over the chat in the same tap. `CallView.dismissedCallId` now records the
+   request, keyed by call ID so it lapses when that call ends or a new one starts.
+7. **The `Return / End` bar froze at `0:00`.** Its rebuild key was `call.state`, an enum that stops
+   changing at `Connected`, while the text beside it is a duration that changes every second — so it
+   was built once and never refreshed. Now keyed on the words it actually renders.
+8. **`LOCAL_DECLINE` told the decliner that the *other* phone declined.** It is produced only on the
+   phone that pressed Decline, so the sentence was the wrong way round. **`SIGNALING_LOST`** named
+   the other phone, but it is raised by heartbeat timeout, a local send failure and a local channel
+   close alike — all of which happen when *this* phone drops — which sent users with dead Wi-Fi to
+   check the far end. Both are side-correct or side-neutral now (`N152`, `N154`, `N155`).
+
+`CallCheck` **PASS=354 FAIL=0**. The two-device acceptance run has **not** produced a valid result
+since these fixes: the last attempt failed its online gate on both phones before any call was
+placed. See [HANDOFF.md](../HANDOFF.md) for what is still open — chiefly the per-second TalkBack
+announcement of the duration clock, which is a regression this work introduced.
+
 2.0.0's headline change was group membership no longer being fixed after creation (see below). It also still carries everything packaged in 0.8.12: the people-screen side menu and the `Show offline users` filter; Delete conversation / Delete app data (mirrors Windows); and a contact-forget notice plus group-leave + owner re-invite (mirrors the same Windows addition — see [Windows status](../windows/STATUS.md)). 2.0.0 briefly also shipped a join-request feature; 2.0.1 removed it. **2.1.0's headline change is group ownership transfer** — see below.
 
 ## Implemented

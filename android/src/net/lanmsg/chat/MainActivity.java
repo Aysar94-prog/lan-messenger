@@ -62,6 +62,9 @@ public class MainActivity extends Activity {
   // is the single full-screen FrameLayout the overlay is added to; menuOverlay is null while closed.
   FrameLayout stage; View menuOverlay; boolean menuOpen; boolean showOffline; boolean hideGroups;
   Button refreshButton, addAddressButton;
+  /** What the call bar was last built for, so it can be rebuilt when the words change rather than
+   *  only when it appears or disappears.  Null while no call is live. */
+  String callBarTag;
   MessengerService host;
   boolean bound;
   final ServiceConnection serviceConnection=new ServiceConnection(){
@@ -86,6 +89,32 @@ public class MainActivity extends Activity {
   Button dotButton(String glyph,String description,boolean on){return dotButton(glyph,description,on,56);}
   Button dotButton(String glyph,String description,boolean on,int diameterDp){Button b=new Button(this);b.setText(glyph);b.setAllCaps(false);b.setTextSize(diameterDp>=56?24:20);b.setPadding(0,0,0,0);b.setGravity(android.view.Gravity.CENTER);b.setContentDescription(description);b.setBackground(circleBg(on?accent:Color.argb(70,255,255,255),diameterDp));b.setTextColor(on?Color.WHITE:Color.rgb(214,224,232));return b;}
   TextView circle(String letter,int color,int diameterDp,int textSize){TextView t=new TextView(this);t.setText(letter);t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(textSize);t.setGravity(android.view.Gravity.CENTER);t.setBackground(circleBg(color,diameterDp));return t;}
+  /** The peer's name on the call screen's header bar: bold, uppercase, white, flush left.
+   *
+   *  <p>Uppercase is not decoration.  A call screen shows one name and nothing else to tell the
+   *  two participants apart, and the reference call layout reads as a headline rather than as a
+   *  form field -- which is precisely what was missing when this screen was a centred stack of
+   *  labels and wide buttons. */
+  TextView callTitle(String text){TextView t=new TextView(this);t.setText(text==null?"":text.toUpperCase(Locale.ROOT));t.setTextColor(Color.WHITE);t.setTypeface(null,Typeface.BOLD);t.setTextSize(24);t.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);t.setSingleLine(true);return t;}
+  /** The end-call control: one large red disc carrying a hanging-up phone.
+   *
+   *  <p>The disc is rotated a quarter turn inside the disc, which is the hang-up symbol every
+   *  phone uses.  There is no emoji for it: 📴 means "mobile phone off" and reads as a phone that is
+   *  switched off rather than a call being ended, and it is a symbol rather than a picture, so it
+   *  was unrecognisable as an action.  Everything else on the call screen is pale on dark, so red
+   *  on its own disc reads as the single destructive action from across the desk; the
+   *  accessibility label names it, so the glyph is never the only cue.
+   *
+   *  <p>A FrameLayout rather than a Button, because the rotation belongs to the glyph and a
+   *  rotated Button would rotate its own bounds and its touch target with it. */
+  View hangupCircle(String description,int diameterDp){FrameLayout wrap=new FrameLayout(this);
+    wrap.setBackground(circleBg(Color.rgb(211,47,47),diameterDp));
+    wrap.setClickable(true);wrap.setContentDescription(description);
+    TextView glyph=new TextView(this);glyph.setText("📞");glyph.setAllCaps(false);glyph.setTextSize(30);
+    glyph.setTextColor(Color.WHITE);glyph.setGravity(android.view.Gravity.CENTER);
+    glyph.setRotation(135f);glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    FrameLayout.LayoutParams g=new FrameLayout.LayoutParams(-1,-1);g.setMargins(dp(6),dp(6),dp(6),dp(6));
+    wrap.addView(glyph,g);return wrap;}
   EditText input(String hint,int max){EditText e=new EditText(this);e.setHint(hint);e.setTextSize(17);e.setSingleLine(true);e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});return e;}
   GradientDrawable bg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(12));return d;}
   @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(headerDark);getWindow().setNavigationBarColor(Color.WHITE);pendingOpen=getIntent().getStringExtra("conversation");
@@ -131,7 +160,7 @@ public class MainActivity extends Activity {
     // The call overlay lives on the stage, which frame() replaces wholesale, so its reference must
     // be dropped with the old tree. The retained terminal snapshot survives on the view-model, so
     // the end reason is still shown by the next render.
-    CallView.forgetOverlay();callBar=null;
+    CallView.forgetOverlay();callBar=null;callBarTag=null;
     stage=new FrameLayout(this);chrome=column();chrome.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);chrome.setBackgroundColor(panelBg);stage.addView(chrome,new FrameLayout.LayoutParams(-1,-1));setContentView(stage);
     LinearLayout content=column();content.setPadding(dp(18),dp(10),dp(18),dp(8));chrome.addView(content,new LinearLayout.LayoutParams(-1,0,1));root=content;
     status=label("Finding people on your network…",14);}
@@ -337,7 +366,20 @@ public class MainActivity extends Activity {
     CallUi ui=callUi;
     CallSession call=ui==null?null:ui.getCurrent();
     boolean live=call!=null&&!call.state.terminal();
-    if(callBar.getVisibility()==(live?View.VISIBLE:View.GONE))return;
+    // The bar used to stop as soon as it was the right visibility, so the text was frozen at
+    // whatever the state was when it first appeared: a call that had been connected for a minute
+    // still offered "Incoming call" beside a running timer, which is the one thing the bar exists
+    // to report.  Rebuild when the words change OR when the bar appears or disappears -- checking
+    // only one of the two leaves the other one stale, which is how it stayed stale to begin with.
+    // Keyed on the words actually rendered, not on call.state.  The state is an enum, so it stopped
+    // changing the moment the call connected, while the summary beside it is the duration and
+    // changes every second: the bar was built once at Connecting->Connected and then frozen at the
+    // first "0:00" it ever showed, for as long as the call ran.
+    String want=live?CallUi.stateLabel(call)+"|"+CallUi.detailLabel(call)+"|"+call.peerId:null;
+    boolean visibilityChanged=callBar.getVisibility()!=(live?View.VISIBLE:View.GONE);
+    boolean wordsChanged=callBarTag==null?want!=null:!callBarTag.equals(want);
+    if(!visibilityChanged&&!wordsChanged)return;
+    callBarTag=want;
     if(live){
       MessengerService service=host;
       String name=service==null?call.peerId:service.callPeerName(call.peerId);
@@ -356,7 +398,6 @@ public class MainActivity extends Activity {
     }
     callBar.setVisibility(live?View.VISIBLE:View.GONE);
   }
-
   /** Put the call overlay on top of whatever screen is showing. */
   void showCallOverlay(){
     lastSignature="";
@@ -609,10 +650,14 @@ public class MainActivity extends Activity {
    void addAddress(){PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)){Toast.makeText(this,"Go online to find a device.",Toast.LENGTH_SHORT).show();return;}EditText address=input("192.168.1.20",60);address.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);StringBuilder ips=new StringBuilder();try{Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();while(all.hasMoreElements()){Enumeration<InetAddress> addresses=all.nextElement().getInetAddresses();while(addresses.hasMoreElements()){InetAddress a=addresses.nextElement();if(a instanceof Inet4Address&&!a.isLoopbackAddress())ips.append(a.getHostAddress()).append("  ");}}}catch(Exception ignored){}
     new AlertDialog.Builder(this).setTitle("Add a device").setMessage("Your IP: "+ips+"\nEnter the other device's IP. It must be running LAN Messenger.").setView(address).setPositiveButton("Find device",(d,w)->{String value=address.getText().toString();new Thread(()->{try{e.addAddress(value);ui.post(()->{lastSignature="";render();});}catch(Exception error){ui.post(()->Toast.makeText(this,"Device not reachable. Check Wi-Fi, IP and firewall.",Toast.LENGTH_LONG).show());}}).start();}).setNegativeButton("Cancel",null).show();
   }
-  // Back closes an open side menu first; then an open call overlay (falling back to the return-to-call
-  // bar rather than ending the call, so Back never hangs up by accident); only then existing navigation.
+  // Back closes an open side menu first; then toggles a live call screen between full and minimised
+  // rather than taking it away, so a running call is always visible somewhere and Back can never be
+  // mistaken for hanging up; then dismisses an end-reason banner; only then existing navigation.
   @Override public void onBackPressed(){if(menuOpen){PeopleListView.closeMenu(this);return;}
-    if(CallView.isShowing()&&callUi!=null){if(callUi.hasActive()){CallView.hide(this);}else{CallView.dismiss(this,callUi);}renderCallBar();lastSignature="";render();return;}
+    if(CallView.isShowing()&&callUi!=null){
+      if(callUi.hasActive()){CallView.backWhileLive(this);}
+      else{CallView.dismiss(this,callUi);}
+      renderCallBar();lastSignature="";render();return;}
     if(selected!=null)showPeople();else super.onBackPressed();}
   @Override protected void onResume(){super.onResume();active=true;bindCalls();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
 

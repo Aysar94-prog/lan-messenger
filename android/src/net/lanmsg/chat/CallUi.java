@@ -86,11 +86,50 @@ public class CallUi {
       case TIMEOUT_MEDIA:   return "Connection failed";
       case REMOTE_HANGUP:   return "Call ended";
       case LOCAL_HANGUP:    return "Call ended";
-      case SIGNALING_LOST:  return "Connection lost";
+      case SIGNALING_LOST:  return "Disconnected";
       case NETWORK_FAILURE: return "Network unavailable";
       case OFFLINE:         return "You went offline";
       case MEDIA_ERROR:     return "Audio error";
       default:              return "Call ended";
+    }
+  }
+
+  /** A plain sentence saying what the end label means.
+   *
+   *  <p>The label alone was not enough, and this was not a hypothetical: "Connection lost" was
+   *  shown to a caller whose own Wi-Fi was fine, because the phone at the other end had been
+   *  killed, and the only way to tell the difference from the wording was to already know what
+   *  the app does internally.  Every reason now also says whose side it happened on and what to
+   *  do about it, so the end of a call is something the user can act on rather than something they
+   *  have to interpret. */
+  public static String endHint(CallProtocol.EndReason r) {
+    if (r == null) return "";
+    switch (r) {
+      case DECLINED:       return "The other phone declined the call.";
+      // LOCAL_DECLINE is only ever produced on the phone that pressed Decline, so the sentence has
+      // to be the other way round from DECLINED.  Telling the person who declined that *the other
+      // phone* declined is the app accusing the far end of something they just did themselves.
+      case LOCAL_DECLINE:  return "You declined the call.";
+      case BUSY_REMOTE:    return "The other phone is already on a call.";
+      case CANCELED:       return "The call was cancelled before anyone answered.";
+      case TIMEOUT_RINGING: return "The other phone rang but did not answer.";
+      case TIMEOUT_MEDIA:   return "The audio connection did not start in time.";
+      case REMOTE_HANGUP:   return "The other phone hung up.";
+      case LOCAL_HANGUP:    return "You hung up.";
+      // No side named here on purpose.  SIGNALING_LOST is raised by the heartbeat timing out, by a
+      // local frame failing to send, and by the local channel closing, and each of those happens
+      // just as easily when this phone is the one that dropped.  The earlier wording sent a user
+      // with a dead Wi-Fi to go and check the other phone, which is the one thing they cannot do.
+      case SIGNALING_LOST:  return "Lost the link between the phones. One app closed, or one phone went off Wi-Fi.";
+      case NETWORK_FAILURE: return "This phone has no network connection.";
+      case OFFLINE:         return "This phone went offline during the call.";
+      case MEDIA_ERROR:     return "The audio stream failed.";
+      // Internal reasons, which reach the banner through endLabel's default. They are given real
+      // sentences too: if one of them ever ends a call the user is watching, "Call ended" with no
+      // explanation is the same unhelpful banner this method exists to fix.
+      case GLARE_RESOLVED:  return "Both phones rang each other at the same time, so one call was dropped.";
+      case ENGINE_SHUTDOWN: return "LAN Messenger closed while the call was running.";
+      default:              return "";
     }
   }
 
