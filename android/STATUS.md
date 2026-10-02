@@ -595,3 +595,33 @@ value `stateLabel` would give (`N167`-`N170`).
 
 `tests/CallCheck.java` **PASS=387 FAIL=0**. Build 2.2.34 (versionCode 61) installed on both phones,
 same signer as every prior release.
+## Fourth pass on the same work (2026-10-02, 2.2.36)
+
+**The conversation control did nothing.** Tapping 💬 on the call screen opened the conversation and
+then lost it: `showChat` ends in `frame`, which ends in `CallView.forgetOverlay`, and that cleared the
+dismissal the button had just recorded, so the next `render` rebuilt the full call panel over the
+conversation in the same tap. A comment above the button already described this exact failure and
+claimed it was fixed; `forgetOverlay` undid it. `forgetOverlay` now drops only view references --
+`collapsed` and `dismissedCallId` record what the user asked for, not anything about the discarded
+tree -- and `CallView.returnToCall` lifts the dismissal from the Return control, which without it
+would have had nowhere to go. Verified on both phones: the conversation opens, the call screen stays
+down, and the call keeps running.
+
+**A live call had no way back from the conversation.** `callBar` was built only into the people
+screen, and its comment claimed it "stays across the top of every screen". With the conversation
+control fixed, opening the chat led somewhere with no call controls at all -- indistinguishable from
+the call having ended. `buildCallBar` is now shared by both screens.
+
+**The minimised call is now a floating, draggable bar.** It was a full-width strip anchored to the
+foot of the stage, which is exactly where the message box and its keyboard appear, so a call and
+typing could not both be used. It is sized to itself, floats, and can be dragged anywhere: a
+`GestureDetector` tells a tap (reopen) from a drag (move) with a 6 dp slop, the click listener is kept
+for accessibility activation, and the hang-up button is a child so it takes its own touches first.
+Every position is pulled back inside the stage (`CallUi.clampBarLeft`/`clampBarTop`, `N184`-`N192`),
+which is skipped before the first layout pass when neither size is known. The position is kept outside
+the view tree -- the bar is rebuilt on every state change, so a position held in the view would be
+lost each time -- and persisted so it survives calls and restarts.
+
+`tests/CallCheck.java` **PASS=396 FAIL=0**. Build 2.2.36 (versionCode 63) installed on SM-ultraaysar;
+SM-A075F went `unauthorized` on adb before it could be installed, so the two-device run of this round
+is outstanding.

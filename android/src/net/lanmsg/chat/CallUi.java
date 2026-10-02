@@ -178,6 +178,30 @@ public class CallUi {
     return stateLabel(call);
   }
 
+  /** Clamp a dragged minimised call bar so it stays on screen and clear of the edges.
+   *
+   *  <p>The bar is draggable because a minimised call parked at the foot of the stage sits exactly
+   *  where the message box and its keyboard appear, so the two could not both be used.  Draggable
+   *  means the user decides, but it also means the bar can be dropped where nothing is visible to
+   *  grab it again -- so every position is pulled back inside the stage.
+   *
+   *  <p>{@code stageW}/{@code stageH} are the stage's size and {@code barW}/{@code barH} the bar's
+   *  measured size.  Either may be 0 before the first layout pass, in which case nothing is clamped
+   *  and the position is returned unchanged: clamping against a zero-width stage would throw the
+   *  bar into the corner, and the next pass corrects it.
+   *
+   *  <p>Pure so the edges are asserted by the harness, which cannot load a View. */
+  public static int clampBarLeft(float left, int barW, int stageW, int margin) {
+    if (stageW <= 0 || barW <= 0) return Math.max(margin, (int) left);
+    return Math.max(margin, Math.min((int) left, stageW - barW - margin));
+  }
+
+  /** Clamp the bar's vertical position.  See {@link #clampBarLeft}. */
+  public static int clampBarTop(float top, int barH, int stageH, int margin) {
+    if (stageH <= 0 || barH <= 0) return Math.max(margin, (int) top);
+    return Math.max(margin, Math.min((int) top, stageH - barH - margin));
+  }
+
   /** Which view-model an "accept this call" action should go through.
    *
    *  <p>There were two references to the same model in play: the one a control was built from, and

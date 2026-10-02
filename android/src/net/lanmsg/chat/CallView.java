@@ -67,6 +67,13 @@ final class CallView {
    *  showing its duration, its toggles and a live-looking Hang up, with no end reason anywhere. */
   private static boolean boundTerminal;
 
+  /** Where the user dragged the minimised bar to, or -1 while it has never been dragged.
+   *
+   *  <p>Kept outside the view tree on purpose. The bar is rebuilt on every state change, and a
+   *  position held in the view would be lost each time, so a minimised call would jump back to the
+   *  bottom every time it was muted -- which is exactly the "it is in the way again" complaint. */
+  private static float collapsedLeft = -1, collapsedTop = -1;
+
   /** When true the call overlay is collapsed to a compact bar at the foot of the stage.
    *
    *  <p>The full-screen panel made a call impossible to walk away from: there was no way to shrink
@@ -510,17 +517,36 @@ final class CallView {
     label.post(() -> announce(activity, CallUi.stateLabel(call)));
   }
 
+  /** The user asked for the call screen again, so end the chat dismissal and stand it up full.
+   *
+   *  <p>Called from the Activity's Return-to-call control.  Without it, returning to a call the user
+   *  had left for the conversation would render nothing at all: render() holds the overlay down for
+   *  as long as the dismissal stands, which is what stops the call screen rebuilding itself over
+   *  the chat, so *something* has to lift it.  It used to be lifted by forgetOverlay() wiping the
+   *  record during the rebuild, which meant Return only worked as a side effect of the very thing
+   *  that broke the conversation control.
+   *
+   *  <p>Also un-collapses: asking for the call means asking for the call screen, not the bar. */
+  static void returnToCall() {
+    dismissedCallId = null;
+    collapsed = false;
+  }
+
   /** Drop the end-reason banner and the retained snapshot behind it. */
   static void dismiss(MainActivity activity, CallUi ui) {
     if (ui != null) ui.takeTerminal();
     hide(activity);
   }
 
-  /** The collapsed call: a compact bar pinned to the foot of the stage.
- *
- *  <p>Anchored to the bottom and only as tall as its text, so the header, the conversation and the
- *  rest of the app stay visible and usable underneath — that is the whole point of collapsing.
- *  Tapping the bar restores the full panel; hang-up stays one tap away without expanding. */
+  /** The collapsed call: a small floating bar the user can drag anywhere on the stage.
+  *
+  *  <p>Asking for it was that a minimised call sat exactly where the message box and its keyboard
+  *  appear, so a call and typing could not both be used at once, and it covered the whole width of
+  *  the screen for as long as the call ran. So it is sized to itself and free-floating, and dragging
+  *  it aside is the point. It starts at the foot of the stage, which is where a minimised call was
+  *  found least surprising, and stays wherever it was last put, including across restarts.
+  *
+  *  <p>Tapping the bar restores the full panel; hang-up stays one tap away without expanding. */
   private static void buildCollapsed(final MainActivity activity, CallUi ui, final CallSession call) {
     detach(activity);
     boundCallId = call.callId;
@@ -561,7 +587,7 @@ final class CallView {
     hangup.setOnClickListener(v -> activity.runCallAction(ui::hangup, "Could not end the call."));
     bar.addView(hangup, new LinearLayout.LayoutParams(-2, activity.dp(48)));
 
-    bar.setContentDescription("Minimized call with " + peerName + ". Tap to reopen.");
+    bar.setContentDescription("Minimized call with " + peerName + ". Tap to reopen, or drag to move.");
     // Tapping the bar has to take the overlay down before re-rendering.  Clearing collapsed on its
     // own was not enough: render() compares the call ID, the state, mute and route against what the
     // attached overlay was built for, and the bar happened to match all of them, so it decided
@@ -569,13 +595,117 @@ final class CallView {
     // and the user was left tapping a bar that opened onto itself -- there was no way back into the
     // call screen at all, and no way to tell that from a call that had frozen.
     bar.setOnClickListener(v -> { hide(activity); render(activity); });
+    makeDraggable(activity, bar);
 
     android.widget.FrameLayout holder = new android.widget.FrameLayout(activity);
-    android.widget.FrameLayout.LayoutParams atBottom =
-      new android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-    atBottom.setMargins(0, 0, 0, activity.dp(8));
-    holder.addView(bar, atBottom);
+    // Sized to the bar and free-floating, not stretched across the foot of the stage.  As a
+    // full-width strip it covered the message box and everything near it for as long as the call ran,
+    // which is the same complaint as the full call screen letting taps through: the call was
+    // standing on top of the conversation instead of beside it.  Dragging it aside is the point --
+    // a minimised call has to be able to get out of the way of typing -- so it is no longer
+    // anchored to the bottom edge at all.
+    android.widget.FrameLayout.LayoutParams floating =
+      new android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START);
+    // No margins: the position comes from setX/setY and the edge margin is applied by the clamp, so
+    // having both would add the margin twice and let the bar sit that far past the right edge.
+    floating.setMargins(0, 0, 0, 0);
+    holder.addView(bar, floating);
     attach(activity, holder);
+
+    // Position is applied after layout, because the bar has no measured size until then and
+    // clamping before that would pin it to the top-left corner.
+    bar.post(() -> placeCollapsed(activity, bar));
+  }
+
+  /** Let the minimised bar be dragged anywhere on the stage, and treat a tap on it as reopening.
+   *
+   *  <p>A {@link GestureDetector} rather than {@code setOnClickListener} alone, because the two
+   *  gestures have to be told apart: the click listener fires for accessibility activation and
+   *  programmatic clicks, the detector for a real finger.  Keeping both means a TalkBack user still
+   *  gets "tap to reopen", and a touch user gets tap-to-reopen and drag-to-move from one control.
+   *
+   *  <p>The hang-up button is a child, so it takes its own touches first and dragging can never be
+   *  mistaken for pressing it. */
+  private static void makeDraggable(final MainActivity activity, final View bar) {
+    final float[] downAt = new float[2];
+    android.view.GestureDetector gestures =
+      new android.view.GestureDetector(activity, new android.view.GestureDetector.SimpleOnGestureListener() {
+        @Override public boolean onDown(android.view.MotionEvent e) {
+          downAt[0] = e.getRawX(); downAt[1] = e.getRawY();
+          return true;
+        }
+        @Override public boolean onSingleTapUp(android.view.MotionEvent e) {
+          hide(activity); render(activity);
+          return true;
+        }
+        @Override public boolean onScroll(android.view.MotionEvent from, android.view.MotionEvent to,
+                                          float dx, float dy) {
+          if (to == null) return false;
+          // Ignore the jitter of what was meant as a tap, so a tap that opens the call does not
+          // also nudge the bar somewhere the user did not put it.
+          if (Math.abs(to.getRawX() - downAt[0]) < activity.dp(6)
+              && Math.abs(to.getRawY() - downAt[1]) < activity.dp(6)) return false;
+          placeCollapsed(activity, bar, bar.getX() - dx, bar.getY() - dy);
+          return true;
+        }
+      });
+    bar.setOnTouchListener((v, e) -> gestures.onTouchEvent(e));
+  }
+
+  /** Move the bar to a dragged position, pulled back inside the stage. */
+  private static void placeCollapsed(MainActivity activity, View bar, float left, float top) {
+    int margin = activity.dp(8);
+    bar.setX(CallUi.clampBarLeft(left, bar.getWidth(), stageWidth(activity), margin));
+    bar.setY(CallUi.clampBarTop(top, bar.getHeight(), stageHeight(activity), margin));
+    collapsedLeft = bar.getX();
+    collapsedTop = bar.getY();
+    saveBarPlace(activity);
+  }
+
+  /** Put the bar back where the user last dragged it, or at the foot of the stage the first time. */
+  private static void placeCollapsed(MainActivity activity, View bar) {
+    float left = collapsedLeft;
+    float top = collapsedTop;
+    if (left < 0 || top < 0) {
+      left = readBarPlace(activity, true);
+      top = readBarPlace(activity, false);
+    }
+    if (left < 0 || top < 0) {
+      // Never dragged: sit at the foot of the stage, which is where a minimised call was found
+      // least surprising before it could be moved.
+      left = activity.dp(8);
+      top = Math.max(activity.dp(8), stageHeight(activity) - bar.getHeight() - activity.dp(8));
+    }
+    placeCollapsed(activity, bar, left, top);
+  }
+
+  /** Where the bar was left, remembered across calls and across restarts.
+   *
+   *  <p>A position the user chose once and loses on every cold start is a position they will have to
+   *  choose again, which is the same work the dragging was meant to remove. Stored as -1 when never
+   *  set, and clamped on the way back out rather than trusted, because the other phone or a rotation
+   *  may have a smaller stage than the one it was dragged on. */
+  private static float readBarPlace(MainActivity activity, boolean horizontal) {
+    try {
+      android.content.SharedPreferences p =
+        activity.getSharedPreferences("lan_messenger_ui", android.content.Context.MODE_PRIVATE);
+      return p.getFloat(horizontal ? "call_bar_x" : "call_bar_y", -1);
+    } catch (Exception ignored) { return -1; }
+  }
+
+  private static void saveBarPlace(MainActivity activity) {
+    try {
+      activity.getSharedPreferences("lan_messenger_ui", android.content.Context.MODE_PRIVATE).edit()
+        .putFloat("call_bar_x", collapsedLeft).putFloat("call_bar_y", collapsedTop).apply();
+    } catch (Exception ignored) {}
+  }
+
+  private static int stageWidth(MainActivity activity) {
+    return activity.stage == null ? 0 : activity.stage.getWidth();
+  }
+
+  private static int stageHeight(MainActivity activity) {
+    return activity.stage == null ? 0 : activity.stage.getHeight();
   }
 
   private static String routeLabel(MainActivity activity, CallSession call) {
@@ -610,7 +740,18 @@ final class CallView {
 
   /** Drop references to a view tree the Activity has already thrown away.  Called from frame()
    *  when the stage is rebuilt; without it a later render would try to remove a view from a stage
-   *  that no longer contains it. */
+   *  that no longer contains it.
+   *
+   *  <p>It deliberately does <b>not</b> clear {@code collapsed} or {@code dismissedCallId}. Those
+   *  record what the user asked for, not anything about the discarded tree, and clearing them here
+   *  is what made the conversation control do nothing: the chat button records the dismissal and
+   *  then calls showChat, which ends in frame(), which called this -- wiping the record before the
+   *  next render could act on it, so the full call panel was rebuilt straight back over the
+   *  conversation the user had just asked for. Clearing them belongs to {@link #hide}, which means
+   *  "the call screen is intentionally not up".
+   *
+   *  <p>{@code announcedState} is cleared too, so a screen that comes back after a rebuild
+   *  re-announces the state rather than staying silent because it already said it once. */
   static void forgetOverlay() {
     overlay = null;
     stateText = null; detailText = null; qualityText = null; routeText = null;
@@ -618,8 +759,6 @@ final class CallView {
     boundKey = null;
     boundTerminal = false;
     lastQualityAnnounceMs = 0;
-    collapsed = false;
-    dismissedCallId = null;
     announcedState = null;
   }
 

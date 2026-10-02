@@ -170,13 +170,9 @@ public class MainActivity extends Activity {
     TextView title=label("LAN Messenger",20);title.setTypeface(null,Typeface.BOLD);title.setTextColor(Color.WHITE);title.setPadding(0,0,0,0);headerBar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
     Button menuButton=PeopleListView.barButton(this,"☰",20);menuButton.setContentDescription("Menu");menuButton.setOnClickListener(v->PeopleListView.openMenu(this));headerBar.addView(menuButton);
     chrome.addView(headerBar,0);
-    // Return-to-call bar sits directly under the header on the people screen, so a live call keeps
-    // its controls and a way back even when the user is looking at the conversation list.
-    callBar=new LinearLayout(this);callBar.setOrientation(LinearLayout.HORIZONTAL);
-    callBar.setGravity(android.view.Gravity.CENTER_VERTICAL);
-    callBar.setBackgroundColor(headerDark);callBar.setPadding(dp(18),dp(8),dp(12),dp(8));
-    callBar.setVisibility(View.GONE);
-    chrome.addView(callBar,1);
+    // Return-to-call bar sits directly under the header, so a live call keeps its controls and a way
+    // back even when the user is looking at the conversation list.
+    buildCallBar();
     root.addView(status);
     LinearLayout tools=new LinearLayout(this);tools.setGravity(android.view.Gravity.CENTER_VERTICAL);
     FrameLayout avatarWrap=new FrameLayout(this);LinearLayout.LayoutParams avatarWrapParams=new LinearLayout.LayoutParams(dp(40),dp(40));avatarWrapParams.setMargins(0,0,dp(8),0);tools.addView(avatarWrap,avatarWrapParams);
@@ -193,6 +189,22 @@ public class MainActivity extends Activity {
   }
   // One compact bar (back + avatar + name/status + overflow) replaces the old stack of app-title
   // bar + a separate button row + a separate heading row, to leave more vertical room for the chat.
+  /** The return-to-call strip, placed directly under whichever header is on screen.
+   *
+   *  <p>It used to be built into the people screen only, and the comment there claimed it "stays
+   *  across the top of every screen" -- it did not. So a live call had no way back into the call
+   *  screen once the user opened the conversation from it, which is precisely what the chat control
+   *  on the call screen is for: the tap did what it said and then left the call with no controls at
+   *  all, which is indistinguishable from the call having ended. Both screens carry it now, and
+   *  renderCallBar() fills whichever one is present and keeps it hidden when there is no call. */
+  void buildCallBar(){
+    callBar=new LinearLayout(this);callBar.setOrientation(LinearLayout.HORIZONTAL);
+    callBar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+    callBar.setBackgroundColor(headerDark);callBar.setPadding(dp(18),dp(8),dp(12),dp(8));
+    callBar.setVisibility(View.GONE);
+    chrome.addView(callBar,1);
+  }
+
   void showChat(String id){saveDraft();if(recordingConversation!=null&&!recordingConversation.equals(id))VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);if(pendingAttachmentTarget!=null&&!pendingAttachmentTarget.equals(id))AttachmentFlow.clearPendingAttachment(this);selected=id;lastSignature="";visibleMessageCounts.putIfAbsent(id,10);frame();
     PeerEngine chatEngine=engine();boolean isGroup=false;String chatInitial="?";int chatColor=accent;String chatName="this device";
     if(chatEngine!=null){for(PeerEngine.Group g:chatEngine.groups())if(g.id.equals(id)){isGroup=true;chatColor=Color.rgb(156,124,224);chatInitial="G";chatName=g.name;}
@@ -215,6 +227,9 @@ public class MainActivity extends Activity {
     }
     Button more=new Button(this);more.setText("⋮");more.setAllCaps(false);more.setTextSize(20);more.setTextColor(Color.WHITE);more.setBackgroundColor(Color.TRANSPARENT);more.setOnClickListener(v->chatMenu(more));chatHeader.addView(more);
     chrome.addView(chatHeader,0);
+    // Same reason as the people screen: a live call must keep a way back into the call screen from
+    // wherever the user is, and the chat control on the call screen is how they get here.
+    buildCallBar();
     final boolean isGroupFinal=isGroup;
     final TextView[] noticeHolder={null};if(isGroupFinal){noticeHolder[0]=label("Group messages and their attachments are automatically deleted after 7 days of being sent.",12);noticeHolder[0].setTextColor(Color.rgb(112,128,144));root.addView(noticeHolder[0]);}
     scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(chatBg);feed=column();feed.setPadding(dp(6),dp(6),dp(6),dp(6));scroll.addView(feed);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -430,6 +445,10 @@ public class MainActivity extends Activity {
     // check that can prove it changes with the clock.
   /** Put the call overlay on top of whatever screen is showing. */
   void showCallOverlay(){
+    // Lifts the dismissal recorded when the user left the call screen for the conversation.
+    // Return-to-call *is* the act of un-dismissing, so it has to be the thing that lifts it:
+    // render() holds the overlay down for as long as the dismissal stands.
+    CallView.returnToCall();
     lastSignature="";
     CallView.render(this);
   }
