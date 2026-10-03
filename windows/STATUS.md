@@ -1,5 +1,19 @@
 # Windows status
 
+Latest 2026-10-03: test-only native PeerConnection endpoint paired with physical
+Android over LAN. Separate video-only PC passed generated VP8 motion both ways,
+G722 continuity and tested video failure/disposal. Single-PC rollback interrupted
+audio and is rejected. No production dependency migration or release change.
+See [paired evidence/handoff](video-calling/PAIRED-FEASIBILITY.md); older R02
+paragraphs below are historical checkpoints, not the latest paired result.
+R05 production migration explicitly authorized, execution plan in
+[R05 migration](video-calling/R05-MIGRATION.md). Native ↔ unchanged production
+2.2.42 voice media passed both offer directions, G722 packets and legacy mute
+state; authenticated call-path and human audible checks remain separate.
+Native cap/fifth rejection and 20 teardown lifetimes passed. Windows Release
+build passed. Latest full suite passed hardware audio 20/0, then failed the
+16-member group reinvite capability; isolated retry failed full-group pairing.
+
 ## Replacement R01 execution audit (2026-10-03)
 
 Latest R02 advance: generated VP8 codec-local encode/decode passed in two native

@@ -1,5 +1,19 @@
 # Android video calling — execution handoff
 
+Latest continuation 2026-10-03: AP01 paired with real Windows native endpoint;
+separate video-only PC qualifies on generated motion/G722/failure counters in
+both call/video-offer directions. Single-PC rollback failed audio and is rejected.
+See ../../windows/video-calling/PAIRED-FEASIBILITY.md for exact artifacts, private
+evidence paths and remaining gates. A02b final contract not yet frozen; no signed
+production video candidate. Historical table below predates these paired runs.
+R05 is now explicitly authorized. Its dependency-ordered small tasks are in
+../../windows/video-calling/R05-MIGRATION.md. Do not repeat the permission request.
+Latest full regression failure and verification are in PAIRED-FEASIBILITY.md;
+do not suppress/fix unrelated group logic inside video scope. The 90-second
+physical audio-only listening window completed with test cleanup and unchanged
+production package in evidence paired-ca605368b1924f24b67bd105976f33bc. Human
+audible outcome requested, not inferred. No media test process remains running.
+
 Last updated: 2026-10-03. Android execution was authorized by the user; USB adb
 was explicitly requested. Continue only the frozen plan named below. Update this
 record after each phase and before stopping if account usage approaches its limit.

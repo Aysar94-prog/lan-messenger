@@ -1,5 +1,16 @@
 # R02 Windows test-only native bridge handoff — 2026-10-03
 
+Latest: opaque native endpoint, managed command driver and real USB/LAN Android
+pairing implemented. Both-direction separate-video motion/G722/failure tests pass;
+single-PC rollback fails and is rejected. See PAIRED-FEASIBILITY.md for current
+hashes, reproduction, resource/publish and legacy-production acceptance gaps.
+The codec-only entries below are historical; no production migration occurred.
+End verification: offline clean publish/load, native cap=4/fifth rejection and
+20 video-only teardown lifetimes passed. Historical 2.2.42 media pairing passed
+both SDP offer directions with two-way G722 counters. Listening window ended;
+human outcome and authenticated application call compatibility remain Pending.
+R05 approval received; follow R05-MIGRATION.md rather than asking again.
+
 Latest continuation: generated VP8 **codec-local** encode/decode now passes in
 Windows native EXE (two fresh codec lifetimes) and through the net9 C ABI (one
 lifetime). Each run: encoded=20, decoded=20, moving decoded checksums=19,

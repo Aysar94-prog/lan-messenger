@@ -1,10 +1,10 @@
 param(
   [Parameter(Mandatory=$true)][string]$Serial,
-  [Parameter(Mandatory=$true)][ValidateSet('init','offer','answer','remote','upgrade','activate','stats','stop','camera-off','loopback')][string]$Command,
+  [Parameter(Mandatory=$true)][ValidateSet('init','offer','answer','remote','upgrade','activate','stats','stop','stop-node','camera-off','loopback')][string]$Command,
   [ValidateSet('a','b')][string]$Node = 'a',
   [ValidateSet('VP8','VP9','H264')][string]$Codec = 'VP8',
   [ValidatePattern('^[a-zA-Z0-9-]{0,32}$')][string]$Profile = '',
-  [ValidateSet('audio','inactive','video')][string]$Mode = 'audio',
+  [ValidateSet('audio','inactive','video','video-only')][string]$Mode = 'audio',
   [ValidateSet('generated','camera')][string]$Source = 'generated',
   [string]$SdpFile,
   [string]$Adb = 'adb',

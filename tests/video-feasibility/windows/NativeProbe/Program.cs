@@ -1,6 +1,16 @@
 using System.Runtime.InteropServices;
 
 // R02 ABI smoke test only. No media connection, audio device, camera or network.
+if (args.Length == 3 && args[1] == "--legacy-audio-check")
+{
+    EndpointDriver.Run(args[0], false, args[2]);
+    return;
+}
+if (args.Length == 2 && (args[1] == "--endpoint" || args[1] == "--endpoint-check"))
+{
+    EndpointDriver.Run(args[0], args[1] == "--endpoint-check");
+    return;
+}
 if (args.Length != 1 || !Environment.Is64BitProcess)
     throw new ArgumentException("An explicit x64 test DLL path is required.");
 var library = NativeLibrary.Load(Path.GetFullPath(args[0]));

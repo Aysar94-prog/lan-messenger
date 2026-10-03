@@ -1,5 +1,11 @@
 # LAN Messenger project status and platform comparison
 
+Video feasibility update 2026-10-03: test-only Windows native/physical Android
+generated VP8 pairing passed both directions with G722 and isolated video failure
+continuity. Neither production release has video; compatibility/parity and
+current 2.2.42 release claims are unchanged. Details:
+[paired feasibility](windows/video-calling/PAIRED-FEASIBILITY.md).
+
 Reviewed 2026-10-03. Current releases are **Windows 2.2.42** and **Android 2.2.42** (versionCode 69) — numbered to match by explicit user request, not because the platforms share a version scheme; releases remain independent and this is the first time the two numbers have ever lined up. See the feature comparison below for the actual per-feature state.
 
 ## Working arrangement

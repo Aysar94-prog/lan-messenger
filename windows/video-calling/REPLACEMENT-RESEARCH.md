@@ -6,6 +6,12 @@ Apache-2.0 or BSD alternative without geographic restrictions.
 
 ## Decision and execution boundary
 
+Latest authorization 2026-10-03: user explicitly answered "Yes, migrate Windows
+calling too" to the R05 permission question. Production migration is now
+authorized, subject to its existing R03/R04/A02b and safety dependencies. See
+R05-MIGRATION.md for the small-task execution plan. Earlier approval-boundary
+paragraphs below are historical; they no longer mean R05 permission is missing.
+
 Execution update: the user authorized R01–R04, then explicitly accepted
 separately audited permissive transitive licenses (including IJG/zlib) on
 2026-10-03 with "اقبل واكمل". Geographic restrictions remain excluded.

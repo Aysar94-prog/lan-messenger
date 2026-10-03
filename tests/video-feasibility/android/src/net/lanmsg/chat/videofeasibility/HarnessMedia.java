@@ -44,12 +44,14 @@ final class HarnessMedia {
   JSONObject init(String id, String codec, String profile, String mode, String source) throws Exception {
     if (!id.matches("[ab]")) throw new IllegalArgumentException("node must be a or b");
     if (!Arrays.asList("VP8", "VP9", "H264").contains(codec)) throw new IllegalArgumentException("codec");
-    if (!Arrays.asList("audio", "inactive", "video").contains(mode)) throw new IllegalArgumentException("mode");
+    if (!Arrays.asList("audio", "inactive", "video", "video-only").contains(mode)) throw new IllegalArgumentException("mode");
     if (!Arrays.asList("generated", "camera").contains(source)) throw new IllegalArgumentException("source");
     if (nodes.containsKey(id)) throw new IllegalStateException("Stop before replacing an endpoint");
     Node n = new Node(id, codec, profile, source); nodes.put(id, n);
-    n.audioSource = factory.createAudioSource(new MediaConstraints());
-    n.audioTrack = factory.createAudioTrack("audio-" + id, n.audioSource);
+    if (!mode.equals("video-only")) {
+      n.audioSource = factory.createAudioSource(new MediaConstraints());
+      n.audioTrack = factory.createAudioTrack("audio-" + id, n.audioSource);
+    }
     PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(Collections.emptyList());
     config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
     config.tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED;
@@ -58,14 +60,14 @@ final class HarnessMedia {
     // addTrack-created transceivers can be reused by an incoming Unified-Plan offer.
     // Explicit addTransceiver here leaves the callee's sender on an unassociated
     // m-line and silently negotiates one-way audio.
-    n.pc.addTrack(n.audioTrack, Collections.singletonList("audio-stream-" + id));
+    if (n.audioTrack != null) n.pc.addTrack(n.audioTrack, Collections.singletonList("audio-stream-" + id));
     for (RtpTransceiver t : n.pc.getTransceivers())
       if (t.getMediaType() == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO) select(t, "G722", "");
     if (mode.equals("inactive")) {
       n.videoTransceiver = n.pc.addTransceiver(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
         new RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.INACTIVE));
       select(n.videoTransceiver, codec, profile);
-    } else if (mode.equals("video")) video(id);
+    } else if (mode.equals("video") || mode.equals("video-only")) video(id);
     JSONObject caps = new JSONObject();
     JSONArray codecs = new JSONArray();
     for (RtpCapabilities.CodecCapability c : factory.getRtpSenderCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO).codecs)
@@ -88,6 +90,8 @@ final class HarnessMedia {
   private Node node(String id) {
     Node n = nodes.get(id); if (n == null) throw new IllegalStateException("Initialize endpoint first"); return n;
   }
+  void closeNode(String id) { Node n = nodes.remove(id); if (n != null) n.close(); }
+  boolean videoOnly(String id) { Node n = nodes.get(id); return n != null && n.audioTrack == null; }
   void video(String id) throws Exception {
     if (!visible.getAsBoolean()) throw new IllegalStateException("Activity is backgrounded");
     Node n = node(id);
@@ -97,8 +101,16 @@ final class HarnessMedia {
       if (n.videoTransceiver == null)
         for (RtpTransceiver t : n.pc.getTransceivers())
           if (t.getMediaType() == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO && !t.isStopped()) { n.videoTransceiver = t; break; }
-      if (n.videoTransceiver == null) n.videoTransceiver = n.pc.addTransceiver(n.videoTrack);
-      else if (!n.videoTransceiver.getSender().setTrack(n.videoTrack, false)) throw new IllegalStateException("setTrack failed");
+      if (n.videoTransceiver == null) {
+        // addTrack-created transceivers can be reused by an incoming offer;
+        // addTransceiver(track) would leave an unassociated sender on a second m-line.
+        n.pc.addTrack(n.videoTrack, Collections.singletonList("video-stream-" + id));
+        for (RtpTransceiver t : n.pc.getTransceivers())
+          if (t.getMediaType() == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO
+              && t.getSender().track() != null
+              && n.videoTrack.id().equals(t.getSender().track().id())) { n.videoTransceiver = t; break; }
+        if (n.videoTransceiver == null) throw new IllegalStateException("No video sender transceiver");
+      } else if (!n.videoTransceiver.getSender().setTrack(n.videoTrack, false)) throw new IllegalStateException("setTrack failed");
       select(n.videoTransceiver, n.codec, n.profile);
     }
     if (!n.videoTransceiver.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_RECV))
@@ -140,6 +152,7 @@ final class HarnessMedia {
   private void setRemote(Node n, SessionDescription.Type type, String sdp) throws Exception {
     if (sdp == null || !sdp.startsWith("v=0") || sdp.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 49_152)
       throw new IllegalArgumentException("Invalid/oversized SDP");
+    if (n.audioTrack == null && sdp.contains("m=audio")) throw new IllegalArgumentException("Video-only endpoint rejects audio SDP");
     SdpWait wait = new SdpWait(); n.pc.setRemoteDescription(wait, new SessionDescription(type, sdp)); wait.await();
   }
   private String local(Node n, boolean offer) throws Exception {

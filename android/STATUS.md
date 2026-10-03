@@ -1,5 +1,19 @@
 # Android status
 
+Latest 2026-10-03 paired feasibility: separate secured video-only connection
+passed both original call/video-offer directions with generated moving VP8 and
+continuing two-way G722. Video-off, video disposal and malformed video rejection
+preserved audio. Production package/data unchanged. This is test-only evidence,
+not a real video release; A02b contract and A04–A13 remain Pending. See
+[paired evidence/handoff](../windows/video-calling/PAIRED-FEASIBILITY.md).
+Older paragraphs below describe the earlier unpaired checkpoint.
+End checks: fresh 44-source Java compile passed; existing call checks 408/0,
+draft contract 43/0, camera permission helper 18/0. Full production regression
+now passed Windows microphone tests 20/0 but failed full-group reinvite capability;
+isolated group retry failed handshake/pairing. No unrelated group fix performed.
+Windows production library migration is now explicitly authorized; its remaining
+baseline, contract and packaging gates are documented separately.
+
 ## Video calling plan-v007 — Android execution started (2026-10-03)
 
 The user authorized the Android section and phase handoffs, and requested USB adb.

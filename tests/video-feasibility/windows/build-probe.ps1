@@ -32,6 +32,7 @@ foreach ($line in $environmentLines) {
 }
 # Some launch environments carry both Path and PATH; take VS's first PATH value.
 $compilerPath = @($environmentLines | Where-Object { $_ -cmatch '^PATH=' })[0]
+if (-not $compilerPath) { $compilerPath = @($environmentLines | Where-Object { $_ -match '^PATH=' })[0] }
 if (-not $compilerPath) { throw 'Compiler PATH was not returned.' }
 $env:Path = $compilerPath.Substring(5)
 $arguments = @('/nologo','/std:c++20','/EHsc','/O2','/MT','/DNDEBUG','/DWEBRTC_WIN','/DWIN32','/DNOMINMAX','/DLM_PROBE_RUNNER',
@@ -49,6 +50,23 @@ $dllArguments = @($arguments | Where-Object { $_ -ne '/DLM_PROBE_RUNNER' -and $_
 $dllArguments = @('/LD', "/Fo$out/bridge.obj", "/Fe$out/lm-native-probe.dll") + $dllArguments
 & cl.exe @dllArguments
 if ($LASTEXITCODE -ne 0) { throw "Native C ABI DLL build failed; preserved output: $out" }
+$endpointArguments = @($arguments | Where-Object { $_ -ne '/DLM_PROBE_RUNNER' -and $_ -notlike '/Fe*' -and $_ -notlike '/Fo*' -and $_ -notlike '*native-probe.cpp' })
+$endpointArguments = @('/LD', "/Fo$out/endpoint.obj", "/Fe$out/lm-native-endpoint.dll", (Join-Path $PSScriptRoot 'native-endpoint.cpp')) + $endpointArguments
+& cl.exe @endpointArguments
+if ($LASTEXITCODE -ne 0) { throw "Native endpoint build failed; preserved output: $out" }
 & dotnet run --project (Join-Path $PSScriptRoot 'NativeProbe/NativeProbe.csproj') -c Release -- (Join-Path $out 'lm-native-probe.dll')
 if ($LASTEXITCODE -ne 0) { throw "Managed ABI probe failed; preserved output: $out" }
+& dotnet run --project (Join-Path $PSScriptRoot 'NativeProbe/NativeProbe.csproj') -c Release -- (Join-Path $out 'lm-native-endpoint.dll') --endpoint-check
+if ($LASTEXITCODE -ne 0) { throw "Managed endpoint check failed; preserved output: $out" }
+$publish = Join-Path $out ('clean-publish-' + [Guid]::NewGuid().ToString('N'))
+& dotnet publish (Join-Path $PSScriptRoot 'NativeProbe/NativeProbe.csproj') -c Release --self-contained false --configfile (Join-Path $repo 'NuGet.Config') -o $publish
+if ($LASTEXITCODE -ne 0) { throw 'Offline test-only publish failed.' }
+Copy-Item -LiteralPath (Join-Path $out 'lm-native-endpoint.dll') -Destination $publish
+Copy-Item -LiteralPath (Join-Path $sdk 'NOTICE') -Destination $publish
+Copy-Item -LiteralPath (Join-Path $sdk 'VERSIONS') -Destination $publish
+Push-Location $publish
+try {
+  & dotnet './NativeProbe.dll' (Join-Path $publish 'lm-native-endpoint.dll') --endpoint-check
+  if ($LASTEXITCODE -ne 0) { throw 'Clean-folder native load/endpoint check failed.' }
+} finally { Pop-Location }
 "Probe passed; output: $out"

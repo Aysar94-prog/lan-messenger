@@ -79,6 +79,7 @@ public final class HarnessActivity extends Activity {
           if (encoded.length() > 65_536) throw new IllegalArgumentException("SDP input too large");
           String sdp = new String(Base64.decode(encoded, Base64.DEFAULT), StandardCharsets.UTF_8);
           switch (command) {
+            case "stop-node": media.closeNode(node); result.put("stoppedNode", true); break;
             case "init": result.put("capabilities", media.init(node, codec, profile, mode, source)); break;
             case "offer": result.put("sdp", media.offer(node)); result.put("type", "offer"); break;
             case "answer": result.put("sdp", media.answer(node, sdp)); result.put("type", "answer"); break;
@@ -98,7 +99,10 @@ public final class HarnessActivity extends Activity {
         try { result.put("ok", false); result.put("error", e.getClass().getSimpleName() + ": " + e.getMessage()); }
         catch (Exception ignored) {}
         // A failed media command cannot leave the test camera or microphone running.
-        release();
+        String failedNode = value(i, "node", "a");
+        if (media != null && "b".equals(failedNode) && media.videoOnly(failedNode))
+          media.closeNode(failedNode); // A failed isolated-video proposal must not end established voice a.
+        else release();
       }
       try {
         File tmp = new File(getFilesDir(), request + ".tmp");

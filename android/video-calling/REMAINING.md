@@ -6,9 +6,11 @@ this is a continuation checklist, not a new media contract or broadened scope.
 
 A01/A02 design, provisional AT01, Android-local AP01 and A03 permission preparation
 are implemented/documented, not full device acceptance. Windows replacement R01
-input prepared; R02 ABI and VP8 codec-local roundtrip passed. Actual Windows–Android
-secure moving-video/audio upgrade still Pending. No honest elapsed-hours estimate
-is available before that experimental gate is resolved; not near release.
+input prepared; real paired generated VP8/separate-video upgrade and two-way G722
+passed both directions, including video failure/disposal voice continuity. See
+../../windows/video-calling/PAIRED-FEASIBILITY.md. Final A02b contract, baseline
+voice replacement and production/UI/camera acceptance remain separate gates;
+there is still no signed production video release or honest completion-time estimate.
 
 | Task / platform | Status | Dependencies | Work / acceptance and testing |
 |---|---|---|---|
@@ -35,6 +37,6 @@ AT01–AT05, and candidate upgrade acceptance precedes A13 completion as specifi
 in the frozen plan. Final Both B0–B2 production interoperability/release decisions
 are separate and must not be implied complete by Android candidate preparation.
 
-Next authorized step is Windows R02 endpoint completion, because A04/production
-media cannot bypass A02b. Use USB adb for the separate AP01 test APK, never replace
+Next authorized step is offline endpoint packaging then A02b contract/fixtures,
+because A04/production media cannot bypass A02b. Use USB adb for AP01, never replace
 production app for a prototype. Current production release remains 2.2.42/code69.

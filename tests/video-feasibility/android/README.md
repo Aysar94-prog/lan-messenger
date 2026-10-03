@@ -12,7 +12,9 @@ Grant only the test package microphone permission before audio tests:
 `adb -d shell pm grant net.lanmsg.chat.videofeasibility android.permission.RECORD_AUDIO`.
 Camera permission is optional and needed only for `-Source camera`.
 Keep the test Activity foreground. It releases media when backgrounded or stopped.
-Every failure also releases media. Test installation does not replace or access
+Failures release media; failure confined to video-only node b releases b and
+preserves audio node a. Other failures still release all nodes.
+Test installation does not replace or access
 `net.lanmsg.chat`; record its version/install timestamps before and after.
 The Activity requires the shell's `android.permission.DUMP`; start it through adb,
 not a launcher icon. Ordinary apps cannot send test commands to the endpoint.
@@ -27,7 +29,7 @@ SDP files contain test network addresses/fingerprints and belong only in local
 test evidence, not status reports or production diagnostics.
 
 Commands are `init`, `offer`, `answer -SdpFile`, `remote -SdpFile`, `upgrade`,
-`activate`, `stats`, `camera-off`, `stop`, and `loopback`. Endpoint `a` or `b`
+`activate`, `stats`, `camera-off`, `stop-node`, `stop`, and `loopback`. Endpoint `a` or `b`
 allows two independent secured peer connections for loopback or fallback trials.
 Input is bounded to 48 KiB SDP and 64-character request names. Complete JSON
 responses are atomically written under the test app's private files directory;
@@ -35,13 +37,19 @@ the command runner polls the matching request for up to 60 seconds.
 Use `-Summary` for compact loopback output; full counter snapshots still go to the
 matching evidence JSON file.
 
-`init` accepts `-Mode audio|inactive|video`, `-Codec VP8|VP9|H264`,
+`init` accepts `-Mode audio|inactive|video|video-only`, `-Codec VP8|VP9|H264`,
 optional `-Profile` (VP9 profile-id or H264 profile-level-id), and
 `-Source generated|camera`. Codec preferences are applied to real transceivers;
 an unavailable profile fails explicitly. Audio selects G722. `init -Mode audio`
 and `inactive` create no video source and acquire no camera. Initial video or
 upgrade is an explicit test command. Generated I420 motion defaults to 320×240,
 15 fps. `camera-off` stops capture independently of audio.
+`video-only` creates no audio source/track and rejects audio SDP. Use node b for
+isolated video alongside audio a; `stop-node` tears down only its selected node.
+
+Latest actual paired generated tests and rejected single-PC rollback are recorded
+in windows/video-calling/PAIRED-FEASIBILITY.md. Explicit Windows pair-android.py
+--mechanism separate is the accepted feasibility recipe, not production signaling.
 
 ## Local native smoke test
 

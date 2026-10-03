@@ -1,5 +1,15 @@
 # Verification / resume commands
 
+Latest 2026-10-03 checkpoint: actual paired generated VP8/separate-video + G722
+directions/failure continuity and baseline Windows media compatibility passed.
+See ../../windows/video-calling/PAIRED-FEASIBILITY.md for artifacts and new native
+resource/offline-publish tests. Fresh Android javac compiled all 44 production
+sources; no new production APK. Cached CallCheck rerun 408/0, draft contract 43/0,
+permission helper 18/0. Full tests/run.ps1 passed Windows audio hardware 20/0 but
+failed group_membership.py (full 16-member group reinvite capability). Isolated
+retry failed full-group pairing with handshake cancellation. Later runner tests
+not reached. Historical microphone/group-startup failures below are older runs.
+
 Run from `D:\LAN-Messenger\source`. Only the frozen plan-v007 is authoritative.
 
 ## Android test-only endpoint
