@@ -39,6 +39,14 @@ The frozen plan SHA-256 remains unchanged.
 Full runner active at outputs/.build/video-feasibility/a06-regression, session
 22253 during this checkpoint. Do not start a competing regression until it ends.
 
+Latest full-run observation: microphone checks 20/0 and transfer/resume suites
+passed, including the previously disk-blocked 128 MiB transfer. Basic group
+membership checks passed; large 16-member group is still running and has emitted
+TLS/network timeout diagnostics while retrying pairing. No full-suite PASS yet;
+later migration/ownership/Offline/UI checks cannot be claimed run. This is the
+same unrelated large-group area seen in earlier checkpoints; no app fix outside
+video scope. Adapter source saved locally in commit 3eb84ec; no push.
+
 Usage checkpoint: 95% five-hour / 23% weekly; saved before additional integration.
 No production release/signing/version/installation changes. Production remains
 2.2.42/code69. A06 source is NOT evidence of packaged physical-camera acceptance.
