@@ -314,7 +314,14 @@ public class MessengerService extends Service {
       CallController cc = new CallController(peer, callSettings);
       cc.setMediaFactory(mediaFactory);
       cc.setAudioOwner(audioOwner); // A05: shared with voice messages
-      cc.configureVideo(callMediaReal,this::cameraEligible);
+      cc.configureVideo(callMediaReal,id->{
+        if(cameraEligible(id))return true;
+        CallSession active=cc.snapshot();
+        return active!=null&&id.equals(active.callId)
+          &&(peer.trustedCallMask(active.peerId)&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0
+          &&prepareCallCamera(id);
+      });
+      cc.configureRemoteSpeaker(speaker->{CallRoute.apply(this,speaker);return true;});
       peer.callVideoSupport=()->callMediaReal&&callController==cc&&!stopping;
       cc.start();
       callController = cc;

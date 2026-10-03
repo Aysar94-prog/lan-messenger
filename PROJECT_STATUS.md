@@ -8,7 +8,11 @@ auto-answer only. Revocation, remote forget, contact deletion and delete-all cle
 the grant. Android 2.2.45/code72 ARM64 signed test candidate built with the original
 certificate (`LanMessenger-2.2.45-trusted-dev.apk`, SHA-256
 `e801f62792e3916900cf27c61da880b8842596541a0bb82a5595d12cdd8bb07a`).
-CallCheck 422/0 and Windows Release build/publish passed. This is not a release or
+CallCheck 422/0 and Windows Release build/publish passed. Android 2.2.46/code73
+adds certificate-bound trusted video auto-accept and remote speaker routing; its
+APK build/signature checks pass and a physical camera source initialized on an
+SM-S908E, but the complete two-phone call has not yet been repeated and remote
+front/rear camera switching remains pending. This is not a release or
 physical-device acceptance. Remote speaker and camera control, video auto-answer,
 and Windows production video remain pending; there is no new wire command yet.
 See [trusted-call/icon plan](PLAN-TRUSTED-CALL-ACCESS-AND-APP-ICON.md).

@@ -846,7 +846,10 @@ final class CallView {
     reset.setOnClickListener(v->{if(videoView!=null){videoView.resetPreview();preview.setText("Hide preview");}});
     extras.addView(reset,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     Button diagnostics=activity.button("Diagnostics");diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
-    extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));rows.addView(extras);
+    extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    Button remoteSpeaker=activity.button("Recipient speaker on");remoteSpeaker.setTag(Boolean.FALSE);
+    remoteSpeaker.setOnClickListener(v->{boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());activity.runCallAction(()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"Recipient speaker off":"Recipient speaker on");});
+    extras.addView(remoteSpeaker,new LinearLayout.LayoutParams(0,activity.dp(52),1));rows.addView(extras);
     return rows;
   }
   private static void cameraAction(MainActivity activity,String id,MainActivity.CallAction action){

@@ -64,6 +64,12 @@ public class CallUi {
   public void turnCameraOff(String callId) throws java.io.IOException {
     videoAction(callId,false).turnCameraOff(callId);
   }
+  public void setRemoteSpeaker(String callId,boolean speaker)throws java.io.IOException {
+    CallSession s=getCurrent();
+    if(controller==null||s==null||!callId.equals(s.callId)||s.state!=CallProtocol.State.Connected)
+      throw new java.io.IOException("That call is no longer available");
+    controller.requestRemoteSpeaker(speaker);
+  }
   private final List<CallController.Callback> observers = new CopyOnWriteArrayList<>();
 
   // ── Current snapshot ───────────────────────────────────────────

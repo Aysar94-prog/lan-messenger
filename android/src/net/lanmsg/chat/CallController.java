@@ -51,6 +51,17 @@ public class CallController {
   private CallVideoActions videoActions;
   private volatile boolean videoEnabled;
   private CallVideoActions.Eligibility videoEligibility=id->false;
+  public interface RemoteSpeakerHandler { boolean apply(boolean speaker); }
+  private RemoteSpeakerHandler remoteSpeakerHandler=speaker->false;
+  public void configureRemoteSpeaker(RemoteSpeakerHandler handler){remoteSpeakerHandler=handler==null?speaker->false:handler;}
+  public void requestRemoteSpeaker(boolean speaker)throws IOException{
+    synchronized(lock){
+      if(session==null||session.state!=CallProtocol.State.Connected||protocolVersion!=2)
+        throw new IOException("Remote speaker control is unavailable");
+      CallProtocol.Frame frame=new CallProtocol.Frame(CallProtocol.REMOTE_SPEAKER,session.callId,sequence.incrementAndGet(),0);
+      frame.body.put("speaker",speaker);sendFrame(frame);
+    }
+  }
   /** Service enables only after camera/lifecycle/UI readiness is wired. */
   public void configureVideo(boolean enabled,CallVideoActions.Eligibility eligibility){
     videoEligibility=eligibility==null?id->false:eligibility;videoEnabled=enabled;
@@ -734,6 +745,15 @@ public class CallController {
         case CallProtocol.PONG:
           // Reset heartbeat fail counter (implementation detail)
           break;
+
+        case CallProtocol.REMOTE_SPEAKER:
+          if((engine.trustedCallMask(session.peerId)&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0
+              &&frame.body.get("speaker") instanceof Boolean
+              &&remoteSpeakerHandler.apply((Boolean)frame.body.get("speaker"))){
+            session.audioRoute=(Boolean)frame.body.get("speaker")?"Speaker":"Earpiece";
+            notifyCallback(session.snapshot());
+          }
+          break;
       }
     }
   }
@@ -780,6 +800,7 @@ public class CallController {
         if(video==null)throw new IOException("Video adapter unavailable");
         final String boundCall=session.callId;
         final CallVideoConsent boundConsent=videoConsent;
+        boolean autoVideo=(engine.trustedCallMask(session.peerId)&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
         videoCoordinator=new CallVideoCoordinator(boundCall,session.isCaller,boundConsent,videoEligibility,video,
           frame->{synchronized(lock){
             if(session==null||!session.callId.equals(boundCall)||session.state!=CallProtocol.State.Connected)
@@ -789,7 +810,7 @@ public class CallController {
             if(session!=null&&session.callId.equals(boundCall)&&!session.state.terminal()){
               session.video=snapshot;notifyCallback(session.snapshot());
             }
-          }});
+          }},autoVideo);
         session.video=videoCoordinator.snapshot();
       }
     } catch (Exception e) {
@@ -1033,7 +1054,7 @@ public class CallController {
           if("ERROR".equals(frame.type)&&!frame.body.containsKey("code"))frame.body.put("code","failed");
           break;
         case "INVITE":case "ACCEPT":break;
-        case "VIDEO_REQUEST":case "VIDEO_ACCEPT":case "VIDEO_DECLINE":case "VIDEO_STATE":break;
+        case "VIDEO_REQUEST":case "VIDEO_ACCEPT":case "VIDEO_DECLINE":case "VIDEO_STATE":case "REMOTE_SPEAKER":break;
         default:frame.negotiationGeneration=0;frame.body.clear();break;
       }
       if(!CallVideoProtocol.valid(frame))throw new IOException("Invalid local call frame");

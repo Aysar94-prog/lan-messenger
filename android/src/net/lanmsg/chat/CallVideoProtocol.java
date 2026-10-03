@@ -69,6 +69,7 @@ public final class CallVideoProtocol {
           && Arrays.asList("failed","timeout","unsupported").contains(b.get("code"));
       case "RINGING": case "DECLINE": case "BUSY": case "CANCEL": case "HANGUP":
       case "PING": case "PONG": return gen==0 && b.isEmpty();
+      case "REMOTE_SPEAKER": return gen==0 && keys(b,"speaker") && b.get("speaker") instanceof Boolean;
       default: return false;
     }
   }

@@ -1,5 +1,19 @@
 # Android status
 
+LATEST TRUSTED VIDEO/SPEAKER TEST CANDIDATE: 2.2.46/code73 ARM64 is built,
+signed with the original certificate, and USB-upgraded without changing the
+first-install time as `outputs/LanMessenger-2.2.46-trusted-dev.apk` (SHA-256
+`9bbfbc54f7a0911cee72a397c767d31db649ab17804012f58a87ba4a7e405a06`). An
+authenticated verified peer may now be granted automatic video-upgrade acceptance
+and remote speaker routing separately. Automatic camera capture remains gated on
+the app being visible, the device unlocked, camera permission, thermal readiness,
+and the certificate-bound grant. CallCheck passes 422/0 and the production APK
+pipeline/signature verification pass. A physical Android camera source initialized
+successfully on SM-S908E through the isolated WebRTC feasibility harness. The
+original reported end-to-end two-phone call has not yet been repeated on 2.2.46;
+remote front/rear camera switching is not implemented and this is not a final
+Android release.
+
 LATEST TRUSTED-CALL/ICON SOURCE CANDIDATE: 2.2.45/code72 ARM64 built and signed
 with the original certificate as `outputs/LanMessenger-2.2.45-trusted-dev.apk`
 (SHA-256 `e801f62792e3916900cf27c61da880b8842596541a0bb82a5595d12cdd8bb07a`).

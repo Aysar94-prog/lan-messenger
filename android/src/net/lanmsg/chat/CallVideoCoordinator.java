@@ -41,17 +41,28 @@ public final class CallVideoCoordinator implements AutoCloseable {
   private volatile boolean answered;
   private int incomingIce, outgoingIce;
   private final long requestTimeoutMs,videoTimeoutMs;
+  private final boolean autoAcceptVideo;
 
   public CallVideoCoordinator(String id, boolean caller, CallVideoConsent consent,
       CallVideoActions.Eligibility eligibility, ICallMedia.Video media, Wire wire, Observer observer) {
-    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS);
+    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,false);
+  }
+  public CallVideoCoordinator(String id, boolean caller, CallVideoConsent consent,
+      CallVideoActions.Eligibility eligibility, ICallMedia.Video media, Wire wire, Observer observer,
+      boolean autoAcceptVideo) {
+    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,autoAcceptVideo);
   }
   CallVideoCoordinator(String id,boolean caller,CallVideoConsent consent,CallVideoActions.Eligibility eligibility,
       ICallMedia.Video media,Wire wire,Observer observer,long requestTimeoutMs,long videoTimeoutMs){
+    this(id,caller,consent,eligibility,media,wire,observer,requestTimeoutMs,videoTimeoutMs,false);
+  }
+  CallVideoCoordinator(String id,boolean caller,CallVideoConsent consent,CallVideoActions.Eligibility eligibility,
+      ICallMedia.Video media,Wire wire,Observer observer,long requestTimeoutMs,long videoTimeoutMs,boolean autoAcceptVideo){
     if(!CallProtocol.validCallId(id)||consent==null||eligibility==null||media==null||wire==null)
       throw new IllegalArgumentException("Missing video boundary");
     if(requestTimeoutMs<=0||videoTimeoutMs<=0)throw new IllegalArgumentException("Invalid deadline");
     this.requestTimeoutMs=requestTimeoutMs;this.videoTimeoutMs=videoTimeoutMs;
+    this.autoAcceptVideo=autoAcceptVideo;
     this.callId=id;this.caller=caller;this.consent=consent;this.eligibility=eligibility;
     this.media=media;this.wire=wire;this.observer=observer;
     worker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(64),
@@ -244,7 +255,11 @@ public final class CallVideoCoordinator implements AutoCloseable {
         CallVideoConsent.Result result=consent.receiveRequest(callId,id);
         if(result==CallVideoConsent.Result.Prompt){
           if(old!=null)send("VIDEO_DECLINE",0,"request",old);
-          deadline(id,0,requestTimeoutMs);
+          if(autoAcceptVideo&&consent.acceptUpgrade(callId,id,eligible())==CallVideoConsent.Result.Ready){
+            send("VIDEO_ACCEPT",0,"request",id);
+            if(!caller)deadline(id,0,videoTimeoutMs);
+            beginIfCaller();
+          }else deadline(id,0,requestTimeoutMs);
         }else if(result==CallVideoConsent.Result.Declined||result==CallVideoConsent.Result.Busy
             ||result==CallVideoConsent.Result.Unsupported)send("VIDEO_DECLINE",0,"request",id);
         return;
