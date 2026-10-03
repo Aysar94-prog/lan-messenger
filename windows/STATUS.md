@@ -1,5 +1,15 @@
 # Windows status
 
+## Replacement R01 execution audit (2026-10-03)
+
+User approved R01–R04 execution. Exact libwebrtc x64 archive checksum passed and
+PE imports/architecture were inspected without loading it. Candidate remains
+HOLD: core binary revision, complete static-component notices and version-specific
+security disposition are unresolved. R02 prototype and paired R03/R04 have not
+started. [R01 audit handoff](video-calling/R01-AUDIT-HANDOFF.md) records evidence,
+read-only audit checker and the source-build/authoritative-evidence resume paths.
+No production changes, vendor selection, release or compatibility claim.
+
 ## RTC replacement search (2026-10-03, user-directed)
 
 User rejected the geographically restricted library and requested only

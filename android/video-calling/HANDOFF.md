@@ -138,6 +138,13 @@ failures and next steps here before approaching the limit.
 
 ## Resume boundary
 
+R01 execution update (2026-10-03): user authorized replacement feasibility work.
+Windows libwebrtc archive SHA256 matches published checksum, but exact core
+revision, static notices and security disposition are unresolved; input stays
+HOLD. No replacement DLL executed or vendored. R02–R04/A02b remain Pending. See
+windows/video-calling/R01-AUDIT-HANDOFF.md. Android code/installed package unchanged;
+USB device remains R8YY80A8VLB. Latest usage 13% five-hour / 10% weekly, not near limit.
+
 Latest decision (2026-10-03): user rejected the restricted library and requested
 an MIT/Apache/BSD replacement without geographic terms. Windows research now
 recommends libwebrtc BSD core + MIT native wrapper for feasibility, not yet
