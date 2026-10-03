@@ -17,7 +17,7 @@ there is still no signed production video release or honest completion-time esti
 | A02b / Both | Selection/spec complete | AP01, WT01/R03/R04 | VP8 separate secured video PC selected from paired evidence; A02b-CONTRACT.md. Confirmed syntax fixtures 100/0; controller enforcement and C# mirror remain later work. |
 | A04 / Android | Policy/commands implemented; integration pending | A03, A02b | Consent fixtures 64/0 and command fixtures 27/0. Actual controller binding and visible actions await A07/A09; OS acceptance not claimed. |
 | A05 / Android | Interface/EGL/fake implemented; device acceptance pending | A04, A02b, AT01 | Resource fixtures 19/0 and fake adapter 18/0. Native factory/context ownership compiles; production video adapter awaits A06. See A2-RESOURCE-HANDOFF.md. |
-| A06 / Android | Pending | A05, A02b | Selected codec, capturer/source/track, authorized SDP and secure video. Legacy voice remains camera/video-m-line free. |
+| A06 / Android | Native adapter source implemented; physical acceptance pending | A05, A02b | WebRtcCallVideo: separate secure VP8 PC, bounded ICE, explicit gated camera/source/track/sinks, video-only errors and teardown. JVM worker/resource boundaries 41/0; actual encoded media/camera acceptance remains AT03. See A06-MEDIA-HANDOFF.md. |
 | A07 / Android | Pending | A06, A02b | Invitation/consent/generations/collision/late ICE/rollback and camera-state convergence; fake failure scenarios in AT03. |
 | A07d / Android | Pending | A07 | Bounded diagnostics plus allowlisted copied report; missing/reset/unit/sanitization fixtures in AT03. |
 | A08 / Android | Pending | A07 | Remote and self-view EGL rendering, orientation/reopening/aspect/mirroring without stale sinks. |
@@ -37,8 +37,8 @@ AT01–AT05, and candidate upgrade acceptance precedes A13 completion as specifi
 in the frozen plan. Final Both B0–B2 production interoperability/release decisions
 are separate and must not be implied complete by Android candidate preparation.
 
-Next authorized step is A06 production media, then A07 controller integration.
-Full regression stopped at disk exhaustion during transfers; later checks remain
-unrun. Ensure sufficient D: space before further full tests/build packaging. Use
+Next authorized step is A06 native verification and A07 controller integration.
+Historical full regression stopped at disk exhaustion; user-approved temporary
+test cleanup cleared space, and a fresh A06 full run has been started. Use
 USB adb; never replace production app with a prototype. Current production release
 remains 2.2.42/code69. Audio listening is accepted complete by the user.

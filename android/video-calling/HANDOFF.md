@@ -1,5 +1,11 @@
 # Android video calling — execution handoff
 
+Latest resume point: A06-MEDIA-HANDOFF.md. Production native video adapter source
+now exists; controller/session/signaling and visible video controls are not yet
+enabled. Fresh call checks 408/0, foundations 289/0, adapter JVM boundaries 41/0.
+No physical-camera acceptance or signed video APK. Usage near limit; preserve
+source checkpoint and inspect the latest full runner result before repeating it.
+
 CURRENT: user accepts audio test complete and forbids wasting time repeating it.
 A02b confirmed VP8/separate secured video PC; exact contract in A02b-CONTRACT.md.
 Next: final-contract AT01 fixtures, then Android A04 consent and AT02. Historical

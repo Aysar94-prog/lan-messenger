@@ -1,5 +1,12 @@
 # Android status
 
+Latest Android A06 source checkpoint (2026-10-03): production separate secured
+VP8 video adapter and explicit camera start/stop/switch implemented. Source is
+not enabled through the controller/UI yet. Native adapter boundary fixtures
+41/0 (JVM, no physical camera); fresh call checks 408/0 and video foundations
+289/0. See [A06 handoff](video-calling/A06-MEDIA-HANDOFF.md). Actual device video,
+A07 signaling binding and signed release acceptance remain pending.
+
 2026-10-03 maintenance: user-approved cleanup of generated large transfer-test
 payloads under outputs/.build/release-tests cleared the disk blocker (~76.9 GiB
 free). No application/release/signing change; prior full-suite failure remains

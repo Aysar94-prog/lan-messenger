@@ -64,6 +64,7 @@ public class WebRtcCallMedia implements ICallMedia {
   private PeerConnection peerConnection;
   private AudioSource audioSource;
   private AudioTrack audioTrack;
+  private WebRtcCallVideo callVideo;
 
   private volatile Listener listener;
   private volatile boolean disposed;
@@ -120,6 +121,12 @@ public class WebRtcCallMedia implements ICallMedia {
         throw new IllegalStateException("No live call renderer context");
       return videoResources.acquireRenderer();
     }
+  }
+
+  @Override public synchronized ICallMedia.Video video() {
+    if(disposed || !initialized || !factoryLeaseHeld)return null;
+    if(callVideo==null)callVideo=new WebRtcCallVideo(appContext,sharedFactory,videoResources,() -> !disposed);
+    return callVideo;
   }
 
   /** Must be called from the service before any call media is created. */
@@ -344,6 +351,7 @@ public class WebRtcCallMedia implements ICallMedia {
   public synchronized void dispose() {
     if (disposed) return;
     disposed = true;
+    boolean videoReleased=callVideo==null || callVideo.closeAll();
     stopStatsPolling();
     setCommunicationMode(false);
     if (signaling != null) {
@@ -361,7 +369,8 @@ public class WebRtcCallMedia implements ICallMedia {
     java.util.concurrent.ExecutorService ex = callbackExecutor;
     callbackExecutor = null;
     if (ex != null) ex.shutdownNow();
-    releaseFactory();
+    if(videoReleased)releaseFactory();
+    else synchronized(INIT_LOCK) {factoryPoisoned=true;} // Retain factory/EGL under unfinished native video cleanup.
   }
 
   // ── Statistics (A07q: normalized, bounded polling) ─────────────

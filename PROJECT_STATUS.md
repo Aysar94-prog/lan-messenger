@@ -1,5 +1,11 @@
 # LAN Messenger project status and platform comparison
 
+Latest Android A06 source adds the separate secured VP8 adapter and explicitly
+gated camera operations. It is not yet wired to production signaling/UI and has
+no physical-camera acceptance or signed release. JVM adapter boundaries 41/0;
+compatibility/parity claims remain unchanged. See
+[A06 media handoff](android/video-calling/A06-MEDIA-HANDOFF.md).
+
 Android video source checkpoint 2026-10-03: consent policy/commands and service
 EGL/media interface foundations implemented. Java/DEX build, call checks 408/0
 and explicit video foundations 289/0 passed; full regression stopped on disk
