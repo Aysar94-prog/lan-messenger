@@ -2,6 +2,13 @@
 
 ## Replacement R01 execution audit (2026-10-03)
 
+Continued alternative audit found shiguredo's M155 input with matching official
+SHA256, explicit pinned core/dependency revisions and bundled NOTICE. It resolves
+the earlier missing-metadata concern but includes IJG/zlib transitive license
+terms outside the literal three-license allowlist. Need user clarification of
+allowlist scope before selection; full security review still Pending. No binary
+loaded, library extracted/linked or production code changed.
+
 User approved R01–R04 execution. Exact libwebrtc x64 archive checksum passed and
 PE imports/architecture were inspected without loading it. Candidate remains
 HOLD: core binary revision, complete static-component notices and version-specific

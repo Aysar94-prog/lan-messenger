@@ -64,6 +64,53 @@ entries, no bundled third-party notice file, expected HOLD exit 2 verified.
 
 ## Next steps / authority
 
+### Newer upstream build reviewed after the initial HOLD
+
+Continued safe alternatives rather than stopping at the first binary gap:
+official shiguredo-webrtc-build release `m155.8059.2.0` (2026-10-01), Google
+libwebrtc core BSD and build project Apache-2.0. This is a candidate input for a
+project-owned bridge, not the m150 wrapper ABI and not yet selected.
+
+- Downloaded `webrtc.windows_x86_64.zip`, 751,214,637 bytes, temporary outputs
+  `D:\LAN-Messenger\outputs\.build\video-feasibility\upstream-m155-review`.
+- SHA256 `3460e4fe9b7ddf01d3071f54f5eca84c528d1f961de7224f9b345b6b466d90fa`
+  matches official GitHub release asset digest (equality assertion passed).
+- Unlike the earlier input, archive includes `webrtc/VERSIONS` and a 106,383-byte
+  `webrtc/NOTICE`. Its pinned Google core revision is
+  `f89edcb7be1f4be029ee7186e36b2b35ec03373e`, matching tagged project VERSION;
+  build/buildtools/third-party source revisions are also listed in VERSIONS.
+- Library `webrtc/lib/webrtc.lib` is 369,225,972 bytes; no large library/header
+  extraction or link/load attempted before license gate. This is a static native
+  input, not a ready-to-P/Invoke DLL. ABI/build settings still require review.
+- NOTICE component headings include WebRTC, abseil, BoringSSL, compiler-rt,
+  dav1d, fft, fiat, G711/G722, libaom, libc++, libjpeg_turbo, libsrtp, libvpx,
+  libyuv, nasm, ooura, opus, perfetto, pffft, protobuf, rnnoise, sframe,
+  spl_sqrt_floor and zlib. This enumeration is not complete license clearance.
+- The complete libjpeg_turbo NOTICE section was inspected: it includes **IJG**
+  and Modified BSD terms and discusses **zlib** terms. Archive also has a separate
+  zlib NOTICE component. IJG/zlib are not literally MIT/Apache-2.0/BSD identifiers.
+  No geographic clause was observed in that examined section; no blanket claim
+  about all unread component licenses. Need clarify whether user's allowlist
+  applies strictly to every transitive component or to main library with separately
+  reviewed permissive transitive licenses without geographic restrictions.
+  Do not silently treat "BSD-style" as identical to BSD-3-Clause.
+- Security patch/applicability review remains Pending even for newer M155; newer
+  milestone alone is not proof. No prototype, selected vendor input or production
+  code was built from it.
+- Disk free after download about 3.6 GB. A full Chromium/WebRTC source checkout
+  and rebuild cannot responsibly be assumed to fit; no files were deleted to
+  manufacture space. Only small metadata was read directly inside the ZIP.
+
+Required user decision now: license policy scope for transitive components.
+If exact three-license allowlist applies to every shipped component, this ready
+archive cannot be selected as-is; investigate excluding/replacing out-of-policy
+components or another stack, without assuming such a custom build is possible.
+If separately audited permissive licenses are allowed, finish their full review,
+security disposition and offline manifest before R02. No bypass of either gate.
+
+[Pinned alternative release](https://github.com/shiguredo-webrtc-build/webrtc-build/releases/tag/m155.8059.2.0),
+[tagged core version](https://github.com/shiguredo-webrtc-build/webrtc-build/blob/m155.8059.2.0/VERSION).
+
 Do not vendor/select or execute this DLL as a passed R01 dependency. Two in-scope
 ways to resolve the gap: obtain authoritative exact core/dependency revision and
 security/notice evidence for the archive; or create a reproducible local source

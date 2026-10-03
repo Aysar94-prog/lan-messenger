@@ -138,6 +138,12 @@ failures and next steps here before approaching the limit.
 
 ## Resume boundary
 
+Further R01 audit: newer upstream M155 ZIP has verified digest, pinned core and
+bundled notices. Still not selected: transitive IJG/zlib terms require clarification
+of user's MIT/Apache/BSD policy scope; security disposition remains Pending.
+Windows audit handoff holds exact evidence. No prototype native load or Android
+change; A02b remains Pending. No release/build acceptance added.
+
 R01 execution update (2026-10-03): user authorized replacement feasibility work.
 Windows libwebrtc archive SHA256 matches published checksum, but exact core
 revision, static notices and security disposition are unresolved; input stays
