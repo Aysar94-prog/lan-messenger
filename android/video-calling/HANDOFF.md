@@ -1,5 +1,11 @@
 # Android video calling — execution handoff
 
+Latest human correction: "i didnt hear any thing" supersedes the selected
+both-audible answer. Listening acceptance is FAILED/not demonstrated, not PASS.
+See PAIRED-FEASIBILITY.md for decoded samples/energy and post-test earpiece route.
+Retest with a clear live chat prompt, explicit speech and checked playback route.
+No production release or media migration is accepted on RTP counters alone.
+
 Latest continuation 2026-10-03: AP01 paired with real Windows native endpoint;
 separate video-only PC qualifies on generated motion/G722/failure counters in
 both call/video-offer directions. Single-PC rollback failed audio and is rejected.

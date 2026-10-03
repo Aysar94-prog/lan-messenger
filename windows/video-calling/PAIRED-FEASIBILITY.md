@@ -94,6 +94,22 @@ handoff before a near-limit pause. Production signer, data and frozen plan intac
 
 ## End verification checkpoint
 
+LATEST HUMAN RESULT: the user initially selected both audible, then immediately
+corrected it to "i didnt hear any thing". The correction is authoritative:
+audible acceptance FAILED/not demonstrated for paired-ca605368b1924f24b67bd105976f33bc.
+Do not infer real audio success from its passed RTP check. Native received
+4,735 packets/1,507,680 decoded samples and nonzero energy; Android received
+4,731 packets/1,510,720 decoded samples. This narrows the investigation but
+does not establish usable speech/playout. Check capture level and output
+route/volume/startup, then retest with explicit live user speech observation.
+Post-test phone audio dump reports unmuted voice-call stream on earpiece,
+volume 15; this is post-test state, not proof of the route during the test.
+The test generates no ringtone/test tone, only microphone audio. Its live
+listening prompt was printed in tool output rather than a clear timed chat
+update; do not assume the user spoke during the active window.
+R03 and production migration safety acceptance remain OPEN. The phone/PC
+test stopped cleanly and production package remained unchanged.
+
 Windows production Release build passed, existing CS1998 warning only. All 44
 Android production Java sources freshly compiled into outputs/.build/video-feasibility/
 production-end-compile-85646b38e3834cc88458b13a0646b862 (not an APK/release).

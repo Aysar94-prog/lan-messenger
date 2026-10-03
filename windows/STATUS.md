@@ -1,5 +1,9 @@
 # Windows status
 
+Latest human listening correction: no sound heard, overriding earlier selected
+both-audible response. Replacement audible acceptance remains OPEN; no factory
+switch or release accepted from packet counters alone.
+
 Latest 2026-10-03: test-only native PeerConnection endpoint paired with physical
 Android over LAN. Separate video-only PC passed generated VP8 motion both ways,
 G722 continuity and tested video failure/disposal. Single-PC rollback interrupted

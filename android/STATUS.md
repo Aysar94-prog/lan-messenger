@@ -1,5 +1,8 @@
 # Android status
 
+Latest human listening result: no sound heard. Audible acceptance remains open;
+passed packets/decoded samples are insufficient. No signed video release exists.
+
 Latest 2026-10-03 paired feasibility: separate secured video-only connection
 passed both original call/video-offer directions with generated moving VP8 and
 continuing two-way G722. Video-off, video disposal and malformed video rejection
