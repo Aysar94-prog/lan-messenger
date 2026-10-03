@@ -1,5 +1,17 @@
 # Windows status
 
+## RTC replacement search (2026-10-03, user-directed)
+
+User rejected the geographically restricted library and requested only
+MIT/Apache-2.0/BSD alternatives without geographic restrictions. SIPSorcery core
+and its media candidates are excluded from the new selection, not yet removed
+from the existing app. Preferred research candidate: native libwebrtc (BSD) with
+the webrtc-sdk MIT wrapper; exact Windows m150 release identified. Binary notices,
+transitive license/security review and voice/video interoperability remain Pending.
+[Replacement research and small-task amendment](video-calling/REPLACEMENT-RESEARCH.md)
+records evidence and approval boundary. No application code, dependencies,
+production behavior, package or compatibility claim changed in this research turn.
+
 ## Video feasibility prerequisites (2026-10-03 continuation)
 
 W00/W01 are In progress; W02 is blocked on clarification of the exact package's

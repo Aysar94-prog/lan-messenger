@@ -138,6 +138,14 @@ failures and next steps here before approaching the limit.
 
 ## Resume boundary
 
+Latest decision (2026-10-03): user rejected the restricted library and requested
+an MIT/Apache/BSD replacement without geographic terms. Windows research now
+recommends libwebrtc BSD core + MIT native wrapper for feasibility, not yet
+selected or executed. See windows/video-calling/REPLACEMENT-RESEARCH.md for the
+small-task amendment and approval boundary. Existing Windows SIPSorcery references
+are still present until a safe voice-compatible migration is proven. A02b remains
+Pending; Android production video must not bypass it.
+
 Continuation 2026-10-03: Windows W00/W01 inventory and candidate review started.
 Physical integrated Windows webcam exists (formats/capture still Pending). W02
 now requires clarification of full package license coverage: exact VP8 candidate
