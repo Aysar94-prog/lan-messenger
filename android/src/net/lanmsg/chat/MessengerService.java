@@ -39,22 +39,25 @@ public class MessengerService extends Service {
     }
   }
   private boolean cameraEligible(String expected){
-    if(!callActivityVisible||!cameraForeground||!"Online".equals(state)||!callMediaReal)return false;
+    if(!callActivityVisible||!cameraForeground||!"Online".equals(state)||!callMediaReal){
+      CallLog.w("Camera capture not ready: visible="+callActivityVisible+" foreground="+cameraForeground
+        +" online="+"Online".equals(state)+" media="+callMediaReal);return false;
+    }
     if(checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED
         ||!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))return false;
     PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
     KeyguardManager guard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
-    if(power==null||!power.isInteractive()||guard!=null&&guard.isKeyguardLocked())return false;
-    if(Build.VERSION.SDK_INT>=29&&power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE)return false;
+    if(power==null||!power.isInteractive()||guard!=null&&guard.isKeyguardLocked()){CallLog.w("Camera capture blocked by screen or keyguard");return false;}
+    if(Build.VERSION.SDK_INT>=29&&power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE){CallLog.w("Camera capture blocked by thermal state");return false;}
     CallSession call=callUi==null?null:callUi.getCurrent();
     return expected==null||expected.equals(cameraIntentCall)||call!=null&&!call.state.terminal()&&expected.equals(call.callId);
   }
   /** Called from an explicit foreground camera action after permission. */
   boolean prepareCallCamera(String expected){
-    if(!callActivityVisible||!"Online".equals(state)||checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)return false;
+    if(!callActivityVisible||!"Online".equals(state)||checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){CallLog.w("Camera preparation refused");return false;}
     cameraIntentCall=expected;cameraForeground=true;
     try{startForegroundSafely();}catch(RuntimeException denied){cameraForeground=false;cameraIntentCall=null;return false;}
-    return cameraEligible(expected);
+    boolean ready=cameraEligible(expected);CallLog.i("Camera preparation "+(ready?"ready":"failed")+" call="+expected);return ready;
   }
   // Set by the A04 probe: true once the WebRTC native stack is confirmed usable on this device.
   volatile boolean callMediaReal;
@@ -210,7 +213,7 @@ public class MessengerService extends Service {
    *  reaches a terminal snapshot and is cleared immediately. */
   void onCallSnapshot(CallSession call) {
     if(call==null||call.state.terminal()||call.video!=null&&(call.video.phase==CallVideoConsent.Phase.Voice
-        ||call.video.phase==CallVideoConsent.Phase.Ended||call.video.phase==CallVideoConsent.Phase.Video&&!call.video.localCamera)){
+        ||call.video.phase==CallVideoConsent.Phase.Ended)){
       if(cameraForeground){cameraForeground=false;cameraIntentCall=null;if(foreground)startForegroundSafely();}
     }
     if (call == null) { CallNotifier.clear(this); CallRoute.exitCallMode(this); return; }
@@ -318,7 +321,7 @@ public class MessengerService extends Service {
         if(cameraEligible(id))return true;
         CallSession active=cc.snapshot();
         return active!=null&&id.equals(active.callId)
-          &&(peer.trustedCallMask(active.peerId)&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0
+          &&(peer.trustedCallMask(active.peerId)&(PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO|PeerEngine.TRUSTED_REMOTE_CAMERA))!=0
           &&prepareCallCamera(id);
       });
       cc.configureRemoteSpeaker(speaker->{CallRoute.apply(this,speaker);return true;});

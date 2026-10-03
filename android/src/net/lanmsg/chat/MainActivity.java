@@ -492,13 +492,56 @@ public class MainActivity extends Activity {
     }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
   }
 
-  void trustedCallAccess(){PeerEngine e=engine();if(e==null||selected==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;if(!peer.trusted()){Toast.makeText(this,"Verify this device first.",Toast.LENGTH_LONG).show();return;}final PeerEngine.Peer target=peer;int mask=e.trustedCallMask(target.id);
+  void showPermissionDevices(boolean masters){
+    LinearLayout panel=column();panel.setPadding(dp(16),dp(8),dp(16),dp(8));
+    ScrollView scroll=new ScrollView(this);scroll.addView(panel);
+    AlertDialog dialog=new AlertDialog.Builder(this).setTitle(masters?"Masters":"Slave").setView(scroll)
+      .setPositiveButton("Refresh",null).setNegativeButton("Close",null).create();
+    java.util.concurrent.atomic.AtomicBoolean querying=new java.util.concurrent.atomic.AtomicBoolean();
+    Runnable draw=()->{
+      panel.removeAllViews();panel.addView(label(masters?"Devices you granted permissions to.":"Devices that granted permissions to you. Only that device can change its grant.",15));
+      PeerEngine e=engine();if(e==null){panel.addView(label("Devices are still loading.",14));return;}
+      List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.name.compareToIgnoreCase(b.name));
+      int shown=0,unknown=0;
+      for(PeerEngine.Peer p:people){if(!p.trusted())continue;
+        PeerEngine.RemoteCallGrant remote=masters?null:e.remoteCallGrant(p.id);
+        int mask=masters?e.trustedCallMask(p.id):remote==null?0:remote.mask;
+        if(!masters&&remote==null){unknown++;continue;}if(mask==0)continue;shown++;
+        boolean online=e.running&&p.online();
+        String text=p.name+" · "+(online?"Online":"Offline")+"\n"+permissionScopeLabel(mask);
+        if(remote!=null)text+="\nLast confirmed: "+new java.text.SimpleDateFormat("MMM d, HH:mm:ss",Locale.getDefault()).format(new Date(remote.checkedAt))
+          +(!online||System.currentTimeMillis()-remote.checkedAt>30000?" (last-known; may have changed)":"");
+        Button row=button(text);row.setOnClickListener(v->{
+          if(masters)trustedCallAccess(p.id);
+          else new AlertDialog.Builder(this).setTitle(p.name).setMessage("Permissions this device granted you:\n"+permissionScopeLabel(mask)+"\n\nIts local settings remain authoritative.")
+            .setPositiveButton("Open conversation",(d,w)->{dialog.dismiss();showChat(p.id);}).setNegativeButton("Close",null).show();
+        });panel.addView(row,new LinearLayout.LayoutParams(-1,-2));
+      }
+      if(shown==0)panel.addView(label(masters?"No devices have permissions from you.":"No devices have confirmed permissions for you.",15));
+      if(!masters&&unknown>0)panel.addView(label(unknown+" verified device(s): permission status unknown. Offline or older devices may not support this query.",14));
+      if(!masters)panel.addView(label("Last-known results are kept only for this app session. Refresh to check for changes. This list never activates a camera or starts a call.",13));
+    };
+    Runnable refresh=()->{
+      draw.run();PeerEngine e=engine();if(e==null||!e.running||!querying.compareAndSet(false,true))return;
+      new Thread(()->{try{for(PeerEngine.Peer p:e.peers()){if(!dialog.isShowing())break;if(p.trusted()&&p.online())e.refreshRemoteCallGrant(p.id);}}
+        finally{querying.set(false);ui.post(()->{if(dialog.isShowing())draw.run();});}},"lan-permission-status").start();
+    };
+    Runnable tick=new Runnable(){public void run(){if(!dialog.isShowing()||isFinishing())return;refresh.run();ui.postDelayed(this,5000);}};
+    dialog.setOnDismissListener(d->ui.removeCallbacks(tick));dialog.setOnShowListener(d->{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->refresh.run());tick.run();});dialog.show();
+  }
+  static String permissionScopeLabel(int mask){
+    List<String> scopes=new ArrayList<>();if((mask&1)!=0)scopes.add("Voice auto-answer");if((mask&2)!=0)scopes.add("Video auto-answer");
+    if((mask&4)!=0)scopes.add("Camera control (front/rear)");if((mask&8)!=0)scopes.add("Speaker control");return String.join(" · ",scopes);
+  }
+  void trustedCallAccess(){trustedCallAccess(selected);}
+  void trustedCallAccess(String peerId){PeerEngine e=engine();if(e==null||peerId==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(peerId))peer=p;if(peer==null)return;if(!peer.trusted()){Toast.makeText(this,"Verify this device first.",Toast.LENGTH_LONG).show();return;}final PeerEngine.Peer target=peer;int mask=e.trustedCallMask(target.id);
     LinearLayout panel=column();panel.setPadding(dp(20),dp(8),dp(20),0);panel.addView(label("Trusted calls from this verified device can connect immediately. Your microphone may activate; the ongoing call notification, mute and hang-up controls remain available.",15));
     CheckBox voice=new CheckBox(this);voice.setText("Automatically answer voice calls");voice.setChecked((mask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0);panel.addView(voice);
     CheckBox video=new CheckBox(this);video.setText("Automatically accept video and open my camera");video.setChecked((mask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0);panel.addView(video);
     CheckBox speaker=new CheckBox(this);speaker.setText("Allow this device to control my speaker");speaker.setChecked((mask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0);panel.addView(speaker);
+    CheckBox camera=new CheckBox(this);camera.setText("Allow this device to control my camera and switch front/rear");camera.setChecked((mask&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0);panel.addView(camera);
     TextView note=label("Automatic camera use still requires this app to be visible, the phone unlocked, and Android camera permission granted.",13);note.setTextColor(Color.DKGRAY);panel.addView(note);
-    new AlertDialog.Builder(this).setTitle("Trusted call access").setView(panel).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{int next=(voice.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VOICE:0)|(video.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO:0)|(speaker.isChecked()?PeerEngine.TRUSTED_REMOTE_SPEAKER:0);try{e.setTrustedCallMask(target.id,next);render();Toast.makeText(this,next==0?"Trusted call access is off.":"Trusted call access saved.",Toast.LENGTH_LONG).show();}catch(Exception error){problem(error);}}).show();
+    new AlertDialog.Builder(this).setTitle("Trusted call access").setView(panel).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{int next=(voice.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VOICE:0)|(video.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO:0)|(speaker.isChecked()?PeerEngine.TRUSTED_REMOTE_SPEAKER:0)|(camera.isChecked()?PeerEngine.TRUSTED_REMOTE_CAMERA:0);try{e.setTrustedCallMask(target.id,next);render();Toast.makeText(this,next==0?"Trusted call access is off.":"Trusted call access saved.",Toast.LENGTH_LONG).show();}catch(Exception error){problem(error);}}).show();
   }
 
   // A return-to-call bar, shown on the people screen while a call is live. A call is not tied to a

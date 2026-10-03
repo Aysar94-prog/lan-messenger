@@ -24,7 +24,8 @@ public final class CallProtocol {
     ERROR       = "ERROR",
     PING        = "PING",
     PONG        = "PONG",
-    REMOTE_SPEAKER = "REMOTE_SPEAKER";
+    REMOTE_SPEAKER = "REMOTE_SPEAKER",
+    REMOTE_CAMERA = "REMOTE_CAMERA";
 
   // ── Call states ────────────────────────────────────────────────
   public enum State {
@@ -171,7 +172,8 @@ public final class CallProtocol {
       case ERROR:       return state.active() ? "both" : null;
       case PING:        return state.active() ? "both" : null;
       case PONG:        return state.active() ? "both" : null;
-      case REMOTE_SPEAKER: return state == State.Connected ? "both" : null;
+      case REMOTE_SPEAKER: return state == State.Connected ? "caller" : null;
+      case REMOTE_CAMERA: return state == State.Connected ? "caller" : null;
       default:          return null;
     }
   }

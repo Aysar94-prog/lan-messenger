@@ -70,6 +70,9 @@ public final class CallVideoProtocol {
       case "RINGING": case "DECLINE": case "BUSY": case "CANCEL": case "HANGUP":
       case "PING": case "PONG": return gen==0 && b.isEmpty();
       case "REMOTE_SPEAKER": return gen==0 && keys(b,"speaker") && b.get("speaker") instanceof Boolean;
+      case "REMOTE_CAMERA": return gen>=2 && keys(b,"request","camera","facing")
+        && request(b.get("request")) && b.get("camera") instanceof Boolean
+        && Arrays.asList("front","rear","keep").contains(b.get("facing"));
       default: return false;
     }
   }

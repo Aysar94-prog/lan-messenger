@@ -227,6 +227,10 @@ final class WebRtcCallVideo implements ICallMedia.Video {
   }
   private void bind(ICallMedia.FrameSink sink,boolean own,boolean attach) {
     if(sink==null)return;
+    // Activity teardown can race the service-owned media worker shutting down after a peer
+    // disconnect. Detaching an already-disposed renderer is complete by definition and must not
+    // turn that harmless lifecycle race into a process crash.
+    if(!attach&&(closed||terminated||worker.isShutdown()))return;
     try {execute(() -> {
       if(closed) return null;
       Map<ICallMedia.FrameSink,VideoSink> bindings=own?local:remote;
@@ -238,7 +242,10 @@ final class WebRtcCallVideo implements ICallMedia.Video {
         bindings.put(sink,wrapped); if(track!=null)track.addSink(wrapped);
       } else {VideoSink wrapped=bindings.remove(sink);if(track!=null&&wrapped!=null)track.removeSink(wrapped);}
       return null;
-    });} catch(Exception error) {throw new IllegalStateException("Renderer binding failed",error);}
+    });} catch(Exception error) {
+      if(!attach&&(closed||terminated||worker.isShutdown()))return;
+      throw new IllegalStateException("Renderer binding failed",error);
+    }
   }
   public void attachLocal(ICallMedia.FrameSink sink){bind(sink,true,true);}
   public void detachLocal(ICallMedia.FrameSink sink){bind(sink,true,false);}

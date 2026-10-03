@@ -39,6 +39,38 @@ public final class PeerEngine implements Closeable {
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
   final LinkedHashMap<String,Peer> peers=new LinkedHashMap<>();
   final LinkedHashMap<String,TrustedCallGrant> trustedCallGrants=new LinkedHashMap<>();
+  // Informational only: never consulted by call admission or camera authorization.
+  final Map<String,RemoteCallGrant> remoteCallGrants=new HashMap<>();
+  public static final class RemoteCallGrant {
+    public final String fingerprint; public final int mask; public final long checkedAt;
+    RemoteCallGrant(String fingerprint,int mask,long checkedAt){this.fingerprint=fingerprint;this.mask=mask;this.checkedAt=checkedAt;}
+  }
+  public synchronized RemoteCallGrant remoteCallGrant(String peerId){
+    Peer p=peers.get(peerId);RemoteCallGrant g=remoteCallGrants.get(peerId);
+    if(p==null||!p.trusted()||g==null||!p.verified.equals(g.fingerprint)){remoteCallGrants.remove(peerId);return null;}return g;
+  }
+  static int parseCallGrant(String reply){
+    if(reply==null||!reply.matches("LM4\\tCALLGRANTS\\t1\\t(?:[0-9]|1[0-5])"))return -1;
+    return Integer.parseInt(reply.substring(reply.lastIndexOf('\t')+1));
+  }
+  /** Optional, bounded, verified TLS query. Old peers close unknown requests safely. */
+  public boolean refreshRemoteCallGrant(String peerId){
+    long started=System.nanoTime(),networkGeneration=generation;Peer peer;
+    synchronized(this){peer=peers.get(peerId);if(!running||peer==null||!peer.trusted())return false;}
+    SSLSocket socket=null;
+    try{
+      socket=(SSLSocket)connect(peer.host,peer.port);write(socket,hello());
+      String[] h=CallCapabilities.readHandshake(socket,started).split("\t",-1);
+      if(!validHello(h)||!peerId.equals(h[2]))return false;
+      String fp=SecureIdentity.remote(socket);recordCertificate(peerId,fp,SecureIdentity.remotePublicKey(socket));
+      if(!trusted(peerId,fp)||!"LM4\tREADY".equals(CallCapabilities.readReply(socket,started)))return false;
+      write(socket,"LM4\tCALLGRANTS\t1");int mask=parseCallGrant(CallCapabilities.readReply(socket,started));
+      synchronized(this){if(mask<0||!running||generation!=networkGeneration||!trusted(peerId,fp))return false;
+        remoteCallGrants.put(peerId,new RemoteCallGrant(fp,mask,System.currentTimeMillis()));}
+      notifyChanged();return true;
+    }catch(Exception unavailable){return false;}
+    finally{if(socket!=null){activeSockets.remove(socket);try{socket.close();}catch(IOException ignored){}}}
+  }
   static final class TrustedCallGrant {final String fingerprint;final int mask;TrustedCallGrant(String f,int m){fingerprint=f;mask=m;}}
   final ArrayList<Message> messages=new ArrayList<>();
   ExecutorService connections, outgoing;
@@ -318,7 +350,7 @@ public final class PeerEngine implements Closeable {
   public synchronized void verify(String peerId,String expectedCode)throws IOException {
     Peer p=peers.get(peerId);if(p==null)throw new IOException("Choose a device");if(p.keyChanged())throw new IOException("Device key changed. Revoke old verification before pairing again.");if(!pairingCode(peerId).equals(expectedCode))throw new IOException("Device key changed while this dialog was open. Try again.");String old=p.verified;p.verified=p.fingerprint;try{save();}catch(IOException e){p.verified=old;throw e;}notifyChanged();
   }
-  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;TrustedCallGrant oldGrant=trustedCallGrants.remove(peerId);p.verified="";try{save();}catch(IOException e){p.verified=old;if(oldGrant!=null)trustedCallGrants.put(peerId,oldGrant);throw e;}try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
+  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;TrustedCallGrant oldGrant=trustedCallGrants.remove(peerId);p.verified="";try{save();}catch(IOException e){p.verified=old;if(oldGrant!=null)trustedCallGrants.put(peerId,oldGrant);throw e;}remoteCallGrants.remove(peerId);try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
   public synchronized int trustedCallMask(String peerId){Peer p=peers.get(peerId);TrustedCallGrant g=trustedCallGrants.get(peerId);return p!=null&&p.trusted()&&g!=null&&g.fingerprint.equals(p.verified)?g.mask:0;}
   public synchronized void setTrustedCallMask(String peerId,int mask)throws IOException{Peer p=peers.get(peerId);if(p==null||!p.trusted())throw new IOException("Verify this device before granting trusted call access.");mask&=15;TrustedCallGrant old=trustedCallGrants.get(peerId);if(mask==0)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,new TrustedCallGrant(p.verified,mask));try{save();}catch(IOException e){if(old==null)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,old);throw e;}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
@@ -334,6 +366,9 @@ public final class PeerEngine implements Closeable {
     }
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
+    if(!simulateLegacyBuild&&m.length==3&&m[0].equals("LM4")&&m[1].equals("CALLGRANTS")&&m[2].equals("1")){
+      synchronized(this){if(!trusted(h[2],fingerprint))return;write(s,"LM4\tCALLGRANTS\t1\t"+trustedCallMask(h[2]));}return;
+    }
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("CALLCAPS")){
       boolean enabled=false;try{enabled=callVideoSupport.getAsBoolean();}catch(Exception ignored){}
       String response=CallCapabilities.response(enabled,simulateLegacyBuild);
@@ -738,6 +773,7 @@ public final class PeerEngine implements Closeable {
       throw e;
     }
     save();
+    remoteCallGrants.remove(conversation);
     for(Message m:removed)if(!m.fileName.isEmpty())TransferManager.deleteTransfer(this,m);
     if(oldPeer!=null)try{AvatarSync.setPeerAvatar(this,conversation,null);}catch(IOException ignored){}
     notifyChanged();queueEpoch.incrementAndGet();flush();
@@ -765,6 +801,7 @@ public final class PeerEngine implements Closeable {
     }
     save();
     for(Message m:withFiles)TransferManager.deleteTransfer(this,m);
+    remoteCallGrants.clear();
     deleteRecursively(new File(file.getParentFile(),"attachments"));
     deleteRecursively(new File(file.getParentFile(),"avatars"));
     try{uploadPolicy.reset();}catch(IOException ignored){}

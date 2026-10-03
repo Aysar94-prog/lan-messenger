@@ -26,6 +26,20 @@ public final class ConfirmedVideoContractCheck {
     return "{\"v\":"+version+",\"t\":\"PING\",\"cid\":\""+CALL+"\",\"seq\":"+seq+",\"gen\":"+gen+extra+"}";
   }
   public static void main(String[] args) {
+    for(String facing:Arrays.asList("front","rear","keep")) {
+      CallProtocol.Frame control=frame("REMOTE_CAMERA",2,"request",REQUEST,"camera",true,"facing",facing);
+      check(CallVideoProtocol.valid(control),"recipient camera syntax "+facing);
+      check(CallVideoProtocol.valid(CallSignaling.parse(CallSignaling.serialize(control))),"recipient camera roundtrip");
+    }
+    check(!CallVideoProtocol.valid(frame("REMOTE_CAMERA",1,"request",REQUEST,"camera",true,"facing","rear")),"camera rejects audio generation");
+    check(!CallVideoProtocol.valid(frame("REMOTE_CAMERA",2,"request","bad","camera",true,"facing","rear")),"camera rejects bad request");
+    check(!CallVideoProtocol.valid(frame("REMOTE_CAMERA",2,"request",REQUEST,"camera","true","facing","rear")),"camera requires boolean");
+    check(!CallVideoProtocol.valid(frame("REMOTE_CAMERA",2,"request",REQUEST,"camera",true,"facing","unknown")),"camera rejects unknown facing");
+    check(!CallVideoProtocol.valid(frame("REMOTE_CAMERA",2,"request",REQUEST,"camera",true,"facing","rear","extra",true)),"camera rejects extra fields");
+    for(String type:Arrays.asList("REMOTE_CAMERA","REMOTE_SPEAKER")) {
+      check("caller".equals(CallProtocol.allowedSender(type,CallProtocol.State.Connected,false)),"only master sends recipient controls");
+      check(CallProtocol.allowedSender(type,CallProtocol.State.IncomingRinging,false)==null,"remote controls require connected call");
+    }
     String caps=CallVideoProtocol.capabilityResponse(false);
     check(caps.equals("LM4\tCALLCAPS\t2\tVP8"),"selected codec only");
     check(CallVideoProtocol.capable(caps,true,false,9999),"fresh verified capability");

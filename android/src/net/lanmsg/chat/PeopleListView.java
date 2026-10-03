@@ -22,10 +22,13 @@ final class PeopleListView {
   static void openMenu(MainActivity activity){if(activity.selected!=null||activity.stage==null||activity.menuOpen)return;
     FrameLayout overlay=new FrameLayout(activity);overlay.setBackgroundColor(Color.argb(110,0,0,0));overlay.setOnClickListener(v->closeMenu(activity));
     LinearLayout panel=activity.column();panel.setPadding(activity.dp(20),activity.dp(14),activity.dp(20),activity.dp(16));panel.setBackgroundColor(Color.WHITE);
-    overlay.addView(panel,new FrameLayout.LayoutParams(Math.min(activity.dp(300),(int)(activity.getResources().getDisplayMetrics().widthPixels*0.82f)),-1,android.view.Gravity.START));
+    android.widget.ScrollView menuScroll=new android.widget.ScrollView(activity);menuScroll.setBackgroundColor(Color.WHITE);menuScroll.addView(panel);
+    overlay.addView(menuScroll,new FrameLayout.LayoutParams(Math.min(activity.dp(300),(int)(activity.getResources().getDisplayMetrics().widthPixels*0.82f)),-1,android.view.Gravity.START));
     LinearLayout headRow=new LinearLayout(activity);headRow.setGravity(android.view.Gravity.CENTER_VERTICAL);TextView head=activity.label("Menu",19);head.setTypeface(null,Typeface.BOLD);head.setPadding(0,0,0,0);headRow.addView(head,new LinearLayout.LayoutParams(0,-2,1));Button closeMenuItem=activity.button("Close");closeMenuItem.setOnClickListener(v->closeMenu(activity));headRow.addView(closeMenuItem);panel.addView(headRow);
     Button profileItem=menuItem(activity,"Profile");profileItem.setOnClickListener(v->{closeMenu(activity);activity.profile();});panel.addView(profileItem);
     Button aboutItem=menuItem(activity,"About");aboutItem.setOnClickListener(v->{closeMenu(activity);activity.showAbout();});panel.addView(aboutItem);
+    Button masters=menuItem(activity,"Masters");masters.setOnClickListener(v->{closeMenu(activity);activity.showPermissionDevices(true);});panel.addView(masters);
+    Button slave=menuItem(activity,"Slave");slave.setOnClickListener(v->{closeMenu(activity);activity.showPermissionDevices(false);});panel.addView(slave);
     boolean retry=activity.host!=null&&activity.host.requestedOnline&&"Offline".equals(activity.host.state);
     Button connection=menuItem(activity,retry?"Retry online":activity.host!=null&&activity.host.requestedOnline?"Go offline":"Go online");connection.setOnClickListener(v->{closeMenu(activity);activity.setConnection(retry||activity.host==null||!activity.host.requestedOnline);});panel.addView(connection);
     // setChecked runs before the listener is attached, so building the menu never reports a change.

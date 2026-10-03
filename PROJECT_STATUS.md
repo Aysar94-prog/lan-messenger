@@ -1,5 +1,22 @@
 # LAN Messenger project status and platform comparison
 
+Current checkpoint 2026-10-03: Android 2.2.57/code84 ARM64 signed test candidate
+is installed on SM-A075F and SM-S908E with original signer and unchanged first-install
+times. Android has Masters (devices I granted access to) and Slave (devices granting
+me access) menu lists, backed by optional verified TLS CALLGRANTS/1 queries.
+Two-phone list direction, partial reverse grant and automatic revoke removal passed;
+test grant was removed afterward. Permission TLS checks 36/0, CallCheck 422/0 and
+all video-contract suites pass. Remote status is informational, session-only and
+timestamped; offline/legacy status is last-known/unknown, never authorization.
+Android source also includes caller-only recipient camera on/off/front/rear and
+speaker controls, trusted initial video acceptance and video detach cleanup fixes.
+Earlier physical video streaming succeeded, but latest complete call-control
+acceptance remains pending following recipient Wi-Fi/signaling loss. Windows
+unchanged: voice-only, no menu/query implementation or production video parity.
+Actual new-query Windows interoperability not physically repeated; parser review
+and simulated-legacy TLS fallback passed. This is not a final release.
+Older checkpoints below are historical and superseded where they conflict.
+
 Trusted-call/icon source checkpoint 2026-10-03: the user-supplied artwork is now
 the Android adaptive/legacy launcher icon and Windows executable/window/tray icon.
 Both platforms persist certificate-bound per-contact trusted-call scopes and expose

@@ -70,6 +70,10 @@ public class CallUi {
       throw new java.io.IOException("That call is no longer available");
     controller.requestRemoteSpeaker(speaker);
   }
+  public void setRemoteCamera(String callId,boolean on,String facing)throws java.io.IOException {
+    if(controller==null)throw new java.io.IOException("Call unavailable");
+    controller.requestRemoteCamera(callId,on,facing);
+  }
   private final List<CallController.Callback> observers = new CopyOnWriteArrayList<>();
 
   // ── Current snapshot ───────────────────────────────────────────

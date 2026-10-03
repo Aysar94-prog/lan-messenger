@@ -1,5 +1,29 @@
 # Android status
 
+CURRENT 2026-10-03: 2.2.57/code84 ARM64 original-signer TEST CANDIDATE installed
+on both SM-A075F and SM-S908E. First-install dates/data retained. APK SHA-256:
+022b54494cd62a9226f496defbe9dbc0d7cb704b4c852a0a0e27eec8b4621fcc.
+Masters lists verified devices with local nonzero call grants, with edit/revoke.
+Slave lists verified peers' authenticated grants to this device, read-only, with
+conversation access. Optional CALLGRANTS/1 query exposes only requester's scopes.
+Lists refresh every five seconds while open and have manual Refresh; session-only
+remote cache has timestamps and offline/stale labeling. Unknown legacy/offline
+peers are not falsely listed as granted. No capture or call starts from either list.
+Implemented preceding changes: trusted initial video acceptance, separate remote
+camera permission, caller-only recipient camera on/off/front/rear and speaker UI,
+receiver-side role/grant checks, capture-readiness retry and terminated-worker
+video detach guard. These are source claims, not complete device acceptance.
+Automated: real TLS permission checks 36/0; CallCheck 422/0; all video-contract
+suites pass (confirmed syntax 115/0). Production compile/DEX/package/v2-v3 signing pass.
+Physical: A07 Masters showed S22/all four scopes; S22 Slave showed A07/same scopes.
+Temporary S22 camera-only reverse grant showed S22 Masters/A07 Slave; revocation
+removed both entries after refresh. Original grants restored (A07 grants 15, S22 0).
+No AndroidRuntime error logged in this menu run. Offline/certificate mismatch
+tested automatically, not physically in this run. Actual Windows interoperability
+and complete recipient camera switching/speaker/lifecycle call acceptance remain
+pending; earlier two-phone video frames rendered, later call ended on Wi-Fi loss.
+NOT a final release. Historical checkpoints below are superseded where conflicting.
+
 LATEST TRUSTED VIDEO/SPEAKER TEST CANDIDATE: 2.2.46/code73 ARM64 is built,
 signed with the original certificate, and USB-upgraded without changing the
 first-install time as `outputs/LanMessenger-2.2.46-trusted-dev.apk` (SHA-256

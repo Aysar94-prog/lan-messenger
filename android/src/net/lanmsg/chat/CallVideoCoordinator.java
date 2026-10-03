@@ -42,27 +42,37 @@ public final class CallVideoCoordinator implements AutoCloseable {
   private int incomingIce, outgoingIce;
   private final long requestTimeoutMs,videoTimeoutMs;
   private final boolean autoAcceptVideo;
+  private final boolean autoStartCamera;
+  private boolean autoCameraRetried;
+  private volatile boolean autoCameraCanceled;
 
   public CallVideoCoordinator(String id, boolean caller, CallVideoConsent consent,
       CallVideoActions.Eligibility eligibility, ICallMedia.Video media, Wire wire, Observer observer) {
-    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,false);
+    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,false,false);
   }
   public CallVideoCoordinator(String id, boolean caller, CallVideoConsent consent,
       CallVideoActions.Eligibility eligibility, ICallMedia.Video media, Wire wire, Observer observer,
       boolean autoAcceptVideo) {
-    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,autoAcceptVideo);
+    this(id,caller,consent,eligibility,media,wire,observer,autoAcceptVideo,autoAcceptVideo);
+  }
+  public CallVideoCoordinator(String id, boolean caller, CallVideoConsent consent,
+      CallVideoActions.Eligibility eligibility, ICallMedia.Video media, Wire wire, Observer observer,
+      boolean autoAcceptVideo,boolean autoStartCamera) {
+    this(id,caller,consent,eligibility,media,wire,observer,CallVideoProtocol.REQUEST_TIMEOUT_MS,CallVideoProtocol.VIDEO_TIMEOUT_MS,autoAcceptVideo,autoStartCamera);
   }
   CallVideoCoordinator(String id,boolean caller,CallVideoConsent consent,CallVideoActions.Eligibility eligibility,
       ICallMedia.Video media,Wire wire,Observer observer,long requestTimeoutMs,long videoTimeoutMs){
-    this(id,caller,consent,eligibility,media,wire,observer,requestTimeoutMs,videoTimeoutMs,false);
+    this(id,caller,consent,eligibility,media,wire,observer,requestTimeoutMs,videoTimeoutMs,false,false);
   }
   CallVideoCoordinator(String id,boolean caller,CallVideoConsent consent,CallVideoActions.Eligibility eligibility,
-      ICallMedia.Video media,Wire wire,Observer observer,long requestTimeoutMs,long videoTimeoutMs,boolean autoAcceptVideo){
+      ICallMedia.Video media,Wire wire,Observer observer,long requestTimeoutMs,long videoTimeoutMs,boolean autoAcceptVideo,
+      boolean autoStartCamera){
     if(!CallProtocol.validCallId(id)||consent==null||eligibility==null||media==null||wire==null)
       throw new IllegalArgumentException("Missing video boundary");
     if(requestTimeoutMs<=0||videoTimeoutMs<=0)throw new IllegalArgumentException("Invalid deadline");
     this.requestTimeoutMs=requestTimeoutMs;this.videoTimeoutMs=videoTimeoutMs;
     this.autoAcceptVideo=autoAcceptVideo;
+    this.autoStartCamera=autoStartCamera;
     this.callId=id;this.caller=caller;this.consent=consent;this.eligibility=eligibility;
     this.media=media;this.wire=wire;this.observer=observer;
     worker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(64),
@@ -122,6 +132,18 @@ public final class CallVideoCoordinator implements AutoCloseable {
   private void publish(){
     snapshot=new Snapshot(consent,camera);
     if(observer!=null)try{observer.changed(snapshot);}catch(Exception ignored){}
+    if(autoStartCamera&&!camera&&snapshot.phase==CallVideoConsent.Phase.Video&&!autoCameraRetried){
+      autoCameraRetried=true;
+      // Let the Connected/video snapshots and foreground-service promotion settle before the
+      // one automatic retry. Samsung devices can report the camera foreground gate one callback
+      // late even though preparation has already succeeded.
+      deadlines.schedule(()->post(()->{
+        if(autoCameraCanceled)return;
+        boolean allowed=eligible();
+        CallVideoConsent.Result result=consent.cameraOn(callId,allowed);
+        if(result==CallVideoConsent.Result.Ready||result==CallVideoConsent.Result.Busy)setCamera(true);
+      }),750,TimeUnit.MILLISECONDS);
+    }
   }
   private boolean current(long gen){return !closed.get()&&gen>=2&&consent.generation()==gen;}
   private boolean eligible(){return !closed.get()&&eligibility.mayCapture(callId);}
@@ -168,6 +190,7 @@ public final class CallVideoCoordinator implements AutoCloseable {
     send("VIDEO_DECLINE",0,"request",id);consent.declineUpgrade(callId,id);cancelDeadline();
   });}
   public void cameraOff(){
+    autoCameraCanceled=true;
     consent.cameraOff(callId); // invalidates capture immediately, before queue drain
     post(()->setCamera(false));
   }
@@ -179,6 +202,17 @@ public final class CallVideoCoordinator implements AutoCloseable {
     if(!camera||!current(gen)||!eligible())return;
     media.switchCamera(gen);state();
   });}
+  public void remoteCamera(boolean on,String facing,java.util.function.BooleanSupplier authorized){
+    post(()->{
+      if(!authorized.getAsBoolean()||consent.phase()!=CallVideoConsent.Phase.Video)return;
+      if(!on){autoCameraCanceled=true;consent.cameraOff(callId);setCamera(false);return;}
+      CallVideoConsent.Result result=consent.cameraOn(callId,eligible());
+      if(result!=CallVideoConsent.Result.Ready&&result!=CallVideoConsent.Result.Busy)return;
+      setCamera(true);
+      if(camera&&!"keep".equals(facing)&&media.localMirror()!= "front".equals(facing))
+        media.switchCamera(consent.generation());
+    });
+  }
   public void revokeCapture(){cameraOff();}
   /** Effects for CallVideoActions, which has already mutated the consent policy. */
   public void proposalAcceptedLocally(String id){post(()->{
