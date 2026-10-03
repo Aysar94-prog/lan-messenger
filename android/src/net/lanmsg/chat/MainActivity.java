@@ -30,6 +30,12 @@ public class MainActivity extends Activity {
   // immutable snapshots, and issues commands. The call overlay lives on the stage, so it covers
   // the people list and the chat alike.
   CallUi callUi; String pendingCallPeerId,pendingCallAcceptId;
+  final CallCameraPermission callCameraPermission=new CallCameraPermission();
+  static final int CALL_CAMERA_REQUEST_FIRST=CallCameraPermission.REQUEST_FIRST,CALL_CAMERA_REQUEST_LAST=CallCameraPermission.REQUEST_LAST;
+  int pendingCallCameraRequest=-1;
+  long pendingCallCameraToken;
+  Runnable pendingCallCameraReady;
+  boolean callCameraResultReturned,callCameraResultGranted;
   final int[] namePalette={Color.rgb(233,30,99),Color.rgb(156,39,176),Color.rgb(63,81,181),Color.rgb(230,126,0),Color.rgb(0,137,123),Color.rgb(121,85,72),Color.rgb(216,67,21)};
   int nameColor(String id){int h=0;for(int i=0;i<id.length();i++)h=h*31+id.charAt(i);return namePalette[Math.abs(h)%namePalette.length];}
   LinearLayout root,chrome,body,feed,attachmentDraft; TextView status,heading; ScrollView scroll; EditText composer; Button send;
@@ -320,7 +326,7 @@ public class MainActivity extends Activity {
     decor.getViewTreeObserver().addOnGlobalLayoutListener(keyboardListener);
   }
   PeerEngine transferProgressWiredFor;
-  void render(){if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);
+  void render(){reconcileCallCameraPermission();if(root==null||status==null)return;boolean networkAvailable=host!=null&&"Online".equals(host.state);if(refreshButton!=null)refreshButton.setEnabled(networkAvailable);if(addAddressButton!=null)addAddressButton.setEnabled(networkAvailable);
     // The service only creates its CallUi once it builds the LAN stack, which is several seconds
     // after the Activity has already resumed and been connected to. bindCalls() therefore finds
     // null on both of its only two callers and gives up -- and nothing ever asked again, so for the
@@ -588,13 +594,79 @@ public class MainActivity extends Activity {
   }
 
   void unbindCalls(){
+    clearCallCameraPermission();
     if(callUi!=null)callUi.removeObserver(this::onCallChanged);
     callUi=null;
   }
 
-  /** A call snapshot changed.  Only invalidates the render signature — tick repaints. */
+  /** Invalidate stale camera permission actions and the render signature; tick repaints. */
   void onCallChanged(CallSession snapshot){
+    callCameraPermission.reconcile(CallUi.cameraPermissionCallId(snapshot),host!=null&&"Online".equals(host.state));
+    ui.post(this::reconcileCallCameraPermission);
     lastSignature="";
+  }
+
+  String currentCallCameraId(){
+    CallUi live=callUi!=null?callUi:(host==null?null:host.calls());
+    return CallUi.cameraPermissionCallId(live==null?null:live.getCurrent());
+  }
+  boolean hasCallCameraHardware(){
+    return getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY);
+  }
+  /** Rechecked by A04/A05 at every eventual capture attempt, separately from microphone access. */
+  boolean hasCurrentCallCameraPermission(String expectedCallId){
+    return expectedCallId!=null&&expectedCallId.equals(currentCallCameraId())
+      &&host!=null&&"Online".equals(host.state)&&active&&hasCallCameraHardware()
+      &&checkSelfPermission(android.Manifest.permission.CAMERA)==android.content.pm.PackageManager.PERMISSION_GRANTED;
+  }
+  void clearCallCameraPermission(){
+    callCameraPermission.cancel();pendingCallCameraReady=null;pendingCallCameraRequest=-1;
+    pendingCallCameraToken=0;callCameraResultReturned=false;callCameraResultGranted=false;
+  }
+  void reconcileCallCameraPermission(){
+    callCameraPermission.reconcile(currentCallCameraId(),host!=null&&"Online".equals(host.state));
+    if(!callCameraPermission.hasPending())clearCallCameraPermission();
+  }
+  /** A03 permission plumbing. A04 will supply explicit video actions after A02b.
+   * A grant only resumes that action; its controller/media must still check bilateral consent. */
+  void requestCallCameraPermission(String expectedCallId,Runnable permissionReady){
+    if(permissionReady==null||!active||isDestroyed())return;
+    reconcileCallCameraPermission();
+    boolean granted=checkSelfPermission(android.Manifest.permission.CAMERA)==android.content.pm.PackageManager.PERMISSION_GRANTED;
+    boolean asked=getSharedPreferences("call_camera_permission",MODE_PRIVATE).getBoolean("asked",false);
+    CallCameraPermission.Decision decision=callCameraPermission.begin(expectedCallId,currentCallCameraId(),
+      host!=null&&"Online".equals(host.state),hasCallCameraHardware(),granted,
+      asked&&!shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA));
+    if(decision==CallCameraPermission.Decision.Busy||decision==CallCameraPermission.Decision.Stale)return;
+    if(decision==CallCameraPermission.Decision.Unavailable||decision==CallCameraPermission.Decision.Denied){
+      showCallCameraPermissionFallback(decision);return;
+    }
+    pendingCallCameraReady=permissionReady;pendingCallCameraToken=callCameraPermission.token();
+    if(decision==CallCameraPermission.Decision.Ready){
+      callCameraResultReturned=true;callCameraResultGranted=true;finishCallCameraPermission();return;
+    }
+    // Never reuse a process request code, including across Activity recreation.
+    pendingCallCameraRequest=CallCameraPermission.nextRequestCode();
+    if(pendingCallCameraRequest<0){clearCallCameraPermission();showCallCameraPermissionFallback(CallCameraPermission.Decision.Denied);return;}
+    try{requestPermissions(new String[]{android.Manifest.permission.CAMERA},pendingCallCameraRequest);}
+    catch(RuntimeException error){clearCallCameraPermission();showCallCameraPermissionFallback(CallCameraPermission.Decision.Denied);}
+  }
+  void showCallCameraPermissionFallback(CallCameraPermission.Decision decision){
+    String message=decision==CallCameraPermission.Decision.Unavailable?
+      "No camera is available. You can keep talking.":
+      "Camera access is off. You can keep talking, or enable camera access in Android settings.";
+    Toast.makeText(this,message,Toast.LENGTH_LONG).show();
+  }
+  void finishCallCameraPermission(){
+    if(!active||!callCameraResultReturned)return;
+    Runnable ready=pendingCallCameraReady;String expected=callCameraPermission.callId();
+    CallCameraPermission.Decision decision=callCameraPermission.complete(pendingCallCameraToken,currentCallCameraId(),
+      host!=null&&"Online".equals(host.state),hasCallCameraHardware(),
+      callCameraResultGranted&&checkSelfPermission(android.Manifest.permission.CAMERA)==android.content.pm.PackageManager.PERMISSION_GRANTED);
+    clearCallCameraPermission();
+    if(decision==CallCameraPermission.Decision.Ready&&ready!=null&&hasCurrentCallCameraPermission(expected))ready.run();
+    else if(decision==CallCameraPermission.Decision.Denied||decision==CallCameraPermission.Decision.Unavailable)
+      showCallCameraPermissionFallback(decision);
   }
 
   /** Run a call command on a background thread and report failures in plain language.  Call actions
@@ -827,7 +899,7 @@ public class MainActivity extends Activity {
       else{CallView.dismiss(this,live);}
       renderCallBar();lastSignature="";render();return;}
     if(selected!=null)showPeople();else super.onBackPressed();}
-  @Override protected void onResume(){super.onResume();active=true;bindCalls();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
+  @Override protected void onResume(){super.onResume();active=true;bindCalls();finishCallCameraPermission();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
 
   /** Act on a notification tap that asked to return to a call.  The call ID is revalidated, so a
    *  notification left over from a call that has already ended simply does nothing. */
@@ -858,6 +930,15 @@ public class MainActivity extends Activity {
    @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);unbindCalls();CallView.forgetOverlay();if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
   @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
     super.onRequestPermissionsResult(requestCode,permissions,results);
+    if(requestCode>=CALL_CAMERA_REQUEST_FIRST&&requestCode<=CALL_CAMERA_REQUEST_LAST){
+      if(requestCode!=pendingCallCameraRequest||!callCameraPermission.hasPending())return;
+      callCameraResultGranted=false;
+      for(int i=0;i<permissions.length&&i<results.length;i++)
+        if(android.Manifest.permission.CAMERA.equals(permissions[i]))
+          callCameraResultGranted=results[i]==android.content.pm.PackageManager.PERMISSION_GRANTED;
+      getSharedPreferences("call_camera_permission",MODE_PRIVATE).edit().putBoolean("asked",true).apply();
+      callCameraResultReturned=true;finishCallCameraPermission();return;
+    }
     // Result of the one-time notification request. Nothing is retried: the platform would
     // auto-deny a repeat, and the refusal is surfaced at call time instead, where it can actually
     // explain what is wrong and where to fix it.

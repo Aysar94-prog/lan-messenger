@@ -1,5 +1,32 @@
 # Android status
 
+## Video calling plan-v007 — Android execution started (2026-10-03)
+
+The user authorized the Android section and phase handoffs, and requested USB adb.
+The frozen plan hash was verified as
+`4ea7877d6643b5c89246b075d7a301d73b38bea28f644303383fa42f7ca0efbf`.
+Current execution record: [video handoff](video-calling/HANDOFF.md).
+A01 ownership/state design and A02 provisional contract are documented; initial
+AT01 draft checks pass 43/43. AP01 is a separate test-only libwebrtc endpoint under
+`tests/video-feasibility/android`, built/signed with a throwaway key and installed
+through USB on SM-A075F (Android 16). Generated-frame native loopback passed VP8
+re-offer, VP8 inactive activation, VP9 profile 0 and H264 constrained baseline,
+with moving decoded frames and continuing two-way G722 before/during/after video.
+These are Android-local results; physical-camera, audible and Windows pairing
+acceptance remain Pending. A03 call-bound camera permission preparation is in
+source; its 18 pure-Java boundary checks pass, with actual OS/UI acceptance Pending.
+The shared A02b gate remains Pending until paired Windows WT01 evidence proves
+encoded video and continuing G722 during upgrade. Production video, parity,
+release version, and packaged acceptance are unchanged. A04 onward remains Pending;
+no production video capability is advertised. Android production javac/D8 build
+and 408 voice-call checks pass. Full regression stopped at 5 Windows recording
+device failures (mmresult 1); supplementary runs reached repeated group-membership
+and ownership-transfer Java startup timeouts. Details and final tail results
+belong to the handoff. The independent Offline tail passed. Windows UI checks
+passed through voice playback/seek, then stalled at recording and were stopped;
+recording/lifecycle UI acceptance remains incomplete. Android continuation waits
+for Windows WT01 and Both A02b, with A0/A1 phase notes saved in the handoff.
+
 ## Voice Messages implemented in source (Phase 1 / A01-A11, not a release)
 
 Android Phase 1 of the shared Voice Messages feature (`plan-v003`, tracked at

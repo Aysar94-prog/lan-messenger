@@ -364,6 +364,12 @@ public class CallUi {
   /** Current call snapshot (thread-safe, may be null). */
   public CallSession getCurrent() { return current; }
 
+  /** A03: terminal/absent snapshots cannot own a pending camera permission action.
+   * This does not authorize video capture or imply video consent. */
+  public static String cameraPermissionCallId(CallSession call) {
+    return call == null || call.state == null || call.state.terminal() ? null : call.callId;
+  }
+
   /** The retained terminal snapshot, or null. */
   public CallSession getTerminal() { return terminal; }
 
