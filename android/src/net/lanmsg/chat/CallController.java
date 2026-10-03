@@ -45,6 +45,38 @@ public class CallController {
   private final AtomicLong sequence = new AtomicLong(0);
   private long negotiationGeneration;
   private CallFrameAdmission frameAdmission;
+  private int protocolVersion=1;
+  private CallVideoConsent videoConsent;
+  private volatile CallVideoCoordinator videoCoordinator;
+  private CallVideoActions videoActions;
+  private volatile boolean videoEnabled;
+  private CallVideoActions.Eligibility videoEligibility=id->false;
+  /** Service enables only after camera/lifecycle/UI readiness is wired. */
+  public void configureVideo(boolean enabled,CallVideoActions.Eligibility eligibility){
+    videoEligibility=eligibility==null?id->false:eligibility;videoEnabled=enabled;
+  }
+  public CallVideoCoordinator video(String expectedCallId){
+    CallVideoCoordinator value=videoCoordinator;
+    return value!=null&&value.isForCall(expectedCallId)?value:null;
+  }
+  public CallVideoActions videoActions(String expectedCallId){
+    synchronized(lock){return session!=null&&session.callId.equals(expectedCallId)?videoActions:null;}
+  }
+  private void bindVideoActions(){
+    videoActions=null;
+    if(videoConsent==null)return;
+    videoActions=new CallVideoActions(videoConsent,videoEligibility,new CallVideoActions.Effects(){
+      public void answer(String id,boolean video)throws IOException{acceptPrepared(id,video);}
+      private CallVideoCoordinator live(String id)throws IOException{
+        CallVideoCoordinator value=CallController.this.video(id);
+        if(value==null)throw new IOException("That video call is no longer available");return value;
+      }
+      public void request(String id,String request)throws IOException{live(id).proposalAcceptedLocally(request);}
+      public void accept(String id,String request)throws IOException{live(id).upgradeAcceptedLocally(request);}
+      public void decline(String id,String request)throws IOException{live(id).upgradeDeclinedLocally(request);}
+      public void camera(String id,boolean on)throws IOException{live(id).cameraChosenLocally(on);}
+    });
+  }
 
   // ── Timer management ───────────────────────────────────────────
 
@@ -208,6 +240,17 @@ public class CallController {
    *  frame can never precede the connection it is sent on.  A failure to open leaves no session
    *  behind: the caller sees the IOException and the controller stays Idle. */
   public String startCall(String peerId, TransportFactory factory) throws IOException {
+    return startCall(peerId,factory,false);
+  }
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo)throws IOException {
+    return startCall(peerId,factory,inviteVideo,null);
+  }
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo,String reservedCallId)throws IOException {
+    if(reservedCallId!=null&&!CallProtocol.validCallId(reservedCallId))throw new IOException("Invalid call invitation");
+    // Fresh network transaction is outside the controller lock and UI thread.
+    boolean capable=videoEnabled&&engine.probeCallVideo(peerId);
+    if(inviteVideo&&(!capable||!videoEligibility.mayCapture(null)))
+      throw new IOException("Video is not available for this contact");
     CallLog.i("startCall to " + peerId);
     synchronized (lock) {
       if (session != null && !session.state.terminal())
@@ -228,23 +271,30 @@ public class CallController {
       if (!limiter.record(peerId, now))
         throw new IOException("Too many call attempts — wait before trying again");
 
-      String callId = UUID.randomUUID().toString();
+      String callId = reservedCallId==null?UUID.randomUUID().toString():reservedCallId;
       Transport opened = factory == null ? null : factory.open(callId);
       if (opened == null) throw new IOException("Could not open a call channel");
       this.transport = opened;
       this.activeTransport = opened;
       this.session = new CallSession.Builder(callId, peerId, true, now);
-      this.frameAdmission = new CallFrameAdmission(callId,peerId,1,0);
+      this.protocolVersion=capable?2:1;
+      this.sequence.set(0);
+      this.frameAdmission = new CallFrameAdmission(callId,peerId,protocolVersion,0);
+      this.videoConsent=capable?new CallVideoConsent(callId,true,true,inviteVideo):null;
+      bindVideoActions();
+      session.videoCapable=capable;session.invitedVideo=inviteVideo;
       session.state = CallProtocol.State.OutgoingRinging;
-      this.negotiationGeneration = 0;
+      this.negotiationGeneration = capable?1:0;
 
       // Send INVITE
       CallProtocol.Frame invite = CallSignaling.invite(callId, sequence.incrementAndGet(),
         engine.id, peerId);
+      if(capable)invite.body.put("media",inviteVideo?"video":"audio");
       try {
         sendFrame(invite);
       } catch (IOException e) {
         // The channel failed on its first write: leave no half-open session behind.
+        closeVideo();
         session = null;
         frameAdmission = null;
         transport = null;
@@ -282,7 +332,8 @@ public class CallController {
                                Transport transport) throws IOException {
     synchronized (lock) {
       long now = clock.nowMs();
-      if(frame==null||frame.protocolVersion!=1||frame.senderSequence<=0)return null;
+      if(frame==null||frame.senderSequence<=0)return null;
+      if(frame.protocolVersion!=1&&(frame.protocolVersion!=2||!videoEnabled||!CallVideoProtocol.valid(frame)))return null;
       CallLog.i("INVITE call=" + frame.callId + " from " + authenticatedPeerId);
 
       // Validate
@@ -349,9 +400,15 @@ public class CallController {
       this.transport = transport;
       this.activeTransport = transport;
       this.session = new CallSession.Builder(frame.callId, authenticatedPeerId, false, now);
-      this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,1,frame.senderSequence);
+      this.protocolVersion=frame.protocolVersion;
+      this.sequence.set(0);
+      this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,protocolVersion,frame.senderSequence);
+      session.videoCapable=protocolVersion==2;
+      session.invitedVideo=session.videoCapable&&"video".equals(frame.body.get("media"));
+      this.videoConsent=session.videoCapable?new CallVideoConsent(frame.callId,true,false,session.invitedVideo):null;
+      bindVideoActions();
       session.state = CallProtocol.State.IncomingRinging;
-      this.negotiationGeneration = 0;
+      this.negotiationGeneration = session.videoCapable?1:0;
 
       // Claim audio ring ownership (A05) — blocks voice recording
       if (audioOwner != null) audioOwner.claimRing();
@@ -374,7 +431,8 @@ public class CallController {
     try {
       CallProtocol.Frame reply = new CallProtocol.Frame(type, frame.callId,
         sequence.incrementAndGet(), 0);
-      if (type.equals(CallProtocol.DECLINE)) {
+      reply.protocolVersion=frame.protocolVersion;
+      if (type.equals(CallProtocol.DECLINE)&&frame.protocolVersion==1) {
         reply.body = new LinkedHashMap<>();
         reply.body.put("peer", peerId);
       }
@@ -396,11 +454,26 @@ public class CallController {
   /** Accept, but only if the ringing call is still the expected one.  expectedCallId may be null
    *  to accept whatever is currently ringing (the on-screen Accept button). */
   public void accept(String expectedCallId) throws IOException {
+    accept(expectedCallId,false);
+  }
+  public void accept(String expectedCallId,boolean video)throws IOException {
+    acceptInternal(expectedCallId,video,false);
+  }
+  private void acceptPrepared(String expectedCallId,boolean video)throws IOException {
+    acceptInternal(expectedCallId,video,true);
+  }
+  private void acceptInternal(String expectedCallId,boolean video,boolean prepared)throws IOException {
     synchronized (lock) {
       if (session == null || session.state != CallProtocol.State.IncomingRinging)
         throw new IOException("No incoming call to accept");
       if (expectedCallId != null && !expectedCallId.equals(session.callId))
         throw new IOException("That call is no longer waiting");
+      if(video&&videoConsent==null)throw new IOException("Video unavailable");
+      if(videoConsent!=null&&!prepared){
+        CallVideoConsent.Result result=videoConsent.acceptInitial(session.callId,video,video&&videoEligibility.mayCapture(session.callId));
+        if(result!=CallVideoConsent.Result.Ready&&result!=CallVideoConsent.Result.Voice)
+          throw new IOException("Camera permission or foreground access unavailable");
+      }
 
       // A disabled preference withdraws the invitation rather than letting it through.
       if (!settings.allowIncoming()) {
@@ -418,10 +491,12 @@ public class CallController {
       cancelTimeout();
 
       // Send ACCEPT
-      sendFrame(CallSignaling.accept(session.callId, sequence.incrementAndGet()));
+      CallProtocol.Frame accepted=CallSignaling.accept(session.callId, sequence.incrementAndGet());
+      if(protocolVersion==2)accepted.body.put("media",video?"video":"audio");
+      sendFrame(accepted);
 
       // Initialize media and create answer
-      startMedia();
+      try{startMedia();}catch(IOException failure){endCall(CallProtocol.EndReason.MEDIA_ERROR);throw failure;}
       scheduleMediaTimeout();
 
       notifyCallback(session.snapshot());
@@ -488,12 +563,27 @@ public class CallController {
   public void onFrame(CallProtocol.Frame frame,String peerId,Transport channel)throws IOException {
     synchronized(lock) {
       if(frame==null||!ownsChannel(channel,frame.callId,peerId))return;
-      onFrame(frame,peerId);
     }
+    onFrame(frame,peerId);
   }
 
   /** Dispatch an incoming call-signaling frame.  Called from PeerEngine's message handler. */
   public void onFrame(CallProtocol.Frame frame, String authenticatedPeerId) throws IOException {
+    CallVideoCoordinator videoTarget;
+    synchronized(lock){
+      boolean videoFrame=frame!=null&&frame.type!=null&&frame.body!=null
+        &&(!CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media"))||frame.type.startsWith("VIDEO_"));
+      videoTarget=videoFrame&&protocolVersion==2&&session!=null&&session.state==CallProtocol.State.Connected
+        &&session.peerId.equals(authenticatedPeerId)&&session.callId.equals(frame.callId)?videoCoordinator:null;
+    }
+    if(videoTarget!=null){
+      videoTarget.receiveAdmitted(frame,incoming->{synchronized(lock){
+        if(session==null||session.state!=CallProtocol.State.Connected||videoCoordinator!=videoTarget
+            ||!session.peerId.equals(authenticatedPeerId)||!session.callId.equals(incoming.callId))return false;
+        if(frameAdmission==null||!frameAdmission.admit(incoming,authenticatedPeerId,true))return false;
+        noteInboundSignal();return true;
+      }});return;
+    }
     synchronized (lock) {
       if(frame==null||frame.type==null)return;
       if (session == null || !session.peerId.equals(authenticatedPeerId)) {
@@ -503,13 +593,24 @@ public class CallController {
       }
 
       String allowed = CallProtocol.allowedSender(frame.type, session.state, session.isCaller);
-      if (frameAdmission==null || !frameAdmission.admit(frame,authenticatedPeerId,allowed!=null)) {
+      boolean videoFrame=protocolVersion==2&&frame.body!=null&&
+        ((!CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media")))||frame.type.startsWith("VIDEO_"));
+      boolean permitted=allowed!=null;
+      if(protocolVersion==2){
+        if(videoFrame)permitted=session.state==CallProtocol.State.Connected&&videoCoordinator!=null&&videoCoordinator.permits(frame);
+        else if(CallProtocol.OFFER.equals(frame.type)||CallProtocol.ANSWER.equals(frame.type))
+          permitted=permitted&&session.state==CallProtocol.State.Connecting;
+        if(CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media")))
+          permitted=permitted&&session.invitedVideo;
+      }
+      if (frameAdmission==null || !frameAdmission.admit(frame,authenticatedPeerId,permitted)) {
         CallLog.w("dropped " + frame.type + ": not admissible in state " + session.state
           + " as " + (session.isCaller ? "caller" : "callee"));
         return; // invalid message for current state
       }
       // Only admitted fresh traffic bound to this exact peer/call/version proves liveness.
       noteInboundSignal();
+      if(videoFrame){videoCoordinator.receive(frame);return;}
 
       switch (frame.type) {
         case CallProtocol.RINGING:
@@ -522,6 +623,7 @@ public class CallController {
 
         case CallProtocol.ACCEPT:
           if (session.state == CallProtocol.State.OutgoingRinging) {
+            if(videoConsent!=null)videoConsent.peerAnswered(session.callId,"video".equals(frame.body.get("media")));
             cancelTimeout();
             session.state = CallProtocol.State.Connecting;
             startMedia();
@@ -608,6 +710,7 @@ public class CallController {
             cancelTimeout();
             startHeartbeat();
             startQualityPolling();
+            if(videoCoordinator!=null)videoCoordinator.audioConnected();
             notifyCallback(session.snapshot());
           }
           break;
@@ -638,10 +741,12 @@ public class CallController {
       throw new IOException("Media factory not set — call media unavailable");
     try {
       media = mediaFactory.create();
+      final ICallMedia boundMedia=media;
+      final String boundAudioCall=session.callId;
       media.setListener(new ICallMedia.Listener() {
         public void onIceCandidate(String candidate, String sdpMid, int sdpMLineIndex) {
           synchronized (lock) {
-            if (session == null || session.state.terminal()) return;
+            if (session == null || session.state.terminal()||media!=boundMedia||!session.callId.equals(boundAudioCall)) return;
             try {
               sendFrame(CallSignaling.ice(session.callId, sequence.incrementAndGet(),
                 negotiationGeneration, candidate, sdpMid, sdpMLineIndex));
@@ -650,7 +755,7 @@ public class CallController {
         }
         public void onMediaReady() {
           synchronized (lock) {
-            if (session == null || session.state.terminal()) return;
+            if (session == null || session.state.terminal()||media!=boundMedia||!session.callId.equals(boundAudioCall)) return;
             try {
               sendFrame(new CallProtocol.Frame(CallProtocol.MEDIA_READY,
                 session.callId, sequence.incrementAndGet(), negotiationGeneration));
@@ -659,12 +764,30 @@ public class CallController {
         }
         public void onError(String message) {
           synchronized (lock) {
+            if(session==null||media!=boundMedia||!session.callId.equals(boundAudioCall))return;
             try { endCall(CallProtocol.EndReason.MEDIA_ERROR); }
             catch (IOException ignored) {}
           }
         }
       });
       media.initialize();
+      if(videoConsent!=null){
+        ICallMedia.Video video=media.video();
+        if(video==null)throw new IOException("Video adapter unavailable");
+        final String boundCall=session.callId;
+        final CallVideoConsent boundConsent=videoConsent;
+        videoCoordinator=new CallVideoCoordinator(boundCall,session.isCaller,boundConsent,videoEligibility,video,
+          frame->{synchronized(lock){
+            if(session==null||!session.callId.equals(boundCall)||session.state!=CallProtocol.State.Connected)
+              throw new IOException("That call has ended");
+            frame.senderSequence=sequence.incrementAndGet();sendFrame(frame);
+          }},snapshot->{synchronized(lock){
+            if(session!=null&&session.callId.equals(boundCall)&&!session.state.terminal()){
+              session.video=snapshot;notifyCallback(session.snapshot());
+            }
+          }});
+        session.video=videoCoordinator.snapshot();
+      }
     } catch (Exception e) {
       throw new IOException("Media initialization failed: " + e.getMessage(), e);
     }
@@ -696,6 +819,7 @@ public class CallController {
         sendBestEffort(live, reason);
 
       // Dispose media
+      closeVideo();
       if (media != null) {
         try { media.dispose(); } catch (Exception ignored) {}
         media = null;
@@ -732,8 +856,11 @@ public class CallController {
         case TIMEOUT_MEDIA:
         case MEDIA_ERROR:
         case ENGINE_SHUTDOWN:
-          live.send(CallSignaling.serialize(new CallProtocol.Frame(CallProtocol.ERROR,
-            session.callId, sequence.incrementAndGet(), negotiationGeneration)));
+          CallProtocol.Frame error=new CallProtocol.Frame(CallProtocol.ERROR,
+            session.callId, sequence.incrementAndGet(), negotiationGeneration);
+          error.protocolVersion=protocolVersion;
+          if(protocolVersion==2){error.negotiationGeneration=1;error.body.put("media","audio");error.body.put("code","failed");}
+          live.send(CallSignaling.serialize(error));
           break;
         case OFFLINE:
         case NETWORK_FAILURE:
@@ -761,10 +888,16 @@ public class CallController {
   }
 
   private void cleanupMedia() {
+    closeVideo();
     if (media != null) {
       try { media.dispose(); } catch (Exception ignored) {}
       media = null;
     }
+  }
+  private void closeVideo(){
+    videoActions=null;
+    if(videoCoordinator!=null){videoCoordinator.close();videoCoordinator=null;}
+    if(videoConsent!=null){videoConsent.end();videoConsent=null;}
   }
 
   // ── Internal: timers ───────────────────────────────────────────
@@ -887,6 +1020,20 @@ public class CallController {
 
   private void sendFrame(CallProtocol.Frame frame) throws IOException {
     if (transport == null) throw new IOException("No transport for call signaling");
+    if(protocolVersion==2){
+      frame.protocolVersion=2;
+      boolean video=frame.body!=null&&"video".equals(frame.body.get("media"));
+      switch(frame.type){
+        case "OFFER":case "ANSWER":case "ICE":case "MEDIA_READY":case "ERROR":
+          if(!video){frame.negotiationGeneration=1;frame.body.put("media","audio");}
+          if("ERROR".equals(frame.type)&&!frame.body.containsKey("code"))frame.body.put("code","failed");
+          break;
+        case "INVITE":case "ACCEPT":break;
+        case "VIDEO_REQUEST":case "VIDEO_ACCEPT":case "VIDEO_DECLINE":case "VIDEO_STATE":break;
+        default:frame.negotiationGeneration=0;frame.body.clear();break;
+      }
+      if(!CallVideoProtocol.valid(frame))throw new IOException("Invalid local call frame");
+    }
     byte[] wire = CallSignaling.serialize(frame);
     transport.send(wire);
   }

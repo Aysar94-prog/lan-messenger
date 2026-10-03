@@ -26,6 +26,36 @@ public class MessengerService extends Service {
   volatile CallUi callUi;
   final AudioOwnership audioOwner = new AudioOwnership();
   final CallVideoResources callVideoResources = WebRtcCallMedia.newVideoResources();
+  private volatile boolean callActivityVisible,cameraForeground;
+  private volatile String cameraIntentCall;
+  void callActivityVisible(boolean visible){
+    callActivityVisible=visible;
+    if(!visible){
+      cameraForeground=false;cameraIntentCall=null;
+      CallUi model=callUi;CallSession call=model==null?null:model.getCurrent();
+      CallController cc=callController;
+      if(cc!=null&&call!=null){CallVideoCoordinator video=cc.video(call.callId);if(video!=null)video.revokeCapture();}
+      if(foreground)startForegroundSafely();
+    }
+  }
+  private boolean cameraEligible(String expected){
+    if(!callActivityVisible||!cameraForeground||!"Online".equals(state)||!callMediaReal)return false;
+    if(checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED
+        ||!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))return false;
+    PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
+    KeyguardManager guard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
+    if(power==null||!power.isInteractive()||guard!=null&&guard.isKeyguardLocked())return false;
+    if(Build.VERSION.SDK_INT>=29&&power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE)return false;
+    CallSession call=callUi==null?null:callUi.getCurrent();
+    return expected==null||expected.equals(cameraIntentCall)||call!=null&&!call.state.terminal()&&expected.equals(call.callId);
+  }
+  /** Called from an explicit foreground camera action after permission. */
+  boolean prepareCallCamera(String expected){
+    if(!callActivityVisible||!"Online".equals(state)||checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)return false;
+    cameraIntentCall=expected;cameraForeground=true;
+    try{startForegroundSafely();}catch(RuntimeException denied){cameraForeground=false;cameraIntentCall=null;return false;}
+    return cameraEligible(expected);
+  }
   // Set by the A04 probe: true once the WebRTC native stack is confirmed usable on this device.
   volatile boolean callMediaReal;
   // Message shown once for the user when the native stack is unavailable, so a device that cannot
@@ -55,6 +85,15 @@ public class MessengerService extends Service {
 
   /** The call view-model, or null before the background load finishes. */
   public CallUi calls() { return callUi; }
+  boolean canInviteVideo(String peerId){
+    PeerEngine peer=engine;return peer!=null&&callMediaReal&&"Online".equals(state)&&peer.probeCallVideo(peerId);
+  }
+  void startVideoCall(String peerId,String id)throws java.io.IOException {
+    PeerEngine peer=engine;CallController cc=callController;
+    if(peer==null||cc==null||!cameraEligible(id))throw new java.io.IOException("Camera access is no longer available");
+    try{cc.startCall(peerId,(CallController.TransportFactory)cid->CallChannel.openOutgoing(peer,peerId,cid,cc),true,id);}
+    catch(java.io.IOException error){handler.post(()->{cameraForeground=false;cameraIntentCall=null;if(foreground)startForegroundSafely();});throw error;}
+  }
 
   /** Notification actions and UI actions funnel through here.  Each is revalidated against the
    *  live session, so a stale action is refused rather than acting on whatever call came after. */
@@ -170,6 +209,10 @@ public class MessengerService extends Service {
    *  decline never produced one, and an invitation withdrawn by turning the preference off
    *  reaches a terminal snapshot and is cleared immediately. */
   void onCallSnapshot(CallSession call) {
+    if(call==null||call.state.terminal()||call.video!=null&&(call.video.phase==CallVideoConsent.Phase.Voice
+        ||call.video.phase==CallVideoConsent.Phase.Ended||call.video.phase==CallVideoConsent.Phase.Video&&!call.video.localCamera)){
+      if(cameraForeground){cameraForeground=false;cameraIntentCall=null;if(foreground)startForegroundSafely();}
+    }
     if (call == null) { CallNotifier.clear(this); CallRoute.exitCallMode(this); return; }
     String name = callPeerName(call.peerId);
     switch (call.state) {
@@ -271,6 +314,8 @@ public class MessengerService extends Service {
       CallController cc = new CallController(peer, callSettings);
       cc.setMediaFactory(mediaFactory);
       cc.setAudioOwner(audioOwner); // A05: shared with voice messages
+      cc.configureVideo(callMediaReal,this::cameraEligible);
+      peer.callVideoSupport=()->callMediaReal&&callController==cc&&!stopping;
       cc.start();
       callController = cc;
       // The service-owned UI view-model. It is the controller's primary callback, so the terminal
@@ -332,7 +377,13 @@ public class MessengerService extends Service {
     if(Build.VERSION.SDK_INT>=29){
       int type=ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
       if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)type|=ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-      startForeground(1,notification(),type);
+      if(cameraForeground&&callActivityVisible&&checkSelfPermission(android.Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)
+        type|=ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+      try{startForeground(1,notification(),type);}
+      catch(SecurityException denied){
+        cameraForeground=false;cameraIntentCall=null;
+        startForeground(1,notification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+      }
     }else startForeground(1,notification());
     foreground=true;
   }

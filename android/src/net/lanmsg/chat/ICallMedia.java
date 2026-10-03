@@ -63,6 +63,9 @@ public interface ICallMedia {
     void detachRemote(FrameSink sink);
     RendererLease acquireRendererLease();
     void setListener(VideoListener listener);
+    /** Nonblocking snapshot; missing/stale measurements remain unavailable. */
+    default CallVideoDiagnostics.Snapshot diagnostics(){return CallVideoDiagnostics.Snapshot.unavailable();}
+    default boolean localMirror(){return true;}
     /** Releases only video, never healthy audio. Stale generations are ignored. */
     void dispose(long generation);
   }
@@ -70,6 +73,7 @@ public interface ICallMedia {
     void onIce(long generation, String candidate, String mid, int index);
     void onReady(long generation);
     void onError(long generation, String message);
+    default void onCameraStopped(long generation){}
   }
 
   // ── Statistics (sampled asynchronously during Connected) ────────

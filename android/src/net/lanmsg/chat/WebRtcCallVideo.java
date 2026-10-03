@@ -25,6 +25,11 @@ final class WebRtcCallVideo implements ICallMedia.Video {
   private volatile boolean closed;
   private volatile boolean terminated;
   private long lastGeneration;
+  private volatile CallVideoDiagnostics.Snapshot diagnostic=CallVideoDiagnostics.Snapshot.unavailable();
+  private final CallVideoDiagnostics.Sampler diagnosticSampler=new CallVideoDiagnostics.Sampler();
+  private final java.util.concurrent.atomic.AtomicBoolean statsPending=new java.util.concurrent.atomic.AtomicBoolean();
+  private volatile long lastStatsNanos;
+  private volatile boolean localFront=true;
   private final Map<ICallMedia.FrameSink,VideoSink> local = new IdentityHashMap<>();
   private final Map<ICallMedia.FrameSink,VideoSink> remote = new IdentityHashMap<>();
 
@@ -158,6 +163,7 @@ final class WebRtcCallVideo implements ICallMedia.Video {
       String name=null;
       for(String value:devices.getDeviceNames()) {if(name==null)name=value;if(devices.isFrontFacing(value)){name=value;break;}}
       if(name==null)throw new IllegalStateException("No camera available");
+      localFront=devices.isFrontFacing(name);
       final long epoch=++n.cameraEpoch;
       try {
         n.camera=devices.createCapturer(name,cameraEvents(n,epoch));
@@ -176,7 +182,7 @@ final class WebRtcCallVideo implements ICallMedia.Video {
           public void onFrameCaptured(VideoFrame frame) {
             if(n.cameraEpoch!=epoch)return;
             if(eligible(n))downstream.onFrameCaptured(frame);
-            else if(n.stopQueued.compareAndSet(false,true))queue(() -> {if(current(n)&&n.cameraEpoch==epoch)try {stop(n);}catch(Exception error){fail(n,"Camera stop failed");}});
+            else if(n.stopQueued.compareAndSet(false,true))queue(() -> {if(current(n)&&n.cameraEpoch==epoch)try {stop(n);cameraStopped(n);}catch(Exception error){fail(n,"Camera stop failed");}});
           }
         });
         if(!eligible(n))throw new SecurityException("Camera eligibility changed");
@@ -204,12 +210,13 @@ final class WebRtcCallVideo implements ICallMedia.Video {
       Node n=node(generation); if(!eligible(n)||n.camera==null)throw new SecurityException("Camera switch is not authorized");
       final long epoch=n.cameraEpoch;
       n.camera.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
-        public void onCameraSwitchDone(boolean front) {if(current(n)&&n.cameraEpoch==epoch&&!eligible(n))stopCameraAsync(n,epoch);}
+        public void onCameraSwitchDone(boolean front) {if(current(n)&&n.cameraEpoch==epoch){localFront=front;if(!eligible(n))stopCameraAsync(n,epoch);}}
         public void onCameraSwitchError(String error) {if(current(n)&&n.cameraEpoch==epoch)fail(n,"Camera switch failed");}
       }); return null;
     });
   }
-  private void stopCameraAsync(Node n,long epoch) {queue(() -> {if(current(n)&&n.cameraEpoch==epoch)try {stop(n);}catch(Exception error){fail(n,"Camera stop failed");}});}
+  private void cameraStopped(Node n){event(n,()->{ICallMedia.VideoListener value=listener;if(value!=null)value.onCameraStopped(n.generation);});}
+  private void stopCameraAsync(Node n,long epoch) {queue(() -> {if(current(n)&&n.cameraEpoch==epoch)try {stop(n);cameraStopped(n);}catch(Exception error){fail(n,"Camera stop failed");}});}
   private CameraVideoCapturer.CameraEventsHandler cameraEvents(Node n,long epoch) {
     return new CameraVideoCapturer.CameraEventsHandler() {
       private void error() {if(current(n)&&n.cameraEpoch==epoch)fail(n,"Camera unavailable");}
@@ -242,6 +249,49 @@ final class WebRtcCallVideo implements ICallMedia.Video {
     return resources.acquireRenderer();
   }
   public void setListener(ICallMedia.VideoListener value){listener=value;}
+  public boolean localMirror(){return localFront;}
+  public CallVideoDiagnostics.Snapshot diagnostics(){
+    long now=System.nanoTime();Node n=active;
+    if(current(n)&&n.ready&&now-lastStatsNanos>=1_000_000_000L&&statsPending.compareAndSet(false,true)){
+      lastStatsNanos=now;
+      try{worker.execute(()->{
+        if(!current(n)||n.pc==null){statsPending.set(false);return;}
+        try{n.pc.getStats(report->{
+          try{worker.execute(()->{
+            try{if(current(n))diagnostic=diagnosticSampler.sample(counters(report),System.nanoTime());}
+            finally{statsPending.set(false);}
+          });}catch(RejectedExecutionException ignored){statsPending.set(false);}
+        });}catch(Exception ignored){statsPending.set(false);}
+      });}catch(RejectedExecutionException ignored){statsPending.set(false);}
+    }
+    return current(n)?diagnostic.fresh(now):CallVideoDiagnostics.Snapshot.unavailable();
+  }
+  private static Long count(Object value){
+    if(!(value instanceof Number))return null;
+    double n=((Number)value).doubleValue();long number=((Number)value).longValue();
+    return Double.isFinite(n)&&number>=0&&n==(double)number?number:null;
+  }
+  private static CallVideoDiagnostics.Counters counters(RTCStatsReport report){
+    if(report==null||report.getStatsMap().size()>256)return null;
+    CallVideoDiagnostics.Counters c=new CallVideoDiagnostics.Counters();
+    c.timestampUs=(long)report.getTimestampUs();
+    int inbound=0,outbound=0;
+    for(RTCStats item:report.getStatsMap().values()){
+      Map<String,Object> m=item.getMembers();String type=item.getType();
+      if(!"video".equals(m.get("kind"))&&!"video".equals(m.get("mediaType")))continue;
+      if("outbound-rtp".equals(type)){
+        if(++outbound>1)return null;
+        c.sentFrames=count(m.get("framesEncoded"));c.sentBytes=count(m.get("bytesSent"));
+      }else if("inbound-rtp".equals(type)){
+        if(++inbound>1)return null;
+        c.receivedFrames=count(m.get("framesDecoded"));c.receivedBytes=count(m.get("bytesReceived"));
+        c.receivedPackets=count(m.get("packetsReceived"));c.lostPackets=count(m.get("packetsLost"));
+      }else continue;
+      Object codecId=m.get("codecId");RTCStats codec=codecId instanceof String?report.getStatsMap().get(codecId):null;
+      if(codec!=null&&"video/VP8".equalsIgnoreCase(String.valueOf(codec.getMembers().get("mimeType"))))c.codec="VP8";
+    }
+    return c;
+  }
   public void dispose(long generation) {
     try {execute(() -> {Node n=active;if(n!=null&&n.generation==generation)release(n);return null;});}
     catch(Exception error) {Node n=active;if(n!=null&&n.generation==generation)fail(n,"Video cleanup failed");}
@@ -256,6 +306,7 @@ final class WebRtcCallVideo implements ICallMedia.Video {
     worker.shutdown();terminated=true;return true;
   }
   private void release(Node n) throws Exception {
+    diagnostic=CallVideoDiagnostics.Snapshot.unavailable();diagnosticSampler.reset();statsPending.set(false);
     n.retiring=true;
     n.ready=false;
     stop(n);

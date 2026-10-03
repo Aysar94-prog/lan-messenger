@@ -65,6 +65,13 @@ public final class HarnessActivity extends Activity {
         result.put("request", request);
         String command = value(i, "cmd", "stats");
         if (command.equals("stop")) { release(); result.put("stopped", true); }
+        else if(command.equals("production-adapter")){
+          release();
+          if(!visible||checkSelfPermission("android.permission.CAMERA")!=PackageManager.PERMISSION_GRANTED
+              ||checkSelfPermission("android.permission.RECORD_AUDIO")!=PackageManager.PERMISSION_GRANTED)
+            throw new IllegalStateException("Visible test activity and test camera/microphone permissions required");
+          result.put("evidence",net.lanmsg.chat.ProductionVideoAdapterCheck.run(this,()->visible));
+        }
         else {
           if (!visible) throw new IllegalStateException("Test activity must be visible");
           if (checkSelfPermission("android.permission.RECORD_AUDIO") != PackageManager.PERMISSION_GRANTED)

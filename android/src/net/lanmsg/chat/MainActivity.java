@@ -30,6 +30,25 @@ public class MainActivity extends Activity {
   // immutable snapshots, and issues commands. The call overlay lives on the stage, so it covers
   // the people list and the chat alike.
   CallUi callUi; String pendingCallPeerId,pendingCallAcceptId;
+  String pendingVideoPeerId,pendingVideoCallId;
+  Runnable pendingVideoMicAction;
+  boolean pendingVideoMicGranted;
+  static final int VIDEO_MIC_REQUEST=92;
+  static final int ATTACHMENT_CAMERA_REQUEST=93;
+  String pendingAttachmentCameraTarget;
+  boolean pendingAttachmentCameraVideo,pendingAttachmentCameraGranted;
+  boolean ensureAttachmentCamera(boolean video){
+    if(checkSelfPermission(android.Manifest.permission.CAMERA)==android.content.pm.PackageManager.PERMISSION_GRANTED)return true;
+    if(!active||selected==null||pendingAttachmentCameraTarget!=null)return false;
+    pendingAttachmentCameraTarget=selected;pendingAttachmentCameraVideo=video;pendingAttachmentCameraGranted=false;
+    requestPermissions(new String[]{android.Manifest.permission.CAMERA},ATTACHMENT_CAMERA_REQUEST);return false;
+  }
+  void finishAttachmentCamera(){
+    if(!active||!pendingAttachmentCameraGranted)return;
+    String target=pendingAttachmentCameraTarget;boolean video=pendingAttachmentCameraVideo;
+    pendingAttachmentCameraTarget=null;pendingAttachmentCameraGranted=false;
+    if(target!=null&&target.equals(selected)){if(video)AttachmentFlow.captureVideo(this);else AttachmentFlow.capturePhoto(this);}
+  }
   final CallCameraPermission callCameraPermission=new CallCameraPermission();
   static final int CALL_CAMERA_REQUEST_FIRST=CallCameraPermission.REQUEST_FIRST,CALL_CAMERA_REQUEST_LAST=CallCameraPermission.REQUEST_LAST;
   int pendingCallCameraRequest=-1;
@@ -232,8 +251,11 @@ public class MainActivity extends Activity {
       final String callTarget=id;
       Button callNow=dotButton("📞","Call "+chatName,true,40);
       callNow.setOnClickListener(v->startCallTo(callTarget));
+      Button videoNow=dotButton("📹","Video call "+chatName,true,40);
+      videoNow.setOnClickListener(v->startVideoCallTo(callTarget));
       LinearLayout.LayoutParams callParams=new LinearLayout.LayoutParams(dp(40),dp(40));callParams.setMargins(0,0,dp(8),0);
       chatHeader.addView(callNow,callParams);
+      chatHeader.addView(videoNow,new LinearLayout.LayoutParams(dp(40),dp(40)));
     }
     Button more=new Button(this);more.setText("⋮");more.setAllCaps(false);more.setTextSize(20);more.setTextColor(Color.WHITE);more.setBackgroundColor(Color.TRANSPARENT);more.setOnClickListener(v->chatMenu(more));chatHeader.addView(more);
     chrome.addView(chatHeader,0);
@@ -584,6 +606,7 @@ public class MainActivity extends Activity {
    *  the Activity only adds an observer; rebinding is safe and cannot displace the notification,
    *  because observers live in the controller's listener list rather than its single callback slot. */
   void bindCalls(){
+    if(host!=null)host.callActivityVisible(active);
     CallUi serviceUi=host==null?null:host.calls();
     if(serviceUi==null){unbindCalls();return;}
     if(callUi==serviceUi)return;
@@ -601,6 +624,9 @@ public class MainActivity extends Activity {
 
   /** Invalidate stale camera permission actions and the render signature; tick repaints. */
   void onCallChanged(CallSession snapshot){
+    if(snapshot!=null&&pendingVideoCallId!=null&&!pendingVideoCallId.equals(snapshot.callId)){
+      pendingVideoPeerId=null;pendingVideoCallId=null;pendingVideoMicAction=null;
+    }
     callCameraPermission.reconcile(CallUi.cameraPermissionCallId(snapshot),host!=null&&"Online".equals(host.state));
     ui.post(this::reconcileCallCameraPermission);
     lastSignature="";
@@ -608,7 +634,8 @@ public class MainActivity extends Activity {
 
   String currentCallCameraId(){
     CallUi live=callUi!=null?callUi:(host==null?null:host.calls());
-    return CallUi.cameraPermissionCallId(live==null?null:live.getCurrent());
+    String current=CallUi.cameraPermissionCallId(live==null?null:live.getCurrent());
+    return current==null&&pendingVideoPeerId!=null?pendingVideoCallId:current;
   }
   boolean hasCallCameraHardware(){
     return getPackageManager().hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY);
@@ -624,6 +651,7 @@ public class MainActivity extends Activity {
     pendingCallCameraToken=0;callCameraResultReturned=false;callCameraResultGranted=false;
   }
   void reconcileCallCameraPermission(){
+    if(host==null||!"Online".equals(host.state)){pendingVideoPeerId=null;pendingVideoCallId=null;}
     callCameraPermission.reconcile(currentCallCameraId(),host!=null&&"Online".equals(host.state));
     if(!callCameraPermission.hasPending())clearCallCameraPermission();
   }
@@ -652,6 +680,7 @@ public class MainActivity extends Activity {
     catch(RuntimeException error){clearCallCameraPermission();showCallCameraPermissionFallback(CallCameraPermission.Decision.Denied);}
   }
   void showCallCameraPermissionFallback(CallCameraPermission.Decision decision){
+    pendingVideoPeerId=null;pendingVideoCallId=null;
     String message=decision==CallCameraPermission.Decision.Unavailable?
       "No camera is available. You can keep talking.":
       "Camera access is off. You can keep talking, or enable camera access in Android settings.";
@@ -677,6 +706,38 @@ public class MainActivity extends Activity {
   }
 
   interface CallAction{void run() throws Exception;}
+  void requireCallMicrophone(Runnable action){
+    if(!active||action==null)return;
+    if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)==android.content.pm.PackageManager.PERMISSION_GRANTED){action.run();return;}
+    if(pendingVideoMicAction!=null)return;
+    pendingVideoMicAction=action;pendingVideoMicGranted=false;
+    requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},VIDEO_MIC_REQUEST);
+  }
+  void finishVideoMicrophone(){
+    if(!active||!pendingVideoMicGranted)return;
+    Runnable action=pendingVideoMicAction;pendingVideoMicAction=null;pendingVideoMicGranted=false;
+    if(host!=null)host.startForegroundSafely();if(action!=null)action.run();
+  }
+  void startVideoCallTo(String peerId){
+    if(host==null||!active||!"Online".equals(host.state))return;
+    MessengerService service=host;
+    runCallAction(()->{
+      if(!service.canInviteVideo(peerId))throw new java.io.IOException("This contact supports voice calls only.");
+      ui.post(()->{
+        if(!active||host!=service||callUi!=null&&callUi.getCurrent()!=null&&!callUi.getCurrent().state.terminal())return;
+        if(callCameraPermission.hasPending()||pendingVideoMicAction!=null)return;
+        pendingVideoPeerId=peerId;pendingVideoCallId=java.util.UUID.randomUUID().toString();
+        String id=pendingVideoCallId;
+        requireCallMicrophone(()->requestCallCameraPermission(id,()->{
+          String target=pendingVideoPeerId;
+          if(!id.equals(pendingVideoCallId)||target==null)return;
+          if(!service.prepareCallCamera(id))return;
+          pendingVideoPeerId=null;pendingVideoCallId=null;
+          runCallAction(()->service.startVideoCall(target,id),"Could not place video call.");
+        }));
+      });
+    },"Could not check video support.");
+  }
 
   /** Place a call to a peer.  The microphone permission is obtained before inviting, and no
    *  capture starts until the peer accepts. */
@@ -725,7 +786,7 @@ public class MainActivity extends Activity {
   void acceptCall(CallUi source, final String callId){
     CallUi target=CallUi.resolveForAccept(source,callUi,host==null?null:host.calls());
     if(target==null){Toast.makeText(this,"Calls are not available yet.",Toast.LENGTH_SHORT).show();return;}
-    runCallAction(()->target.accept(callId),"Could not accept the call.");
+    requireCallMicrophone(()->runCallAction(()->target.answerWithVoice(callId),"Could not accept the call."));
   }
 
   /** Change the incoming-call preference from the people menu.
@@ -899,7 +960,7 @@ public class MainActivity extends Activity {
       else{CallView.dismiss(this,live);}
       renderCallBar();lastSignature="";render();return;}
     if(selected!=null)showPeople();else super.onBackPressed();}
-  @Override protected void onResume(){super.onResume();active=true;bindCalls();finishCallCameraPermission();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
+  @Override protected void onResume(){super.onResume();active=true;if(host!=null)host.callActivityVisible(true);bindCalls();finishVideoMicrophone();finishAttachmentCamera();finishCallCameraPermission();handlePendingCallAccept();ui.removeCallbacks(tick);ui.post(tick);}
 
   /** Act on a notification tap that asked to return to a call.  The call ID is revalidated, so a
    *  notification left over from a call that has already ended simply does nothing. */
@@ -919,7 +980,7 @@ public class MainActivity extends Activity {
   // Backgrounding forces a safe stop, same as Windows' hide-to-tray/conversation-switch triggers:
   // recording is a foreground-UI activity here (no foreground-service microphone type declared),
   // so it cannot continue meaningfully once the Activity leaves the foreground.
-  @Override protected void onPause(){super.onPause();active=false;ui.removeCallbacks(tick);if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);saveDraft();}
+  @Override protected void onPause(){super.onPause();active=false;if(host!=null)host.callActivityVisible(false);CallView.pauseVideo();ui.removeCallbacks(tick);if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);saveDraft();}
    // stopVoiceRecording's real work runs on its own background thread and is not awaited here --
    // unlike Windows' FormClosed (which really does end the whole process), destroying this
    // Activity does not by itself kill the process (MessengerService keeps it alive as a
@@ -930,6 +991,16 @@ public class MainActivity extends Activity {
    @Override protected void onDestroy(){if(recordingDraftId!=null)VoiceUi.stopVoiceRecording(this);VoicePlayback.stopActivePlayer(this);unbindCalls();CallView.forgetOverlay();if(bound)unbindService(serviceConnection);super.onDestroy();ui.removeCallbacksAndMessages(null);}
   @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
     super.onRequestPermissionsResult(requestCode,permissions,results);
+    if(requestCode==ATTACHMENT_CAMERA_REQUEST){
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){pendingAttachmentCameraGranted=true;finishAttachmentCamera();}
+      else {pendingAttachmentCameraTarget=null;Toast.makeText(this,"Camera access is off. You can still choose a photo or video from the gallery.",Toast.LENGTH_LONG).show();}
+      return;
+    }
+    if(requestCode==VIDEO_MIC_REQUEST){
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){pendingVideoMicGranted=true;finishVideoMicrophone();}
+      else {pendingVideoMicAction=null;pendingVideoPeerId=null;pendingVideoCallId=null;Toast.makeText(this,"Microphone access is needed to answer or start a call.",Toast.LENGTH_LONG).show();}
+      return;
+    }
     if(requestCode>=CALL_CAMERA_REQUEST_FIRST&&requestCode<=CALL_CAMERA_REQUEST_LAST){
       if(requestCode!=pendingCallCameraRequest||!callCameraPermission.hasPending())return;
       callCameraResultGranted=false;

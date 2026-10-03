@@ -19,7 +19,13 @@ $sources = @(
   "$repo\android\src\net\lanmsg\chat\CallVideoConsent.java",
   "$repo\android\src\net\lanmsg\chat\CallVideoProtocol.java",
   "$repo\android\src\net\lanmsg\chat\CallVideoActions.java",
+  "$repo\android\src\net\lanmsg\chat\CallVideoCoordinator.java",
+  "$PSScriptRoot\CallVideoCoordinatorCheck.java",
   "$repo\android\src\net\lanmsg\chat\ICallMedia.java",
+  "$repo\android\src\net\lanmsg\chat\CallVideoDiagnostics.java",
+  "$PSScriptRoot\CallVideoDiagnosticsCheck.java",
+  "$repo\android\src\net\lanmsg\chat\CallVideoPlacement.java",
+  "$PSScriptRoot\CallVideoPlacementCheck.java",
   "$repo\android\src\net\lanmsg\chat\FakeCallMedia.java",
   "$PSScriptRoot\FakeCallVideoCheck.java",
   "$repo\android\src\net\lanmsg\chat\CallVideoResources.java",
@@ -48,3 +54,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Fake video adapter tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Call envelope admission tests failed' }
 & "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallCapabilitiesCheck
 if ($LASTEXITCODE -ne 0) { throw 'Call capability boundary tests failed' }
+& "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallVideoCoordinatorCheck
+if ($LASTEXITCODE -ne 0) { throw 'Video coordinator tests failed' }
+& "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallVideoDiagnosticsCheck
+if ($LASTEXITCODE -ne 0) { throw 'Video diagnostics tests failed' }
+& "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallVideoPlacementCheck
+if ($LASTEXITCODE -ne 0) { throw 'Video preview placement tests failed' }

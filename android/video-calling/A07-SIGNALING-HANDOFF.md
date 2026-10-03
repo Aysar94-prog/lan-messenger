@@ -1,5 +1,28 @@
 # A07 authenticated signaling boundary checkpoint — 2026-10-03
 
+## Continuing toward the user-installable APK
+
+User explicitly requests uninterrupted execution until an Android APK is
+delivered for testing. Latest source adds CallVideoCoordinator and opt-in v2
+controller/session integration. Production capability remains disabled in the
+service until UI/camera-FGS/lifecycle readiness is implemented. No APK released.
+
+The bounded per-call worker serializes consent, caller-only separate-PC offers,
+request collisions, generation retirement, camera state and video-only failure.
+Native callbacks enqueue only; authenticated reader admission runs outside the
+controller lock and in video-worker order, preserving immediate OFFER/ICE order
+and the shared sequence before native work. Initial video still waits for audio.
+CallVideoActions is now bound per call; UI commands can resolve it dynamically.
+
+Verification: pure video suites 353/0 (including 29 coordinator checks); actual
+TLS loopback capability 8/0 and call-channel checks 19/0, including v2 initial
+video with fake cameras, camera-off convergence and audio-preserving failure.
+Latest network root `a07-network-c84579cd72db4bf387722993376ef27a` compiled all
+production Java. These are fake-media results, not native/device acceptance.
+Further timeout/ICE/collision checks, diagnostics, UI, FGS/lifecycle, real camera,
+full regression and signed upgrade are still required. Windows R05 also remains.
+Usage is 29% five-hour / 27% weekly; no near-limit pause. Do not repeat listening.
+
 Android implementation authorized; original plan-v007/hash unchanged. This is a
 small-task A07 checkpoint, NOT completion of video controller integration.
 Audio listening remains accepted complete; do not repeat it. No signed APK yet.

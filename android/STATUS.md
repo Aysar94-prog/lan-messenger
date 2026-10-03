@@ -1,5 +1,37 @@
 # Android status
 
+FINAL TEST-CANDIDATE RECORD:2.2.43/code70 arm64 APK rebuilt and reinstalled,
+6349233 bytes, SHA256 4018ac369352602ba87005945b3166a59de971d0edbc858218b02d475f1f5855.
+Original signer retained. Pure video385/0, native JVM41/0, TLS8/19 and voice-call
+regression417/0 pass. Normal full regression ended exit1 at16-member group
+reinvite capability refusal (FullMember6); later tail not run. Not a complete
+accepted release; Windows video and packaged UI/lifecycle acceptance remain.
+Current-source candidate details and historical intermediate hashes are in
+A3-A4-CANDIDATE-HANDOFF.md. No full runner remains active.
+
+Android 2.2.43/code70 arm64 TEST CANDIDATE is built and installed over2.2.42
+on the USB phone with the original signer. Existing contacts/group/verification
+remain visible and first-install time unchanged; Online startup works with
+CAMERA denied. Production native video adapter physical-camera loopback/switch/
+stop passed separately (151 physical/88 generated reverse decoded frames).
+Pure video checks383/0, TLS capabilities8/0, call channels19/0; full regression
+still running. Exact APK UI/video/clipboard/background acceptance remains open,
+as do Windows R05 and cross-platform video. It is not a final accepted video
+release. APK/hash and phase evidence: A3-A4-CANDIDATE-HANDOFF.md.
+
+Android video candidate work continues: v2 coordination, native diagnostics,
+shared-EGL render surfaces, preview placement/controls and camera FGS/lifecycle
+are now in source. Pure video suites 375/0; physical UI/camera and exact-package
+acceptance are not yet complete. Original-signer arm64 2.2.43/code70 candidate
+build has begun; no new APK delivered or installed yet. Windows 2.2.42 stays
+voice-only. See [candidate phase handoff](video-calling/A3-A4-CANDIDATE-HANDOFF.md).
+
+In-progress continuation: opt-in v2 call/session integration and bounded video
+coordinator added, with per-call CallVideoActions. Pure video checks 353/0;
+actual TLS/fake-media call channel checks 19/0 and capability checks 8/0.
+Service advertising remains disabled pending UI/FGS/lifecycle readiness.
+No new production APK or physical-camera acceptance yet. See A07 handoff.
+
 Latest A07 checkpoint (2026-10-03): fresh authenticated CALLCAPS probe/responder
 boundary implemented, advertising remains disabled until v2 coordinator binding.
 Call envelopes now reject foreign call/peer/version and replay before heartbeat;

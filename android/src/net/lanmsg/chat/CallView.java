@@ -45,6 +45,12 @@ final class CallView {
   private static View overlay;
   private static TextView stateText, detailText, qualityText, routeText;
   private static long lastQualityAnnounceMs;
+  private static CallVideoView videoView;
+  private static CallVideoPlacement videoPlacement=new CallVideoPlacement();
+  private static String placementCallId;
+  private static AlertDialog diagnosticDialog;
+  private static TextView diagnosticText;
+  private static String diagnosticCallId;
 
   /** The call ID the Accept/Decline buttons act on, so a rebuilt view cannot act on a newer call. */
   private static String boundCallId;
@@ -99,6 +105,15 @@ final class CallView {
     if (ui == null) { hide(activity); return; }
 
     CallSession call = ui.getCurrent();
+    if(call==null||call.state.terminal()||!call.callId.equals(placementCallId)){
+      videoPlacement=new CallVideoPlacement();placementCallId=call==null?null:call.callId;
+      dismissDiagnostics();
+    }
+    if(diagnosticText!=null&&call!=null&&call.callId.equals(diagnosticCallId)){
+      CallVideoCoordinator c=host.callController.video(call.callId);
+      diagnosticText.setText(CallVideoDiagnostics.display(c==null?null:c.media().diagnostics()));
+    }
+    if(videoView!=null&&call!=null)videoView.update(call.video);
     if (call == null || call.state.terminal()) {
       // No live call. If a terminal snapshot is still being shown, keep the overlay up so the end
       // reason stays readable.
@@ -236,6 +251,11 @@ final class CallView {
     View picture = avatarView(activity, call, peerName);
     stage.addView(picture, new FrameLayout.LayoutParams(activity.dp(AVATAR_DP),
       activity.dp(AVATAR_DP), Gravity.CENTER));
+    if(call.video!=null&&call.video.generation>=2){
+      CallVideoCoordinator coordinator=activity.host.callController.video(call.callId);
+      if(coordinator!=null)try{videoView=new CallVideoView(activity,stage,coordinator.media(),videoPlacement);videoView.update(call.video);}
+      catch(RuntimeException error){picture.setContentDescription("Video display unavailable. Audio continues.");}
+    }
     panel.addView(stage, new LinearLayout.LayoutParams(-1, 0, 1));
 
     // Ringing states put their decision where the floating disc would be; live states put the
@@ -249,6 +269,7 @@ final class CallView {
     } else if (call.state == CallProtocol.State.OutgoingRinging) {
       actionZone.addView(decision(activity, ui, call, peerName, false));
     } else {
+      if(call.videoCapable&&call.state==CallProtocol.State.Connected)actionZone.addView(videoControls(activity,ui,call));
       actionZone.addView(controlBar(activity, ui, call, peerName));
     }
     panel.addView(actionZone, new LinearLayout.LayoutParams(-1, -2));
@@ -271,7 +292,7 @@ final class CallView {
       FrameLayout.LayoutParams overStage =
         new FrameLayout.LayoutParams(activity.dp(HANGUP_DP), activity.dp(HANGUP_DP),
           Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-      overStage.bottomMargin = activity.dp(BAR_HEIGHT_DP + 28);
+      overStage.bottomMargin = activity.dp(BAR_HEIGHT_DP + 28+(call.videoCapable?112:0));
       holder.addView(hangup, overStage);
     }
 
@@ -416,7 +437,15 @@ final class CallView {
     row.setPadding(activity.dp(24), 0, activity.dp(24), 0);
 
     if (incoming) {
+      if(call.invitedVideo){
+        Button acceptVideo=activity.button("Accept video");acceptVideo.setContentDescription("Accept video and authorize your camera");
+        acceptVideo.setOnClickListener(v->activity.requireCallMicrophone(()->activity.requestCallCameraPermission(call.callId,()->{
+          if(activity.host!=null&&activity.host.prepareCallCamera(call.callId))activity.runCallAction(()->ui.acceptVideo(call.callId),"Could not accept video.");
+        })));
+        row.addView(acceptVideo,new LinearLayout.LayoutParams(-1,activity.dp(56)));
+      }
       Button accept = activity.button("Accept  📞");
+      if(call.invitedVideo)accept.setText("Answer with voice");
       accept.setTextColor(Color.WHITE);
       accept.setTextSize(16);
       accept.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(37, 211, 102)));
@@ -424,7 +453,7 @@ final class CallView {
       // Acts on the view-model this button was built from, exactly as Decline does. Routing it
       // through the Activity's own field instead made Accept inert whenever that second reference
       // was not bound -- a cold start never bound it -- so the user could not answer a call at all.
-      accept.setOnClickListener(v -> activity.acceptCall(ui, call.callId));
+      accept.setOnClickListener(v -> activity.acceptCall(ui,call.callId));
       row.addView(accept, new LinearLayout.LayoutParams(-1, activity.dp(56)));
 
       Button decline = activity.button("Decline  📴");
@@ -728,6 +757,7 @@ final class CallView {
   }
 
   private static void detach(MainActivity activity) {
+    releaseVideoView();
     if (overlay != null) {
       if (activity.stage != null) activity.stage.removeView(overlay);
       overlay = null;
@@ -760,6 +790,7 @@ final class CallView {
    *  <p>{@code announcedState} is cleared too, so a screen that comes back after a rebuild
    *  re-announces the state rather than staying silent because it already said it once. */
   static void forgetOverlay() {
+    releaseVideoView();dismissDiagnostics();
     overlay = null;
     stateText = null; detailText = null; qualityText = null; routeText = null;
     boundCallId = null;
@@ -771,6 +802,73 @@ final class CallView {
 
   /** Whether an overlay is currently attached. */
   static boolean isShowing() { return overlay != null; }
+  private static void releaseVideoView(){if(videoView!=null){videoView.close();videoView=null;}}
+  static void pauseVideo(){releaseVideoView();dismissDiagnostics();boundKey=null;}
+  private static void dismissDiagnostics(){
+    if(diagnosticDialog!=null)diagnosticDialog.dismiss();diagnosticDialog=null;diagnosticText=null;diagnosticCallId=null;
+  }
+  private static View videoControls(MainActivity activity,CallUi ui,CallSession call){
+    LinearLayout rows=new LinearLayout(activity);rows.setOrientation(LinearLayout.VERTICAL);rows.setBackgroundColor(BAR);
+    LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
+    CallVideoCoordinator.Snapshot s=call.video;
+    boolean voice=s==null||s.phase==CallVideoConsent.Phase.Voice||s.phase==CallVideoConsent.Phase.Ended;
+    if(voice){
+      Button add=activity.button("Start video");add.setContentDescription("Request a video upgrade. The other person must accept.");
+      add.setOnClickListener(v->cameraAction(activity,call.callId,()->ui.requestVideo(call.callId)));
+      main.addView(add,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    }else if(s.phase==CallVideoConsent.Phase.Waiting){
+      Button accept=activity.button("Accept video");
+      if(!s.remoteRequest){accept.setText("Waiting for video consent…");accept.setEnabled(false);}
+      accept.setOnClickListener(v->cameraAction(activity,call.callId,()->ui.acceptVideoUpgrade(call.callId,s.request)));
+      main.addView(accept,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+      Button decline=activity.button("Decline video");
+      if(!s.remoteRequest)decline.setText("Cancel video request");
+      decline.setOnClickListener(v->activity.runCallAction(()->ui.declineVideoUpgrade(call.callId,s.request),"Could not decline video."));
+      main.addView(decline,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    }else{
+      Button camera=activity.button(s.localCamera?"Camera off":"Camera on");
+      camera.setContentDescription(s.localCamera?"Stop your camera without muting audio":"Turn your camera on");
+      camera.setEnabled(s.phase==CallVideoConsent.Phase.Video);
+      camera.setOnClickListener(v->{if(s.localCamera)activity.runCallAction(()->ui.turnCameraOff(call.callId),"Could not stop camera.");
+        else cameraAction(activity,call.callId,()->ui.turnCameraOn(call.callId));});
+      main.addView(camera,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+      Button swap=activity.button("Switch camera");swap.setEnabled(s.localCamera);
+      swap.setOnClickListener(v->{CallVideoCoordinator c=activity.host.callController.video(call.callId);if(c!=null)c.switchCamera();});
+      main.addView(swap,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    }
+    rows.addView(main);
+    LinearLayout extras=new LinearLayout(activity);
+    Button preview=activity.button(videoPlacement.hidden()?"Show preview":"Hide preview");
+    preview.setEnabled(videoView!=null);
+    preview.setOnClickListener(v->{if(videoView!=null){videoView.hidePreview(!videoPlacement.hidden());preview.setText(videoPlacement.hidden()?"Show preview":"Hide preview");}});
+    extras.addView(preview,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    Button reset=activity.button("Reset preview");reset.setEnabled(videoView!=null);
+    reset.setOnClickListener(v->{if(videoView!=null){videoView.resetPreview();preview.setText("Hide preview");}});
+    extras.addView(reset,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    Button diagnostics=activity.button("Diagnostics");diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
+    extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));rows.addView(extras);
+    return rows;
+  }
+  private static void cameraAction(MainActivity activity,String id,MainActivity.CallAction action){
+    activity.requireCallMicrophone(()->activity.requestCallCameraPermission(id,()->{
+      if(activity.host!=null&&activity.host.prepareCallCamera(id))activity.runCallAction(action,"Could not start video.");
+    }));
+  }
+  private static void showDiagnostics(MainActivity activity,String id){
+    dismissDiagnostics();diagnosticCallId=id;
+    diagnosticText=activity.label("Unavailable",15);diagnosticText.setPadding(activity.dp(20),activity.dp(16),activity.dp(20),activity.dp(16));
+    diagnosticDialog=new AlertDialog.Builder(activity).setTitle("Video diagnostics").setView(diagnosticText)
+      .setPositiveButton("Copy report",(dialog,which)->{
+        CallVideoCoordinator c=activity.host==null?null:activity.host.callController.video(id);
+        String version=null;try{version=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0).versionName;}catch(Exception ignored){}
+        String report=CallVideoDiagnostics.report(c==null?null:c.media().diagnostics(),version);
+        android.content.ClipData clip=android.content.ClipData.newPlainText("Video diagnostics",report);
+        if(android.os.Build.VERSION.SDK_INT>=33){android.os.PersistableBundle extras=new android.os.PersistableBundle();extras.putBoolean("android.content.extra.IS_SENSITIVE",true);clip.getDescription().setExtras(extras);}
+        ((android.content.ClipboardManager)activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(clip);
+        android.widget.Toast.makeText(activity,"Report copied. Clipboard text may remain until replaced or cleared.",android.widget.Toast.LENGTH_LONG).show();
+      }).setNegativeButton("Close",null).create();
+    diagnosticDialog.setOnDismissListener(dialog->{diagnosticDialog=null;diagnosticText=null;diagnosticCallId=null;});diagnosticDialog.show();
+  }
 
   /** Handle Back while a call is running.  Returns true when the overlay took the key.
    *

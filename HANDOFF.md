@@ -1,5 +1,21 @@
 # Handoff — Android call screen, 2026-10-02
 
+FINAL candidate checkpoint: Android2.2.43/code70 APK built/USB-installed,
+SHA256 4018ac369352602ba87005945b3166a59de971d0edbc858218b02d475f1f5855.
+Full normal regression22510 ENDED exit1 at16-member reinvite capability refusal;
+do not poll it or claim PASS. Pure385/native41/TLS8+19/call417 pass. Remaining
+packaged video/UI/lifecycle and Windows R05/Both acceptance are documented in
+android/video-calling/A3-A4-CANDIDATE-HANDOFF.md. Older notes below are historical.
+
+CURRENT ANDROID CONTINUATION,2026-10-03: signed2.2.43/code70 arm64 test candidate
+built and USB-upgraded with original signer, preserving first-install time and
+visible saved contacts/group. APK/hash and source/pure/native/device separation:
+android/video-calling/A3-A4-CANDIDATE-HANDOFF.md. Windows2.2.42 stays voice-only;
+R05 is authorized but incomplete. Full normal regression still running as
+session22510; log outputs/.build/android-video70-regression.log. Do not claim
+all video/UI/packaged or Both acceptance complete. User accepts audio listening;
+do not repeat it. Everything below is historical platform-specific context.
+
 Windows is untouched by this session. Branch `master`, local commits only, nothing pushed.
 
 ## Where things stand

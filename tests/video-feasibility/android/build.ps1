@@ -22,6 +22,10 @@ if (!(Test-Path -LiteralPath $key)) {
   Check 'Throwaway key generation'
 }
 $sources = @(Get-ChildItem -LiteralPath "$PSScriptRoot\src" -Recurse -Filter '*.java' | ForEach-Object FullName)
+$production = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\android\src\net\lanmsg\chat'))
+foreach ($name in @('ICallMedia','CallVideoDiagnostics','CallProtocol','CallSignaling','CallCapabilities','CallVideoProtocol','CallVideoResources','WebRtcCallVideo','WebRtcCallMedia','CallLog')) {
+  $sources += Join-Path $production "$name.java"
+}
 & "$JdkRoot\bin\javac.exe" -J-Xmx512m -encoding UTF-8 -source 8 -target 8 -bootclasspath "$tools\core-lambda-stubs.jar;$platform" -classpath "$platform;$aar\classes.jar" -d "$run\classes" @sources
 Check 'javac'
 & "$JdkRoot\bin\jar.exe" cf "$run\classes.jar" -C "$run\classes" .

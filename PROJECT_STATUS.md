@@ -1,5 +1,16 @@
 # LAN Messenger project status and platform comparison
 
+Latest installed Android TEST CANDIDATE is2.2.43/code70, arm64, original signer;
+the earlier stable pair in the release table below remains2.2.42. Candidate
+startup/data-visible retention and separate physical camera adapter checks pass.
+Connected packaged UI/video and Windows pairing remain unaccepted; no final
+cross-platform video parity claim. See Android A3-A4 candidate handoff.
+
+In-progress Android candidate 2.2.43/code70: video coordination, controls,
+renderers and lifecycle are in source, not yet packaged-device accepted.
+Windows production video/R05 remain pending; Android-to-old-Windows calls remain
+voice-only. No new release/parity claim. See Android A3-A4 candidate handoff.
+
 Android A07 source checkpoint: authenticated capability probe and call/channel/
 replay boundaries added; video advertising remains disabled pending full v2
 orchestration. Real TLS/fake-media checks passed; no physical production video or

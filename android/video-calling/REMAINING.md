@@ -1,5 +1,24 @@
 # Android video release remaining checklist — 2026-10-03
 
+## Current continuation (supersedes the historical table below)
+
+| Android task | Source / package status | Remaining acceptance |
+|---|---|---|
+| A04/A07 | Per-call actions and v2 coordinator/controller implemented |37 pure coordinator checks,19 actual TLS/fake-media channel checks pass. Production packet/UI call pairing remains. |
+| A05/A06 | Shared EGL and production video adapter implemented | Physical phone adapter camera/switch/stop and encoded VP8 local pairing passed separately in AP01; packaged controller integration remains. |
+| A07d | Native nonblocking stats/allowlisted report implemented |13 pure metrics/sanitization checks pass; exact APK panel/clipboard acceptance remains. |
+| A08/A08m/A09/A09d | Surfaces, drag/hide/reset and controls/copy implemented |9 placement checks; physical connected-call UI/rotation/clipboard remains. |
+| A10/A11 | Camera FGS and foreground/background eligibility implemented | Online-with-CAMERA-denied passed on signed candidate; clean permission/privacy/thermal/recreation stress remains. |
+| A12 | Build,375 then383 pure checks, native boundaries41, TLS8/19 pass | Full production regression still running; notices and full packaged acceptance not closed. |
+| AT06/A13 |2.2.43/code70 arm64 original-key candidate built and USB-installed | Upgrade retains first-install timestamp and visible contacts/group; deeper data/connected video acceptance remains. Not final release closure. |
+
+Exact candidate hash, adapter/phone evidence and active full-run log/session are
+in A3-A4-CANDIDATE-HANDOFF.md. Previous stable release remains2.2.42; installed
+test candidate is2.2.43. Windows2.2.42 cannot video-call; R05 and Windows production
+video remain explicitly authorized but incomplete. Both B0–B2 remain Pending.
+
+The following table records the earlier checkpoint, not current implementation.
+
 Scope: Android section of unchanged frozen plan-v007, plus its required Both
 A02b feasibility gate. Execution authorized. Original plan/hash remain untouched;
 this is a continuation checklist, not a new media contract or broadened scope.

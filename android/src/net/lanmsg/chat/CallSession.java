@@ -23,6 +23,8 @@ public class CallSession {
    *  told the call has been up for thirty-five seconds, which is not true and is exactly what a
    *  phone caller's own handset would never do. */
   public final long connectedAtMs;
+  public final boolean videoCapable, invitedVideo;
+  public final CallVideoCoordinator.Snapshot video;
 
   CallSession(Builder b) {
     this.callId = b.callId;
@@ -36,6 +38,7 @@ public class CallSession {
     this.quality = b.quality;
     this.durationMs = b.durationMs;
     this.connectedAtMs = b.connectedAtMs;
+    this.videoCapable=b.videoCapable;this.invitedVideo=b.invitedVideo;this.video=b.video;
   }
 
   /** How long the call has been connected (0 unless Connected).
@@ -65,6 +68,8 @@ public class CallSession {
     CallProtocol.Quality quality = CallProtocol.Quality.Unknown;
     long durationMs;
     long connectedAtMs;
+    boolean videoCapable, invitedVideo;
+    CallVideoCoordinator.Snapshot video;
 
     Builder(String callId, String peerId, boolean isCaller, long nowMs) {
       this.callId = callId;

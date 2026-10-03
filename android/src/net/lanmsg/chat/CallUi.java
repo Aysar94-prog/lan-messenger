@@ -32,6 +32,7 @@ public class CallUi {
   private CallVideoActions videoAction(String expectedCallId, boolean incoming) throws java.io.IOException {
     CallSession s=current;
     CallVideoActions actions=videoActions;
+    if(actions==null&&controller!=null)actions=controller.videoActions(expectedCallId);
     if(s==null || expectedCallId==null || !expectedCallId.equals(s.callId)
         || s.state!=(incoming?CallProtocol.State.IncomingRinging:CallProtocol.State.Connected))
       throw new java.io.IOException("That video action is no longer available");
@@ -43,7 +44,9 @@ public class CallUi {
     return videoAction(callId,true).acceptVideo(callId);
   }
   public void answerWithVoice(String callId) throws Exception {
-    if(videoActions!=null && videoActions.isForCall(callId))videoAction(callId,true).answerWithVoice(callId);
+    CallVideoActions actions=videoActions;
+    if(actions==null&&controller!=null)actions=controller.videoActions(callId);
+    if(actions!=null && actions.isForCall(callId))videoAction(callId,true).answerWithVoice(callId);
     else accept(callId);
   }
   public CallVideoConsent.Result requestVideo(String callId) throws java.io.IOException {
@@ -305,7 +308,8 @@ public class CallUi {
   public static String overlayKey(CallSession call, String peerName) {
     if (call == null) return "";
     return call.callId + "|" + call.state + "|" + call.muted + "|"
-      + (call.audioRoute == null ? "" : call.audioRoute) + "|" + (peerName == null ? "" : peerName);
+      + (call.audioRoute == null ? "" : call.audioRoute) + "|" + (peerName == null ? "" : peerName)
+      +"|"+call.videoCapable+"|"+call.invitedVideo+(call.video==null?"":"|"+call.video.phase+"|"+call.video.request+"|"+call.video.generation+"|"+call.video.localCamera+"|"+call.video.remoteCamera);
   }
 
   /** Everything the return-to-call bar shows, as one string to compare against.

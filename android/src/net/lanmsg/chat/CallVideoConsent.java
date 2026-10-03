@@ -119,12 +119,18 @@ public final class CallVideoConsent {
 
   /** Caller allocates; callee admits only an authenticated caller's new generation. */
   public synchronized boolean authorizeGeneration(String expected, String id, long value) {
-    if (!live(expected) || !connected || !localConsent || !peerConsent
-        || request == null || !request.equals(id) || generation != 0
-        || value < 2 || value <= lastGeneration) return false;
+    if (!canAuthorizeGeneration(expected,id,value)) return false;
     generation = lastGeneration = value;
     mediaReady = false; remoteRevision = -1; remoteCamera = false;
     return true;
+  }
+  public synchronized boolean canAuthorizeGeneration(String expected,String id,long value) {
+    return live(expected)&&connected&&localConsent&&peerConsent&&request!=null
+      &&request.equals(id)&&generation==0&&value>=2&&value>lastGeneration;
+  }
+  public synchronized boolean canPeerAccept(String expected,String id) {
+    return live(expected)&&request!=null&&request.equals(id)&&!remoteRequest
+      &&localConsent&&!peerConsent&&generation==0;
   }
 
   public synchronized boolean markMediaReady(String expected, long value) {
@@ -154,10 +160,12 @@ public final class CallVideoConsent {
 
   public synchronized boolean remoteCameraState(String expected, long value,
       long revision, boolean on) {
-    if (!live(expected) || generation == 0 || value != generation
-        || revision < 0 || revision <= remoteRevision) return false;
+    if (!canRemoteCameraState(expected,value,revision)) return false;
     remoteRevision = revision; remoteCamera = on;
     return true; // Does not change local consent or cameraWanted.
+  }
+  public synchronized boolean canRemoteCameraState(String expected,long value,long revision){
+    return live(expected)&&generation!=0&&value==generation&&revision>=0&&revision>remoteRevision;
   }
 
   /** Background/revocation stops the camera. Return requires another local action. */
@@ -173,6 +181,7 @@ public final class CallVideoConsent {
   public synchronized String requestId() { return request; }
   public synchronized long generation() { return generation; }
   public synchronized boolean remoteCameraOn() { return remoteCamera; }
+  public synchronized boolean remoteRequestPending(){return remoteRequest&&request!=null&&generation==0;}
   public synchronized Phase phase() {
     if (ended) return Phase.Ended;
     if (generation > 0) return mediaReady ? Phase.Video : Phase.Negotiating;
