@@ -1,5 +1,43 @@
 # Android status
 
+Release decision 2026-10-03: user explicitly stopped investigation and requested
+final packaging, commit and push despite the unresolved device-specific fault.
+Android release 2.2.65/code92 packages current source for all four supported ABIs,
+using the existing signing key. No additional device testing or settings changes.
+Includes directional permission lists, trusted video and caller-side recipient
+camera/speaker controls, plus idle delivery pacing and no Online multicast lock.
+IMPORTANT: SM-A075F Wi-Fi loss remains unresolved; physical stability acceptance
+failed. Packaging as a release does not imply this defect was fixed. Latest
+automated evidence: CallCheck422/0, pacing28/0; earlier permission36/0 and
+video-contract suites passed. Windows unchanged. Earlier release holds below
+describe investigation history and are superseded only by this user decision.
+
+
+Wi-Fi investigation execution checkpoint 2026-10-03: user authorized start.
+Latest installed original-signer diagnostic candidate is 2.2.64/code91 on both
+phones; full functionality restored, no traffic-suppression switches remain.
+Uncommitted candidate removes Online multicast acquisition and paces idle TLS
+delivery, avoiding idle probes to offline peers. It is NOT a confirmed repair:
+SM-A075F dropped association at23:29:16.344,23:30:16.446,23:31:22.542 after
+installation23:29:05. SM-S908E has not shown the corresponding problem; user
+confirms the fault is device-specific. Wi-Fi remains enabled; no app crash found.
+App-open Offline stayed associated23:04:07-23:07:12. Removing only multicast,
+only delivery, or only outgoing discovery did not establish a stable fix;
+discovery-only on both phones eventually dropped23:27:34.450. Suppressing all
+scheduled traffic stayed associated for approximately186s, not ten-minute acceptance.
+Current automated CallCheck422/0 and pacing28/0 pass; previous candidate permission
+36/0 and video-contract pass. Device acceptance FAILED; release remains held.
+Next isolation requires user choice for affected-phone reboot or another Wi-Fi
+network. No router, Wi-Fi settings, app identity or original grants changed.
+
+
+Wi-Fi repair planning checkpoint 2026-10-03: release held. Physical comparison
+on SM-A075F: app force-stopped22:55:13-22:56:58 (~105s), no new disconnects;
+reopened without a call22:57:02, disconnects22:57:35.264 and22:58:32.297.
+Supports an app-related trigger, not a confirmed specific cause. App reopened,
+original settings retained; no repair code applied. See
+[Wi-Fi repair plan](../PLAN-ANDROID-WIFI-STABILITY.md).
+
 CURRENT 2026-10-03: 2.2.57/code84 ARM64 original-signer TEST CANDIDATE installed
 on both SM-A075F and SM-S908E. First-install dates/data retained. APK SHA-256:
 022b54494cd62a9226f496defbe9dbc0d7cb704b4c852a0a0e27eec8b4621fcc.

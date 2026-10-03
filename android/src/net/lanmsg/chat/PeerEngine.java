@@ -442,8 +442,39 @@ public final class PeerEngine implements Closeable {
   }
   public synchronized int unread(String conversation){int n=0;for(Message m:messages)if(m.to.equals(id)&&m.status.equals("Received")&&(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)))n++;return n;}
   final java.util.concurrent.atomic.AtomicLong queueEpoch=new java.util.concurrent.atomic.AtomicLong();
+  static final class DeliveryPacing {
+    static final long IDLE_MS=30000,WORK_MS=2000;
+    final Map<String,long[]> probes=new HashMap<>();
+    synchronized boolean claim(String peer,long epoch,long now,boolean work){
+      long[] prior=probes.get(peer);
+      if(prior!=null&&prior[0]==epoch&&now<prior[1]&&!(work&&prior[2]==0))return false;
+      probes.put(peer,new long[]{epoch,now+(work?WORK_MS:IDLE_MS),work?1:0});return true;
+    }
+    synchronized void clear(){probes.clear();}
+  }
+  final DeliveryPacing deliveryPacing=new DeliveryPacing();
+  synchronized boolean pendingDeliveryWork(String peerId){
+    if(forgotten.contains(peerId)||pendingLeaves.containsValue(peerId))return true;
+    for(Message m:messages)if(m.to.equals(peerId)&&m.status.equals("Queued")
+      ||m.to.equals(id)&&m.from.equals(peerId)&&m.status.equals("Read"))return true;
+    for(Group g:groups.values())if((g.owner.equals(id)||pendingOwnershipHandoff(g.id))
+      &&Arrays.asList(g.members).contains(peerId)){
+      Map<String,Integer> acked=memberAcked.get(g.id);if(acked==null||!acked.containsKey(peerId)||acked.get(peerId)<g.membersVersion)return true;
+    }
+    return false;
+  }
   void flush(){if(!running)return;TransferManager.queueAutomaticMedia(this);for(Peer p:peers())startDelivery(p);}
-  void startDelivery(Peer p){long session=generation;if(!running||workerSession.get()!=null&&workerSession.get()!=session||sending.putIfAbsent(p.id,session)!=null)return;try{outgoing.execute(()->{workerSession.set(session);long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&session==generation&&observed!=queueEpoch.get());}finally{sending.remove(p.id,session);if(running&&session==generation&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id,session);}}
+  void startDelivery(Peer p){
+    long session=generation;
+    if(!running||workerSession.get()!=null&&workerSession.get()!=session||sending.containsKey(p.id))return;
+    boolean work=pendingDeliveryWork(p.id);
+    // Presence is announced over UDP. Idle TLS probes to stale saved addresses
+    // add no useful presence information and must not churn while a peer is away.
+    if(!p.online()&&!work)return;
+    if(!deliveryPacing.claim(p.id,queueEpoch.get(),System.nanoTime()/1000000L,p.online()&&work))return;
+    if(sending.putIfAbsent(p.id,session)!=null)return;
+    try{outgoing.execute(()->{workerSession.set(session);long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&session==generation&&observed!=queueEpoch.get());}finally{sending.remove(p.id,session);if(running&&session==generation&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id,session);}
+  }
   void deliver(Peer p){
     try(Socket s=connect(p.host,p.port)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||!h[2].equals(p.id))return;remember(h[2],dec(h[3]),p.host,Integer.parseInt(h[4]));recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){return;}
     for(Group g:GroupSync.groups(this)){
@@ -843,7 +874,7 @@ public final class PeerEngine implements Closeable {
     if(timer!=null)timer.shutdownNow();
     if(connections!=null)connections.shutdownNow();
     if(outgoing!=null)outgoing.shutdownNow();
-    sending.clear();
+    sending.clear();deliveryPacing.clear();
     networkState="Offline";notifyChanged();
   }
   public synchronized void close(){goOffline();closed=true;try{uploadPolicy.flush();}catch(IOException e){error=e.getMessage();}}

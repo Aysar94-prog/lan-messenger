@@ -414,8 +414,9 @@ public class MessengerService extends Service {
       if("Online".equals(state)||"Starting".equals(state))return;
       state="Starting";problem="";
       new Thread(()->{try{
-        WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
-        synchronized(this){if(!requestedOnline||stopping)return;if(wifi!=null){multicast=wifi.createMulticastLock("lan-messenger-discovery");multicast.setReferenceCounted(false);multicast.acquire();}engine.start();state="Online";}
+        // Our discovery uses broadcast/unicast, not multicast group membership.
+        // Avoid disabling the Wi-Fi multicast filter for the entire Online lifetime.
+        synchronized(this){if(!requestedOnline||stopping)return;engine.start();state="Online";}
       }catch(Exception error){synchronized(this){problem="Could not bind: "+error.getMessage();state="Offline";releaseMulticast();stopStartedOffline();}}},"lan-network-start").start();
     }else{
       if("Stopping".equals(state))return;

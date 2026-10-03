@@ -1,5 +1,19 @@
 # LAN Messenger project status and platform comparison
 
+Release decision 2026-10-03: user stopped investigation and requested Android
+2.2.65/code92 final packaging, commit and push. Existing signer; all supported
+ABIs. Known issue: SM-A075F Wi-Fi disconnections remain unresolved and physical
+stability acceptance failed. This is a user-authorized release, not a verified
+Wi-Fi repair. Windows remains unchanged; no new wire or parity change.
+
+
+Wi-Fi investigation checkpoint 2026-10-03: Android2.2.64/code91 full-function
+diagnostic candidate installed on both phones with original signer/data retained.
+SM-A075F still loses Wi-Fi association; SM-S908E does not show this issue.
+Multicast/delivery isolation and pacing have NOT confirmed a repair. CallCheck
+422/0 and pacing28/0 pass, but physical stability acceptance failed. Release held;
+Windows unchanged and no wire/parity change. See Android status and Wi-Fi plan.
+
 Current checkpoint 2026-10-03: Android 2.2.57/code84 ARM64 signed test candidate
 is installed on SM-A075F and SM-S908E with original signer and unchanged first-install
 times. Android has Masters (devices I granted access to) and Slave (devices granting
