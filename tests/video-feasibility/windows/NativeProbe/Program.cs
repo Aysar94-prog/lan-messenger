@@ -18,6 +18,12 @@ try
         if (!codecs.Split(',').Contains("G722/8000"))
             throw new InvalidOperationException("Unexpected codec report.");
         Console.WriteLine($"PASS: net9 x64 C ABI; codec factory={codecs}; invalid-buffer checks=3");
+        var video = Marshal.GetDelegateForFunctionPointer<Probe>(NativeLibrary.GetExport(library, "lm_probe_vp8_loopback"));
+        if (video(IntPtr.Zero, 0) != -1 || video(buffer, 1) != -1 || video(buffer, 65537) != -1)
+            throw new InvalidOperationException("Video ABI bound checks failed.");
+        if (video(buffer, 4096) != 1)
+            throw new InvalidOperationException("Native generated VP8 loopback failed.");
+        Console.WriteLine($"PASS: net9 generated codec loopback; {Marshal.PtrToStringAnsi(buffer)}");
     }
     finally { Marshal.FreeHGlobal(buffer); }
 }

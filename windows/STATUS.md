@@ -2,6 +2,11 @@
 
 ## Replacement R01 execution audit (2026-10-03)
 
+Latest R02 advance: generated VP8 codec-local encode/decode passed in two native
+lifetimes and one net9 ABI lifetime: each 20 encoded/20 decoded/19 motion changes,
+zero dropped frames. No devices, network or PeerConnection used; R03/R04 and
+WT01/A02b remain Pending. Output hash and next endpoint tasks in R02 handoff.
+
 Latest phase result: R01 filtered offline test input packaged with complete
 binary notices; R02 started and native EXE + net9 x64 C ABI checks passed, including
 G722 enumeration and three invalid-buffer checks. `/MT` matches upstream static

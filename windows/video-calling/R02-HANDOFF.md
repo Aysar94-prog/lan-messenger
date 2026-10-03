@@ -1,5 +1,35 @@
 # R02 Windows test-only native bridge handoff — 2026-10-03
 
+Latest continuation: generated VP8 **codec-local** encode/decode now passes in
+Windows native EXE (two fresh codec lifetimes) and through the net9 C ABI (one
+lifetime). Each run: encoded=20, decoded=20, moving decoded checksums=19,
+encoded bytes=898, dropped=0, 160x120 generated I420. No camera, microphone,
+PeerConnection, ICE, RTP, DTLS-SRTP or cross-device transport was used. This proves
+working codecs/ABI, not R03/R04, WT01 or Both A02b. R02 endpoint work remains
+In progress/Pending as broken down below.
+
+The bounded encoded callback retains its buffer through EncodedImage copies;
+decoding is drained outside that callback (no codec reentry). Release guards run
+before callback destruction on normal/early exits. Decoded Y-plane checksums
+validate changing output, not just frame counters. C ABI catches exceptions and
+rejects null/short/oversized buffers. Current pinned API requires OnFrameDropped
+callback; removed obsolete VP8 frameDroppingOn field rather than version guessing.
+Output DLL was rebuilt in the same explicit probe scratch directory; new SHA256
+`ef629a6dfb701d421b1c9f554a013aedcb3301c4c896e5b09e098e51d745d8ba` supersedes
+the older DLL hash below. Offline input package hash unchanged.
+
+Next: implement opaque native endpoint ownership and real audio/SDP/ICE first,
+then wire generated VP8 source/remote sink and upgrade/stats commands. Pair with
+the separate Android AP01 APK using USB adb for control and LAN for media.
+Do not extrapolate local codec success into an interoperability gate pass.
+Current usage 36% five-hour / 13% weekly; not near limit.
+
+End checks for this continuation: rebuilt native EXE and C ABI DLL, rebuilt/reran
+net9 probe successfully. Android CallCheck rerun against the unchanged cached
+production classes: PASS=408 FAIL=0 (not new APK/device acceptance). Diff whitespace
+check passed. Full regression's latest recorded five Windows recording-device
+failures remain open; no claim of a new full-suite pass.
+
 R01 minimal offline input preparation completed for test feasibility, not for
 production migration/release. R02 **In progress**: native/MSVC/.NET ABI smoke
 proof completed; PeerConnection/media/callback ownership remains Pending.

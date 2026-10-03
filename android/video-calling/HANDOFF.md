@@ -196,3 +196,12 @@ in `windows/video-calling/R02-HANDOFF.md`, then paired R03/R04 for WT01/A02b.
 Existing Windows build passed; tests/run.ps1 rerun stopped at the same five
 recording mmresult 1 failures, later tests not run. Production and Android builds
 not changed by this milestone. Usage 27% five-hour / 12% weekly, not near limit.
+
+Continuation requested Android release and remaining work: added REMAINING.md
+with all 13 pending implementation tasks, five test groups, AT01 rerun and Both
+A02b dependency. No hours/near-completion claim. Advanced required Windows R02
+codec proof: native VP8 generated encode/decode passed twice, net9 ABI once; each
+20 encoded/20 decoded/19 decoded checksum changes/zero drops. No LAN, capture,
+RTP or Android device command was used; not WT01/A02b. Next is native endpoint
+ownership, SDP/ICE/audio, then generated paired media upgrade. Production Android
+code/signing/version unchanged. Usage 36% five-hour / 13% weekly, not near limit.

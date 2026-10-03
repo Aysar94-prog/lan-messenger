@@ -6,6 +6,11 @@ The user authorized the Android section and phase handoffs, and requested USB ad
 The frozen plan hash was verified as
 `4ea7877d6643b5c89246b075d7a301d73b38bea28f644303383fa42f7ca0efbf`.
 Current execution record: [video handoff](video-calling/HANDOFF.md).
+Latest continuation: Windows generated VP8 codec-local roundtrip passed (20/20
+frames, 19 changes), not paired media. Android completion still has A04–A13 plus
+A07d/A08m/A09d (13 implementation tasks), AT02–AT06 (5 test groups), AT01 post-gate
+rerun and Both A02b. See [remaining checklist](video-calling/REMAINING.md).
+No signed video candidate/release exists and no completion-time claim is made.
 Latest dependency milestone: Windows replacement offline input packaged and
 native/.NET ABI smoke passed with G722 present; real media pairing has not begun.
 R02 endpoint construction, R03/R04 and A02b still Pending. Full regression rerun
