@@ -8,6 +8,10 @@ New-Item -ItemType Directory -Force $OutputRoot | Out-Null
 $sources = @(
   "$repo\android\src\net\lanmsg\chat\CallProtocol.java",
   "$repo\android\src\net\lanmsg\chat\CallSignaling.java",
+  "$repo\android\src\net\lanmsg\chat\CallCapabilities.java",
+  "$PSScriptRoot\CallCapabilitiesCheck.java",
+  "$repo\android\src\net\lanmsg\chat\CallFrameAdmission.java",
+  "$PSScriptRoot\CallFrameAdmissionCheck.java",
   "$PSScriptRoot\DraftVideoContract.java",
   "$PSScriptRoot\DraftVideoContractCheck.java",
   "$repo\android\src\net\lanmsg\chat\CallCameraPermission.java",
@@ -40,3 +44,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Video command tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Video context ownership tests failed' }
 & "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.FakeCallVideoCheck
 if ($LASTEXITCODE -ne 0) { throw 'Fake video adapter tests failed' }
+& "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallFrameAdmissionCheck
+if ($LASTEXITCODE -ne 0) { throw 'Call envelope admission tests failed' }
+& "$JdkRoot\bin\java.exe" -cp $OutputRoot net.lanmsg.chat.CallCapabilitiesCheck
+if ($LASTEXITCODE -ne 0) { throw 'Call capability boundary tests failed' }

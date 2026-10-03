@@ -20,6 +20,17 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
   // How long the write side stays half-closed before the socket is closed hard.  Long enough for a
   // terminal frame to be delivered and read by the peer on a LAN, short enough not to hold a socket.
   private static final long GRACEFUL_CLOSE_MS = 1500;
+  private static final java.util.concurrent.ScheduledThreadPoolExecutor OPENING_TIMER=openingTimer();
+  private static java.util.concurrent.ScheduledThreadPoolExecutor openingTimer() {
+    java.util.concurrent.ScheduledThreadPoolExecutor timer=new java.util.concurrent.ScheduledThreadPoolExecutor(1,r -> {
+      Thread t=new Thread(r,"call-opening-timeout");t.setDaemon(true);return t;
+    });timer.setRemoveOnCancelPolicy(true);return timer;
+  }
+  private volatile java.util.concurrent.ScheduledFuture<?> openingTimeout;
+  private void cancelOpeningTimeout() {
+    java.util.concurrent.ScheduledFuture<?> pending=openingTimeout;openingTimeout=null;
+    if(pending!=null)pending.cancel(false);
+  }
 
   private final Socket socket;
   private final String peerId;
@@ -29,15 +40,16 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
   private final Object writeLock = new Object();
 
   private volatile Thread reader;
-  /** The call this channel belongs to, once known.  For an outgoing call it is known at
-   *  construction; for an incoming call it arrives with the INVITE that opens the channel. */
-  private volatile String callId;
+  /** Bound to the authenticated CALLCONNECT handshake, not supplied by later frames. */
+  private final String callId;
+  private volatile boolean awaitingInvite;
 
-  private CallChannel(Socket socket, String peerId, CallController controller, String callId) {
+  private CallChannel(Socket socket, String peerId, CallController controller, String callId,boolean incoming) {
     this.socket = socket;
     this.peerId = peerId;
     this.controller = controller;
     this.callId = callId;
+    this.awaitingInvite=incoming;
   }
 
   // ── Outgoing ───────────────────────────────────────────────────
@@ -51,7 +63,7 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
     Socket socket = engine.openCallConnection(peerId, callId);
     CallChannel channel;
     try {
-      channel = new CallChannel(socket, peerId, controller, callId);
+      channel = new CallChannel(socket, peerId, controller, callId,false);
       socket.setSoTimeout(0);   // a call channel is long-lived; the ordinary 6 s read timeout
                                 // belongs to short transactions and would kill an idle call
     } catch (Exception e) {
@@ -66,10 +78,12 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
 
   /** Take over a socket the engine has already authenticated and handed off via CALLCONNECT.
    *  The first frame on the channel must be the INVITE that names this call. */
-  static CallChannel adoptIncoming(Socket socket, String peerId, CallController controller) {
+  static CallChannel adoptIncoming(Socket socket, String peerId, String callId,CallController controller) {
     CallLog.i("adopting incoming call channel from " + peerId);
-    CallChannel channel = new CallChannel(socket, peerId, controller, null);
-    try { socket.setSoTimeout(0); } catch (Exception ignored) {}
+    CallChannel channel = new CallChannel(socket, peerId, controller, callId,true);
+    try { socket.setSoTimeout((int)CallProtocol.TIMEOUT_MEDIA_SETUP_MS); } catch (Exception ignored) {}
+    channel.openingTimeout=OPENING_TIMER.schedule(() -> {if(channel.awaitingInvite)channel.close();},
+      CallProtocol.TIMEOUT_MEDIA_SETUP_MS,java.util.concurrent.TimeUnit.MILLISECONDS);
     channel.startReader();
     return channel;
   }
@@ -121,7 +135,7 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
         // A channel that dies while a call is up ends that call. Without this, a dead channel
         // leaves an established call looking live until the heartbeat notices.
         if (!closed.get() && controller != null) {
-          try { controller.onSignalingChannelClosed(); } catch (Exception ignored) {}
+          try { controller.onSignalingChannelClosed(this,callId,peerId); } catch (Exception ignored) {}
         }
       }
     }, "call-channel");
@@ -132,6 +146,7 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
 
   /** Route one inbound frame into the controller. */
   private void dispatch(CallProtocol.Frame frame) {
+    if(!callId.equals(frame.callId))return;
     CallLog.i("inbound " + frame.type + " call=" + frame.callId + (callId == null ? " (no call yet)" : ""));
     // Compare the type by value.  CallSignaling.parse builds frame.type as a substring of the
     // received JSON, so it is never the same object as the CallProtocol constant even though the
@@ -139,22 +154,25 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
     // through to controller.onFrame, which returns immediately because no session exists yet, so
     // every incoming call was discarded before it could ring.  The caller then waited out the
     // 30 s ringing timeout and reported "No answer", and the callee showed nothing at all.
-    if (CallProtocol.INVITE.equals(frame.type) && callId == null) {
+    if (awaitingInvite) {
+      if(!CallProtocol.INVITE.equals(frame.type)){close();return;}
       // The opening INVITE.  onInvite answers a rejection on this same channel (DECLINE or BUSY)
       // and returns the accepted session, or null when the invitation was refused.
       try {
-        controller.onInvite(frame, peerId, this);
-      } catch (Exception ignored) {
-      }
+        CallSession accepted=controller.onInvite(frame, peerId, this);
+        if(accepted==null||!controller.ownsChannel(this,callId,peerId)){beginGracefulClose();return;}
+        awaitingInvite=false;cancelOpeningTimeout();socket.setSoTimeout(0);
+      } catch (Exception ignored) {close();}
       return;
     }
-    try { controller.onFrame(frame, peerId); }
+    try { controller.onFrame(frame, peerId,this); }
     catch (Exception ignored) {}
   }
 
   // ── Teardown ───────────────────────────────────────────────────
 
   @Override public void close() {
+    cancelOpeningTimeout();
     if (!closed.compareAndSet(false, true)) return;
     hardCloseSocket();
     Thread t = reader;
@@ -177,6 +195,7 @@ final class CallChannel implements CallController.Transport, java.io.Closeable {
    *
    *  <p>Callers that cannot know whether a terminal frame was written may still call close(). */
   void beginGracefulClose() {
+    cancelOpeningTimeout();
     if (!closed.compareAndSet(false, true)) return;
     try { socket.shutdownOutput(); } catch (Exception ignored) {}
     Thread t = reader;

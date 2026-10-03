@@ -9,7 +9,7 @@ $androidJar = Join-Path $SdkRoot 'platforms\android-34\android.jar'
 $webrtcJar = 'D:\LAN-Messenger\outputs\.build\aar-cache\webrtc-150.7871.01\classes.jar'
 if (!(Test-Path -LiteralPath $webrtcJar)) {throw 'Pinned WebRTC AAR cache missing'}
 New-Item -ItemType Directory -Force $OutputRoot | Out-Null
-$sources = @('ICallMedia','CallProtocol','CallSignaling','CallVideoProtocol','CallVideoResources','WebRtcCallVideo') |
+$sources = @('ICallMedia','CallProtocol','CallSignaling','CallCapabilities','CallVideoProtocol','CallVideoResources','WebRtcCallVideo') |
   ForEach-Object {Join-Path $repo "android\src\net\lanmsg\chat\$_.java"}
 $sources += Join-Path $PSScriptRoot 'WebRtcCallVideoBoundaryCheck.java'
 & "$JdkRoot\bin\javac.exe" -encoding UTF-8 -cp "$androidJar;$webrtcJar" -d $OutputRoot @sources

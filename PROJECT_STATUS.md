@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+Android A07 source checkpoint: authenticated capability probe and call/channel/
+replay boundaries added; video advertising remains disabled pending full v2
+orchestration. Real TLS/fake-media checks passed; no physical production video or
+release compatibility/parity change. Latest full regression reached Windows UI
+and failed occupied-port reservation; current-source peer/group interoperability
+checks passed separately. [A07 handoff](android/video-calling/A07-SIGNALING-HANDOFF.md).
+
 Latest Android A06 source adds the separate secured VP8 adapter and explicitly
 gated camera operations. It is not yet wired to production signaling/UI and has
 no physical-camera acceptance or signed release. JVM adapter boundaries 41/0;

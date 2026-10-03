@@ -1,5 +1,21 @@
 # Android status
 
+Latest A07 checkpoint (2026-10-03): fresh authenticated CALLCAPS probe/responder
+boundary implemented, advertising remains disabled until v2 coordinator binding.
+Call envelopes now reject foreign call/peer/version and replay before heartbeat;
+CALLCONNECT cid and exact socket ownership survive handoff. Socket closure from
+another rejected/busy call cannot end the current one. Actual TLS capability
+checks 8/0 and authenticated call-channel/fake-media checks 8/0 passed. Call
+regression expanded to 417/0; pure video/capability/admission groups 324/0.
+See [A07 handoff](video-calling/A07-SIGNALING-HANDOFF.md). Remaining v2 video
+session/media orchestration and UI/FGS/device/release gates are NOT complete.
+
+Full A06 regression ended: all large-group/migration/ownership/transfer/Offline
+tests passed; final Windows UI suite failed at Program.cs:315, socket error
+10048 (port 43872 already held by user's Windows 2.2.42 app). App left running;
+no unrelated code/port change. Full suite not PASS. Current-source targeted
+Java/Windows secure peer and group/attachment integration passed afterward.
+
 Latest Android A06 source checkpoint (2026-10-03): production separate secured
 VP8 video adapter and explicit camera start/stop/switch implemented. Source is
 not enabled through the controller/UI yet. Native adapter boundary fixtures

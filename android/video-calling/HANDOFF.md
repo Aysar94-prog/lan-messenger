@@ -1,5 +1,12 @@
 # Android video calling — execution handoff
 
+CURRENT resume: A07-SIGNALING-HANDOFF.md. Capability probe and authenticated
+call/channel/replay boundaries now implemented and verified; production video
+advertising remains disabled until remaining v2 coordinator/session binding.
+Latest full runner has ended, failing only late Windows UI port reservation.
+Do not poll old session 22253 or rerun audio listening. Next A07 video negotiation
+effects/timers/state convergence, then diagnostics/UI/FGS and actual phone gates.
+
 Latest resume point: A06-MEDIA-HANDOFF.md. Production native video adapter source
 now exists; controller/session/signaling and visible video controls are not yet
 enabled. Fresh call checks 408/0, foundations 289/0, adapter JVM boundaries 41/0.

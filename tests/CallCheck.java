@@ -1417,17 +1417,36 @@ public final class CallCheck {
     ctrl.start();
 
     final List<byte[]> sent = Collections.synchronizedList(new ArrayList<>());
-    String callId = ctrl.startCall(peerId, callId2 -> sent::add);
+    CallController.Transport boundTransport=sent::add;
+    String callId = ctrl.startCall(peerId, callId2 -> boundTransport);
     check(ctrl.snapshot() != null && ctrl.snapshot().isCaller, "N110-outgoing-is-caller", "");
     eq(ctrl.snapshot().state, CallProtocol.State.OutgoingRinging, "N111-ringing-out");
+
+    ctrl.onFrame(CallSignaling.hangup(UUID.randomUUID().toString(),99),peerId);
+    eq(ctrl.snapshot().state,CallProtocol.State.OutgoingRinging,"N111a-foreign-call-hangup-rejected");
+    CallProtocol.Frame mixed=CallSignaling.hangup(callId,99);mixed.protocolVersion=2;
+    ctrl.onFrame(mixed,peerId);
+    eq(ctrl.snapshot().state,CallProtocol.State.OutgoingRinging,"N111b-mixed-version-rejected");
+    ctrl.onFrame(CallSignaling.accept(callId,99),UUID.randomUUID().toString());
+    eq(ctrl.snapshot().state,CallProtocol.State.OutgoingRinging,"N111c-foreign-peer-rejected");
 
     // The callee's RINGING must be absorbed without ending the call.
     ctrl.onFrame(CallSignaling.ringing(callId, 1), peerId);
     eq(ctrl.snapshot().state, CallProtocol.State.OutgoingRinging, "N112-still-ringing-after-ringing");
+    ctrl.onFrame(CallSignaling.accept(callId,1),peerId);
+    eq(ctrl.snapshot().state,CallProtocol.State.OutgoingRinging,"N112a-replayed-sequence-cannot-accept");
+    ctrl.onFrame(null,peerId);
+    eq(ctrl.snapshot().state,CallProtocol.State.OutgoingRinging,"N112b-null-frame-safe");
 
     // The callee's ACCEPT must move the caller to Connecting and trigger an SDP offer.
     ctrl.onFrame(CallSignaling.accept(callId, 2), peerId);
     eq(ctrl.snapshot().state, CallProtocol.State.Connecting, "N113-accept-reaches-connecting");
+    check(ctrl.ownsChannel(boundTransport,callId,peerId),"N113a-exact-channel-owned","");
+    CallController.Transport foreignTransport=bytes->{};
+    ctrl.onSignalingChannelClosed(foreignTransport,callId,peerId);
+    eq(ctrl.snapshot().state,CallProtocol.State.Connecting,"N113b-other-channel-close-ignored");
+    ctrl.onFrame(CallSignaling.hangup(callId,99),peerId,foreignTransport);
+    eq(ctrl.snapshot().state,CallProtocol.State.Connecting,"N113c-other-channel-frame-ignored");
 
     boolean sentOffer = false;
     for (byte[] w : sent) {
@@ -1435,6 +1454,8 @@ public final class CallCheck {
       if (f != null && CallProtocol.OFFER.equals(f.type)) { sentOffer = true; break; }
     }
     check(sentOffer, "N114-offer-sent-after-accept", "caller must send its SDP offer once accepted");
+    int writes=sent.size();ctrl.onFrame(CallSignaling.accept(callId,2),peerId);
+    eq(sent.size(),writes,"N114a-duplicate-accept-does-not-renegotiate");
 
     // A BUSY arriving after the call has left the ringing state must not be misread as a hangup.
     check(ctrl.hasActive(), "N115-still-active-after-accept", "");

@@ -52,10 +52,11 @@ public final class PeerEngine implements Closeable {
   public volatile Runnable changed=()->{};
   public volatile java.util.function.Consumer<Message> received=m->{};
   // ── Call infrastructure ───────────────────────────────────────
-  /** Callback for incoming CALLCONNECT handoffs: (peerId, authenticatedTlsSocket).
+  /** Callback for incoming CALLCONNECT handoffs: (peerId, callId, authenticatedTlsSocket).
    *  The socket has already passed TLS handshake, HELLO/READY, and received
    *  LM4\tCALLCONNECT.  The handler owns the socket from this point. */
-  public volatile java.util.function.BiConsumer<String,java.net.Socket> callHandler=(peerId,socket)->{
+  public interface CallHandler {void accept(String peerId,String callId,java.net.Socket socket);}
+  public volatile CallHandler callHandler=(peerId,callId,socket)->{
     try{socket.close();}catch(Exception ignored){}
   };
   /** Called after a peer's verification is revoked (locally or via FORGET). */
@@ -267,6 +268,38 @@ public final class PeerEngine implements Closeable {
       throw e;
     }
   }
+
+  /** Fresh verified TLS capability probe; invoke off UI/controller locks. Every
+   * failure means voice-only. Controller v2 support must be ready before service
+   * enables the responder; default remains false during staged implementation. */
+  public volatile java.util.function.BooleanSupplier callVideoSupport=()->false;
+  public boolean probeCallVideo(String peerId) {
+    long started=System.nanoTime(),networkGeneration=generation;
+    Peer peer;
+    synchronized(this){peer=peers.get(peerId);if(!running||simulateLegacyBuild||peer==null||!peer.trusted())return false;}
+    SSLSocket socket=null;
+    try {
+      socket=(SSLSocket)connect(peer.host,peer.port);
+      socket.setSoTimeout(CallCapabilities.remaining(started,System::nanoTime));
+      write(socket,hello());
+      socket.setSoTimeout(CallCapabilities.remaining(started,System::nanoTime));
+      String[] remoteHello=CallCapabilities.readHandshake(socket,started).split("\t",-1);
+      if(!validHello(remoteHello)||!peerId.equals(remoteHello[2]))return false;
+      String fingerprint=SecureIdentity.remote(socket);
+      recordCertificate(peerId,fingerprint,SecureIdentity.remotePublicKey(socket));
+      if(!trusted(peerId,fingerprint))return false;
+      socket.setSoTimeout(CallCapabilities.remaining(started,System::nanoTime));
+      if(!"LM4\tREADY".equals(CallCapabilities.readReply(socket,started)))return false;
+      write(socket,CallCapabilities.REQUEST);
+      String reply=CallCapabilities.readReply(socket,started);
+      synchronized(this) {
+        return running&&generation==networkGeneration
+          &&CallCapabilities.supports(reply,trusted(peerId,fingerprint),simulateLegacyBuild,
+            java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started));
+      }
+    } catch(Exception unavailable) {return false;}
+    finally {if(socket!=null){activeSockets.remove(socket);try{socket.close();}catch(IOException ignored){}}}
+  }
   synchronized void track(Socket s)throws IOException {if(!running||workerSession.get()!=null&&workerSession.get()!=generation){s.close();throw new IOException("Network is offline.");}activeSockets.removeIf(Socket::isClosed);activeSockets.add(s);}
   synchronized void track(ServerSocket s)throws IOException {if(!running){s.close();throw new IOException("Network is offline.");}temporaryListeners.add(s);}
   static String read(Socket s)throws IOException {ByteArrayOutputStream b=new ByteArrayOutputStream();int c;InputStream in=s.getInputStream();while((c=in.read())!=-1){if(c==10)return new String(b.toByteArray(),StandardCharsets.UTF_8);if(b.size()>=16384)throw new IOException("Frame too large");b.write(c);}throw new EOFException();}
@@ -287,11 +320,16 @@ public final class PeerEngine implements Closeable {
     // ── Call handoff: LM4\tCALLCONNECT\t<call-id> ──────────────
     if(m.length==3&&m[0].equals("LM4")&&m[1].equals("CALLCONNECT")&&uuid(m[2])){
       CallLog.i("CALLCONNECT call="+m[2]+" from "+h[2]+" at "+s.getInetAddress().getHostAddress());
-      callHandler.accept(h[2],s);handedOff=true;
+      callHandler.accept(h[2],m[2],s);handedOff=true;
       return; // ownership now belongs to the channel — the finally block must not close it // socket ownership transferred — do not close
     }
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHDIRECT")){DirectFileTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(m.length==2&&m[0].equals("LM4")&&m[1].equals("FILECAPS")){write(s,"LM4\tFILECAPS\tSTREAM1");return;}
+    if(m.length==2&&m[0].equals("LM4")&&m[1].equals("CALLCAPS")){
+      boolean enabled=false;try{enabled=callVideoSupport.getAsBoolean();}catch(Exception ignored){}
+      String response=CallCapabilities.response(enabled,simulateLegacyBuild);
+      if(response!=null)write(s,response);return;
+    }
     if(m.length==5&&m[0].equals("LM4")&&m[1].equals("FETCHSTREAM")){ResumableTransfer.serve(this,s,m,h[2],fingerprint);return;}
     if(!simulateLegacyBuild&&m.length==2&&m[0].equals("LM4")&&m[1].equals("CAPS")){write(s,"LM4\tCAPS\t2");return;}
     if((m.length==6||m.length==7)&&m[0].equals("LM4")&&m[1].equals("GROUP")){GroupSync.acceptGroup(this,m,h[2],fingerprint);write(s,"LM4\tGROUPACK\t"+m[2]);notifyChanged();return;}

@@ -44,6 +44,7 @@ public class CallController {
 
   private final AtomicLong sequence = new AtomicLong(0);
   private long negotiationGeneration;
+  private CallFrameAdmission frameAdmission;
 
   // ── Timer management ───────────────────────────────────────────
 
@@ -233,6 +234,7 @@ public class CallController {
       this.transport = opened;
       this.activeTransport = opened;
       this.session = new CallSession.Builder(callId, peerId, true, now);
+      this.frameAdmission = new CallFrameAdmission(callId,peerId,1,0);
       session.state = CallProtocol.State.OutgoingRinging;
       this.negotiationGeneration = 0;
 
@@ -244,6 +246,7 @@ public class CallController {
       } catch (IOException e) {
         // The channel failed on its first write: leave no half-open session behind.
         session = null;
+        frameAdmission = null;
         transport = null;
         activeTransport = null;
         closeTransportQuietly(opened);
@@ -279,11 +282,13 @@ public class CallController {
                                Transport transport) throws IOException {
     synchronized (lock) {
       long now = clock.nowMs();
+      if(frame==null||frame.protocolVersion!=1||frame.senderSequence<=0)return null;
       CallLog.i("INVITE call=" + frame.callId + " from " + authenticatedPeerId);
 
       // Validate
       String callerId = CallSignaling.getCaller(frame);
-      if (callerId == null || !callerId.equals(authenticatedPeerId)) {
+      if (callerId == null || !callerId.equals(authenticatedPeerId)
+          || !engine.id.equals(CallSignaling.getCallee(frame))) {
         CallLog.w("INVITE refused: identity mismatch (" + callerId + " vs " + authenticatedPeerId + ")");
         return null; // mismatched identity — no reply
       }
@@ -344,6 +349,7 @@ public class CallController {
       this.transport = transport;
       this.activeTransport = transport;
       this.session = new CallSession.Builder(frame.callId, authenticatedPeerId, false, now);
+      this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,1,frame.senderSequence);
       session.state = CallProtocol.State.IncomingRinging;
       this.negotiationGeneration = 0;
 
@@ -475,30 +481,35 @@ public class CallController {
 
   // ── Incoming signaling dispatch ─────────────────────────────────
 
+  public boolean ownsChannel(Transport channel,String callId,String peerId) {
+    synchronized(lock) {return session!=null&&activeTransport==channel
+      &&session.callId.equals(callId)&&session.peerId.equals(peerId);}
+  }
+  public void onFrame(CallProtocol.Frame frame,String peerId,Transport channel)throws IOException {
+    synchronized(lock) {
+      if(frame==null||!ownsChannel(channel,frame.callId,peerId))return;
+      onFrame(frame,peerId);
+    }
+  }
+
   /** Dispatch an incoming call-signaling frame.  Called from PeerEngine's message handler. */
   public void onFrame(CallProtocol.Frame frame, String authenticatedPeerId) throws IOException {
     synchronized (lock) {
+      if(frame==null||frame.type==null)return;
       if (session == null || !session.peerId.equals(authenticatedPeerId)) {
         CallLog.w("dropped " + frame.type + ": no session for peer " + authenticatedPeerId
           + " (local session=" + (session == null ? "none" : session.callId) + ")");
         return;
       }
 
-      // Any frame from the authenticated call peer proves the channel is alive. Recorded after
-      // the session/peer check so an unrelated peer's traffic cannot keep this call's heartbeat
-      // satisfied, and after the sequence check so a stale retransmission is not proof.
-      if (frame.senderSequence > 0) noteInboundSignal();
-
-      // Validate sequence ordering
-      if (frame.senderSequence <= 0) return; // sequences start at 1
-      // (full duplicate/reorder tracking would track last-seen remote seq)
-
       String allowed = CallProtocol.allowedSender(frame.type, session.state, session.isCaller);
-      if (allowed == null) {
+      if (frameAdmission==null || !frameAdmission.admit(frame,authenticatedPeerId,allowed!=null)) {
         CallLog.w("dropped " + frame.type + ": not admissible in state " + session.state
           + " as " + (session.isCaller ? "caller" : "callee"));
         return; // invalid message for current state
       }
+      // Only admitted fresh traffic bound to this exact peer/call/version proves liveness.
+      noteInboundSignal();
 
       switch (frame.type) {
         case CallProtocol.RINGING:
@@ -698,6 +709,7 @@ public class CallController {
       // Return to Idle after a brief snapshot window
       session.state = CallProtocol.State.Idle;
       session = null;
+      frameAdmission = null;
       transport = null;
       negotiationGeneration = 0;
       activeTransport = null;
@@ -743,6 +755,7 @@ public class CallController {
         cancelTimeout();
         session = null;
         transport = null;
+        frameAdmission = null;
       } catch (IOException ignored) {}
     }
   }
@@ -916,9 +929,10 @@ public class CallController {
   /** The signaling channel for a live call has failed at the transport level (socket closed or
    *  unreadable) rather than at the frame level.  Ends the call so a dead channel cannot leave
    *  an established call looking live until the heartbeat notices. */
-  public void onSignalingChannelClosed() {
+  public void onSignalingChannelClosed(Transport channel,String callId,String peerId) {
     synchronized (lock) {
-      if (session == null || !session.state.active()) return;
+      if(!ownsChannel(channel,callId,peerId))return;
+      if (session == null || session.state.terminal()) return;
       try { endCall(CallProtocol.EndReason.SIGNALING_LOST); }
       catch (IOException ignored) {}
     }
@@ -942,6 +956,7 @@ public class CallController {
         session = null;
         transport = null;
         activeTransport = null;
+        frameAdmission = null;
         if (live instanceof java.io.Closeable) {
           try { ((java.io.Closeable) live).close(); } catch (Exception ignored) {}
         }

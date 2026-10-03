@@ -7,13 +7,12 @@ import java.util.*;
  * separately by the service-owned controller. Never apply these new fields to v1. */
 public final class CallVideoProtocol {
   private CallVideoProtocol() {}
-  public static final String CALLCAPS = "LM4\tCALLCAPS";
-  public static final String CAPABILITY = "LM4\tCALLCAPS\t2\tVP8";
+  public static final String CALLCAPS = CallCapabilities.REQUEST;
+  public static final String CAPABILITY = CallCapabilities.RESPONSE;
   public static final long REQUEST_TIMEOUT_MS = 30_000, VIDEO_TIMEOUT_MS = 15_000;
   public static final int MAX_CANDIDATE_BYTES = 4096, MAX_REQUESTS = 128;
   public static boolean capable(String response, boolean verified, boolean legacy, long elapsedMs) {
-    return verified && !legacy && elapsedMs >= 0 && elapsedMs < 10_000
-      && CAPABILITY.equals(response);
+    return CallCapabilities.supports(response,verified,legacy,elapsedMs);
   }
   public static String capabilityResponse(boolean legacy) { return legacy ? null : CAPABILITY; }
   private static boolean keys(Map<String,Object> b, String... keys) {

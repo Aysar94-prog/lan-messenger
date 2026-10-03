@@ -287,8 +287,8 @@ public class MessengerService extends Service {
       // ── Wire call handoff (A02) + revoke hook (A03) ──
       // A08-A10: the channel is owned by CallChannel, which pairs the socket with its single
       // reader thread and serialized writer, and tears both down together.
-      peer.callHandler = (peerId, socket) -> {
-        CallChannel channel = CallChannel.adoptIncoming(socket, peerId, cc);
+      peer.callHandler = (peerId, callId, socket) -> {
+        CallChannel channel = CallChannel.adoptIncoming(socket, peerId, callId, cc);
         // The channel closes itself when the socket dies; the controller is told through
         // onSignalingChannelClosed() so an established call cannot outlive its signaling.
       };

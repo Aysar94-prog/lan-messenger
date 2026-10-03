@@ -1,5 +1,11 @@
 # A06 native media source checkpoint — 2026-10-03
 
+Superseded run status: session 22253 has finished. Large groups, migration,
+ownership, transfers and Offline ultimately passed. Windows UI then failed at
+Program.cs:315, error 10048, because the user's released Windows app occupies
+port 43872. It was not stopped. Full suite is not PASS. Resume current source
+from A07-SIGNALING-HANDOFF.md, not the historical running-session notes below.
+
 Platform Android; execution authorized. Frozen plan-v007 and A02b VP8/separate
 secured video-only PC selection unchanged. Audio listening accepted complete;
 do not repeat it. User-approved disk cleanup completed; space no longer blocks.
