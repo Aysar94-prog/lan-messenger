@@ -29,6 +29,7 @@ final class PeopleListView {
     Button aboutItem=menuItem(activity,"About");aboutItem.setOnClickListener(v->{closeMenu(activity);activity.showAbout();});panel.addView(aboutItem);
     Button masters=menuItem(activity,"Masters");masters.setOnClickListener(v->{closeMenu(activity);activity.showPermissionDevices(true);});panel.addView(masters);
     Button slave=menuItem(activity,"Slave");slave.setOnClickListener(v->{closeMenu(activity);activity.showPermissionDevices(false);});panel.addView(slave);
+    Button direct=menuItem(activity,"Direct connections");direct.setOnClickListener(v->{closeMenu(activity);DirectConnectionUi.show(activity);});panel.addView(direct);
     boolean retry=activity.host!=null&&activity.host.requestedOnline&&"Offline".equals(activity.host.state);
     Button connection=menuItem(activity,retry?"Retry online":activity.host!=null&&activity.host.requestedOnline?"Go offline":"Go online");connection.setOnClickListener(v->{closeMenu(activity);activity.setConnection(retry||activity.host==null||!activity.host.requestedOnline);});panel.addView(connection);
     // setChecked runs before the listener is attached, so building the menu never reports a change.

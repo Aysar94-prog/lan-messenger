@@ -1,5 +1,16 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-04 Android feature checkpoint: optional Direct connections now restricts
+application networking to selected verified identities and explicit IPv4 addresses,
+with discovery disabled, encrypted saved selection, socket/call-candidate guards
+and other contacts offline/queued. Android2.2.66/code93 ARM64 original-key test
+candidate installed over existing data on both phones (SM-A075F over USB).
+Direct34/0, call422/0, pacing28/0, permission36/0 and video-contract/lifecycle
+checks pass. Device UI/native media and Wi-Fi stability acceptance remain pending;
+the known SM-A075F disconnect fault is not claimed repaired. Windows has no new
+direct-mode UI; LM4 unchanged and physical Windows pairing in this mode pending.
+See [Android direct-connections plan](PLAN-ANDROID-DIRECT-CONNECTIONS.md).
+
 Release decision 2026-10-03: user stopped investigation and requested Android
 2.2.65/code92 final packaging, commit and push. Existing signer; all supported
 ABIs. Known issue: SM-A075F Wi-Fi disconnections remain unresolved and physical

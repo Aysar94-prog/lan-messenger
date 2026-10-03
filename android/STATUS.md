@@ -1,5 +1,24 @@
 # Android status
 
+2026-10-04: optional Direct connections implemented after explicit user execution
+approval. Menu selects verified devices with editable IPv4:port. Engine disables
+discovery, restricts TLS/fast sockets and incoming authenticated identities to
+selected addresses/certificate pins, filters remote call SDP/ICE addresses, and
+keeps other contacts offline with sends queued. Encrypted selection persists;
+policy changes stop calls/sockets before restart, preserve actual Offline, and
+malformed settings fail closed with explicit UI recovery. Deletion prunes targets.
+Idle selected-peer TLS presence checks are paced to8s to retain compatibility
+with existing peers'12s presence expiry; local direct presence expires at45s.
+Direct34/0 real TLS/socket tests, CallCheck422/0, pacing28/0, permission36/0,
+video-contract suites and service lifecycle guard pass. Signed ARM64 test candidate
+2.2.66/code93 (`LanMessenger-2.2.66-direct.apk`) installed on USB SM-A075F
+R8YY80A8VLB and SM-S908E, original certificate and first-install times retained.
+APK SHA-256 b816dcea145b4a1fb9c54d0cbccad2eb18bf8b630a6242c0069c4bc2285b3ac5.
+Device menu/native media/background acceptance and 10–15-minute Wi-Fi stability
+test in enabled direct mode remain pending. No Wi-Fi repair claim. Windows and
+LM4 wire unchanged; physical Windows direct-mode pairing pending. See
+[direct-connections plan](../PLAN-ANDROID-DIRECT-CONNECTIONS.md).
+
 Release decision 2026-10-03: user explicitly stopped investigation and requested
 final packaging, commit and push despite the unresolved device-specific fault.
 Android release 2.2.65/code92 packages current source for all four supported ABIs,

@@ -19,7 +19,8 @@ public final class PeerEngine implements Closeable {
   public static final class Peer {
     public String id,name,host; public int port; public long seen; public String fingerprint="",verified="",publicKey="",sentAvatarHash="",receivedAvatarHash="";
     Peer(String i,String n,String h,int p){id=i;name=n;host=h;port=p;}
-    public boolean online(){return System.currentTimeMillis()-seen<12000;}
+    long presenceWindow=12000;
+    public boolean online(){return System.currentTimeMillis()-seen<presenceWindow;}
     public boolean trusted(){return !fingerprint.isEmpty()&&fingerprint.equals(verified);}
     public boolean keyChanged(){return !verified.isEmpty()&&!verified.equals(fingerprint);}
     public String security(){return keyChanged()?"KEY CHANGED":trusted()?"Verified":"Verify device";}
@@ -38,6 +39,70 @@ public final class PeerEngine implements Closeable {
   final SecureIdentity.Protector protector;
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
   final LinkedHashMap<String,Peer> peers=new LinkedHashMap<>();
+  volatile boolean directOnly;
+  public volatile String directSettingsProblem="";
+  final LinkedHashMap<String,String[]> directTargets=new LinkedHashMap<>();
+  public boolean directOnly(){return directOnly;}
+  public synchronized String directAddress(String peerId){String[] t=directTargets.get(peerId);return t==null?"":t[0]+":"+t[1];}
+  static String[] localAddress(String address)throws IOException {
+    String[] a=address.trim().split(":",-1);if(a.length>2||!a[0].matches("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+"))throw new IOException("Enter a local IPv4 address, optionally followed by :port.");
+    String[] parts=a[0].split("\\.");for(String part:parts)try{if(Integer.parseInt(part)>255)throw new IOException("Invalid IPv4 address.");}catch(NumberFormatException invalid){throw new IOException("Invalid IPv4 address.");}
+    InetAddress ip=InetAddress.getByName(a[0]);if(!(ip.isSiteLocalAddress()||ip.isLinkLocalAddress()||ip.isLoopbackAddress()))throw new IOException("Use a local network address.");
+    int port;try{port=a.length==2?Integer.parseInt(a[1]):MESSAGE_PORT;}catch(NumberFormatException invalid){throw new IOException("Invalid port.");}if(port<1||port>65535)throw new IOException("Invalid port.");
+    return new String[]{ip.getHostAddress(),String.valueOf(port)};
+  }
+  /** Settings change only with networking stopped, so no old socket can bypass the new policy. */
+  public synchronized void configureDirect(boolean enabled,Map<String,String> addresses)throws IOException {
+    if(running)throw new IOException("Stop networking before changing direct connections.");
+    LinkedHashMap<String,String[]> next=new LinkedHashMap<>();StringBuilder data=new StringBuilder(enabled?"1\n":"0\n");
+    for(Map.Entry<String,String> entry:addresses.entrySet()){
+      Peer p=peers.get(entry.getKey());if(p==null||!p.trusted())throw new IOException("Select verified devices only.");
+      String[] a=localAddress(entry.getValue());String[] t={a[0],a[1],p.verified};next.put(p.id,t);
+      data.append(p.id).append('\t').append(t[0]).append('\t').append(t[1]).append('\t').append(t[2]).append('\n');
+    }
+    if(enabled&&next.isEmpty())throw new IOException("Select at least one verified device.");
+    File settings=new File(file.getParentFile(),"direct-connections.sec"),tmp=new File(settings+".tmp");
+    try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not save direct connections.",e);}
+    atomicReplace(tmp,settings);directTargets.clear();directTargets.putAll(next);directOnly=enabled;directSettingsProblem="";
+    for(Peer p:peers.values()){p.seen=0;if(enabled&&next.containsKey(p.id)){String[] t=next.get(p.id);p.host=t[0];p.port=Integer.parseInt(t[1]);}}
+    notifyChanged();
+  }
+  void loadDirect()throws IOException {
+    File settings=new File(file.getParentFile(),"direct-connections.sec");if(!settings.exists())return;
+    try{
+      String[] lines=new String(protector.unprotect(java.nio.file.Files.readAllBytes(settings.toPath())),StandardCharsets.UTF_8).split("\n");
+      if(lines.length==0||!(lines[0].equals("0")||lines[0].equals("1")))throw new IOException("Invalid direct settings.");
+      for(int i=1;i<lines.length;i++){String[] t=lines[i].split("\t",-1);if(t.length!=4||!uuid(t[0]))throw new IOException("Invalid direct target.");String[] a=localAddress(t[1]+":"+t[2]);directTargets.put(t[0],new String[]{a[0],a[1],t[3]});}
+      directOnly=lines[0].equals("1");
+      if(directOnly)for(Peer p:peers.values()){String[] t=directTargets.get(p.id);if(t!=null){p.host=t[0];p.port=Integer.parseInt(t[1]);}}
+    }catch(Exception invalid){directTargets.clear();directOnly=true;directSettingsProblem="Saved direct settings could not be read. Select devices again or turn off Direct connections and save. Other devices remain blocked.";}
+  }
+  synchronized void pruneDirectTargets()throws IOException {
+    directTargets.keySet().retainAll(peers.keySet());
+    File settings=new File(file.getParentFile(),"direct-connections.sec");if(!settings.exists())return;
+    StringBuilder data=new StringBuilder(directOnly?"1\n":"0\n");
+    for(Map.Entry<String,String[]> entry:directTargets.entrySet()){String[] t=entry.getValue();data.append(entry.getKey()).append('\t').append(t[0]).append('\t').append(t[1]).append('\t').append(t[2]).append('\n');}
+    File tmp=new File(settings+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not update direct settings.",e);}atomicReplace(tmp,settings);
+  }
+  synchronized boolean directPeerAllowed(String peerId,String host){
+    if(!directOnly)return true;String[] t=directTargets.get(peerId);Peer p=peers.get(peerId);
+    return t!=null&&t[0].equals(host)&&p!=null&&p.trusted()&&p.verified.equals(t[2]);
+  }
+  synchronized boolean directHostAllowed(String host){if(!directOnly)return true;for(String id:directTargets.keySet())if(directPeerAllowed(id,host))return true;return false;}
+  synchronized void checkDirectHost(String host)throws IOException {if(!directHostAllowed(host))throw new IOException("Device is unavailable in Direct connections mode.");}
+  boolean directCandidateAllowed(String candidate){if(!directOnly)return true;String[] fields=candidate.trim().split("\\s+");return fields.length>=8&&directHostAllowed(fields[4]);}
+  String directMediaSdp(String sdp)throws IOException {
+    if(!directOnly)return sdp;StringBuilder filtered=new StringBuilder();
+    for(String line:sdp.split("\\r?\\n")){
+      if(line.startsWith("a=candidate:")&&!directCandidateAllowed(line.substring(2)))continue;
+      if(line.startsWith("c=IN ")){String[] fields=line.split(" ");if(fields.length!=3||!(fields[2].equals("0.0.0.0")||fields[2].equals("::")||directHostAllowed(fields[2])))throw new IOException("Call media address is outside selected devices.");}
+      filtered.append(line).append("\r\n");
+    }return filtered.toString();
+  }
+  synchronized void checkDirectCertificate(String host,int targetPort,String fingerprint)throws IOException {
+    if(!directOnly)return;for(Map.Entry<String,String[]> entry:directTargets.entrySet()){String[] t=entry.getValue();if(directPeerAllowed(entry.getKey(),host)&&Integer.parseInt(t[1])==targetPort&&t[2].equals(fingerprint))return;}
+    throw new IOException("Selected address has a different device certificate. Check its IP address.");
+  }
   final LinkedHashMap<String,TrustedCallGrant> trustedCallGrants=new LinkedHashMap<>();
   // Informational only: never consulted by call admission or camera authorization.
   final Map<String,RemoteCallGrant> remoteCallGrants=new HashMap<>();
@@ -119,6 +184,7 @@ public final class PeerEngine implements Closeable {
       try{load(file);}catch(Exception e){try{load(new File(file+".bak"));}catch(Exception other){throw new IOException("Saved data could not be read. Keep the data folder for recovery.",other);}}
     } else {id=UUID.randomUUID().toString();name=cleanName(defaultName);}
     try{identity=new SecureIdentity(directory,id,protector);}catch(Exception e){throw new IOException("Could not open protected device identity",e);}
+    loadDirect();
     purgeExpired();
     VoiceDrafts.reconcile(this);
     save();save();
@@ -127,7 +193,7 @@ public final class PeerEngine implements Closeable {
   static String dec(String s){return new String(Base64.getDecoder().decode(s),StandardCharsets.UTF_8);}
   static boolean uuid(String s){try{return UUID.fromString(s).toString().equals(s);}catch(Exception e){return false;}}
   static String cleanName(String s){s=s.trim();return s.isEmpty()?"My device":s.substring(0,Math.min(s.length(),30));}
-  public synchronized List<Peer> peers(){ArrayList<Peer> result=new ArrayList<>();for(Peer p:peers.values()){Peer copy=new Peer(p.id,p.name,p.host,p.port);copy.seen=p.seen;copy.fingerprint=p.fingerprint;copy.verified=p.verified;copy.publicKey=p.publicKey;copy.sentAvatarHash=p.sentAvatarHash;copy.receivedAvatarHash=p.receivedAvatarHash;result.add(copy);}return result;}
+  public synchronized List<Peer> peers(){ArrayList<Peer> result=new ArrayList<>();for(Peer p:peers.values()){Peer copy=new Peer(p.id,p.name,p.host,p.port);copy.seen=directPeerAllowed(p.id,p.host)?p.seen:0;copy.presenceWindow=directOnly?45000:12000;copy.fingerprint=p.fingerprint;copy.verified=p.verified;copy.publicKey=p.publicKey;copy.sentAvatarHash=p.sentAvatarHash;copy.receivedAvatarHash=p.receivedAvatarHash;result.add(copy);}return result;}
   public synchronized List<Message> messages(String peer){LinkedHashMap<String,Message> result=new LinkedHashMap<>();HashMap<String,int[]> counts=new HashMap<>();for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(peer):m.from.equals(peer)||m.to.equals(peer)){String key=m.from+"/"+m.id;if(!result.containsKey(key))result.put(key,m.copy());int[] c=counts.get(key);if(c==null){c=new int[3];counts.put(key,c);}c[0]++;if(m.status.equals("Seen"))c[2]++;if(m.status.equals("Seen")||m.status.equals("Delivered"))c[1]++;}for(Map.Entry<String,Message> entry:result.entrySet()){Message m=entry.getValue();int[] c=counts.get(entry.getKey());if(m.from.equals(id)&&!m.groupId.isEmpty())m.status=c[2]==c[0]?"Seen":c[1]==c[0]?"Delivered":"Queued ("+c[1]+"/"+c[0]+" delivered)";}return new ArrayList<>(result.values());}
 
   public synchronized int pending(){int n=0;for(Message m:messages)if(m.status.equals("Queued"))n++;return n;}
@@ -237,15 +303,15 @@ public final class PeerEngine implements Closeable {
     bind=bindAddress;discoveryPort=udpPort;
     try {
       listener=identity.context.getServerSocketFactory().createServerSocket();((SSLServerSocket)listener).setNeedClientAuth(true);((SSLServerSocket)listener).setEnabledProtocols(new String[]{"TLSv1.2"});((SSLServerSocket)listener).setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});listener.setReuseAddress(true);listener.bind(new InetSocketAddress(bind,tcpPort));port=listener.getLocalPort();
-      discovery=new DatagramSocket(null);discovery.setReuseAddress(true);discovery.setBroadcast(true);discovery.bind(new InetSocketAddress(bind,udpPort));running=true;
+      if(!directOnly){discovery=new DatagramSocket(null);discovery.setReuseAddress(true);discovery.setBroadcast(true);discovery.bind(new InetSocketAddress(bind,udpPort));}running=true;
     }catch(IOException e){if(listener!=null)listener.close();if(discovery!=null)discovery.close();listener=null;discovery=null;networkState="Offline";throw e;}
     generation++;
     connections=new ThreadPoolExecutor(8,16,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(32),new ThreadPoolExecutor.AbortPolicy());
     outgoing=Executors.newFixedThreadPool(4);timer=Executors.newScheduledThreadPool(2);
     networkState="Online";
     final ServerSocket server=listener;final DatagramSocket udp=discovery;final long session=generation;
-    Thread accept=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{Socket s=server.accept();try{track(s);connections.execute(()->{workerSession.set(session);receive(s);});}catch(RejectedExecutionException e){activeSockets.remove(s);s.close();}}catch(IOException e){if(running&&session==generation)error="Incoming connections unavailable.";}},"lan-incoming");accept.setDaemon(true);accept.start();
-    Thread discover=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{byte[] b=new byte[1024];DatagramPacket p=new DatagramPacket(b,b.length);udp.receive(p);if(!running||session!=generation)break;String line=new String(p.getData(),0,p.getLength(),StandardCharsets.UTF_8).trim();String[] a=line.split("\t",-1);if(validHello(a)&&!a[2].equals(id)){boolean fresh; synchronized(this){Peer old=peers.get(a[2]);fresh=old==null||!old.online();}remember(a[2],dec(a[3]),p.getAddress().getHostAddress(),Integer.parseInt(a[4]));if(fresh)announceTo(p.getAddress(),p.getPort());}}catch(Exception e){if(running&&session==generation&&!(e instanceof SocketException))error="Discovery packet ignored.";}},"lan-discovery");discover.setDaemon(true);discover.start();
+    Thread accept=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{Socket s=server.accept();if(!directHostAllowed(s.getInetAddress().getHostAddress())){s.close();continue;}try{track(s);connections.execute(()->{workerSession.set(session);receive(s);});}catch(RejectedExecutionException e){activeSockets.remove(s);s.close();}}catch(IOException e){if(running&&session==generation)error="Incoming connections unavailable.";}},"lan-incoming");accept.setDaemon(true);accept.start();
+    if(udp!=null){Thread discover=new Thread(()->{workerSession.set(session);while(running&&session==generation)try{byte[] b=new byte[1024];DatagramPacket p=new DatagramPacket(b,b.length);udp.receive(p);if(!running||session!=generation)break;String line=new String(p.getData(),0,p.getLength(),StandardCharsets.UTF_8).trim();String[] a=line.split("\t",-1);if(validHello(a)&&!a[2].equals(id)){boolean fresh; synchronized(this){Peer old=peers.get(a[2]);fresh=old==null||!old.online();}remember(a[2],dec(a[3]),p.getAddress().getHostAddress(),Integer.parseInt(a[4]));if(fresh)announceTo(p.getAddress(),p.getPort());}}catch(Exception e){if(running&&session==generation&&!(e instanceof SocketException))error="Discovery packet ignored.";}},"lan-discovery");discover.setDaemon(true);discover.start();}
     timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{purgeExpired();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
     timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{announce();}catch(Exception ignored){}},0,3,TimeUnit.SECONDS);
     timer.scheduleWithFixedDelay(()->{workerSession.set(session);if(session==generation)try{flush();}catch(Exception ignored){}},1,2,TimeUnit.SECONDS);
@@ -253,9 +319,9 @@ public final class PeerEngine implements Closeable {
   }
   synchronized String hello(){return "LM4\tHELLO\t"+id+"\t"+enc(name)+"\t"+port;}
   boolean validHello(String[] a){try{return a.length==5&&a[0].equals("LM4")&&a[1].equals("HELLO")&&uuid(a[2])&&!dec(a[3]).trim().isEmpty()&&dec(a[3]).length()<=30&&Integer.parseInt(a[4])>0&&Integer.parseInt(a[4])<=65535;}catch(Exception e){return false;}}
-  void announceTo(InetAddress address,int targetPort)throws IOException {if(!running||workerSession.get()!=null&&workerSession.get()!=generation)throw new IOException("Network is offline.");byte[] b=hello().getBytes(StandardCharsets.UTF_8);discovery.send(new DatagramPacket(b,b.length,address,targetPort));}
+  void announceTo(InetAddress address,int targetPort)throws IOException {if(directOnly||!running||workerSession.get()!=null&&workerSession.get()!=generation)throw new IOException("Network is offline.");byte[] b=hello().getBytes(StandardCharsets.UTF_8);discovery.send(new DatagramPacket(b,b.length,address,targetPort));}
   public void announce()throws IOException {
-    if(!running)return;
+    if(!running||directOnly)return;
     if(bind.equals("0.0.0.0")){
       try{announceTo(InetAddress.getByName("255.255.255.255"),discoveryPort);}catch(IOException ignored){}
       Enumeration<NetworkInterface> interfaces=NetworkInterface.getNetworkInterfaces();
@@ -264,9 +330,10 @@ public final class PeerEngine implements Closeable {
     for(Peer p:peers())try{announceTo(InetAddress.getByName(p.host),discoveryPort);}catch(IOException ignored){}
   }
   public synchronized void remember(String peerId,String peerName,String host,int peerPort)throws IOException {
-    if(peerId.equals(id))return;
+    if(peerId.equals(id)||!directPeerAllowed(peerId,host))return;
     Peer old=peers.get(peerId);boolean modified=old==null||!old.host.equals(host)||old.port!=peerPort||!old.name.equals(peerName);
-    Peer p=new Peer(peerId,cleanName(peerName),host,peerPort);if(old!=null){p.fingerprint=old.fingerprint;p.verified=old.verified;p.publicKey=old.publicKey;p.sentAvatarHash=old.sentAvatarHash;p.receivedAvatarHash=old.receivedAvatarHash;}p.seen=System.currentTimeMillis();peers.put(peerId,p);
+    if(directOnly){String[] t=directTargets.get(peerId);peerPort=Integer.parseInt(t[1]);}
+    Peer p=new Peer(peerId,cleanName(peerName),host,peerPort);if(old!=null){p.fingerprint=old.fingerprint;p.verified=old.verified;p.publicKey=old.publicKey;p.sentAvatarHash=old.sentAvatarHash;p.receivedAvatarHash=old.receivedAvatarHash;}p.presenceWindow=directOnly?45000:12000;p.seen=System.currentTimeMillis();peers.put(peerId,p);
     if(modified)try{save();}catch(IOException e){if(old==null)peers.remove(peerId);else peers.put(peerId,old);throw e;}notifyChanged();
   }
   public void addAddress(String address)throws IOException {
@@ -275,7 +342,7 @@ public final class PeerEngine implements Closeable {
     int targetPort=a.length==2?Integer.parseInt(a[1]):MESSAGE_PORT;
     try(Socket s=connect(a[0],targetPort)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))throw new IOException("No other LAN Messenger device at this address.");remember(h[2],dec(h[3]),a[0],Integer.parseInt(h[4]));try{recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){throw new IOException(e);}}
   }
-  Socket connect(String host,int targetPort)throws IOException {SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();if(!running)throw new IOException("Network is offline.");return s;}catch(IOException e){activeSockets.remove(s);s.close();throw e;}}
+  Socket connect(String host,int targetPort)throws IOException {checkDirectHost(host);SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();if(directOnly)checkDirectCertificate(host,targetPort,SecureIdentity.remote(s));if(!running)throw new IOException("Network is offline.");return s;}catch(Exception e){activeSockets.remove(s);s.close();throw e instanceof IOException?(IOException)e:new IOException(e);}}
 
   /** Open an authenticated call channel to a verified peer.
    *  Sends HELLO, receives READY, sends CALLCONNECT, and returns the
@@ -355,7 +422,7 @@ public final class PeerEngine implements Closeable {
   public synchronized void setTrustedCallMask(String peerId,int mask)throws IOException{Peer p=peers.get(peerId);if(p==null||!p.trusted())throw new IOException("Verify this device before granting trusted call access.");mask&=15;TrustedCallGrant old=trustedCallGrants.get(peerId);if(mask==0)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,new TrustedCallGrant(p.verified,mask));try{save();}catch(IOException e){if(old==null)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,old);throw e;}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
   synchronized boolean trusted(String peerId,String fingerprint){Peer p=peers.get(peerId);return p!=null&&!p.verified.isEmpty()&&p.verified.equals(fingerprint);}
-  void receive(Socket socket){SSLSocket s=null;boolean handedOff=false;try{s=(SSLSocket)socket;s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
+  void receive(Socket socket){SSLSocket s=null;boolean handedOff=false;try{s=(SSLSocket)socket;s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id)||!directPeerAllowed(h[2],s.getInetAddress().getHostAddress())||directOnly&&!trusted(h[2],fingerprint))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
     if(!trusted(h[2],fingerprint)){CallLog.w("call connection refused from "+h[2]+": peer not verified");write(s,"LM4\tPAIR");return;}write(s,"LM4\tREADY");
     String[] m=read(s).split("\t",-1);
     // ── Call handoff: LM4\tCALLCONNECT\t<call-id> ──────────────
@@ -446,9 +513,12 @@ public final class PeerEngine implements Closeable {
     static final long IDLE_MS=30000,WORK_MS=2000;
     final Map<String,long[]> probes=new HashMap<>();
     synchronized boolean claim(String peer,long epoch,long now,boolean work){
+      return claim(peer,epoch,now,work,IDLE_MS);
+    }
+    synchronized boolean claim(String peer,long epoch,long now,boolean work,long idleMs){
       long[] prior=probes.get(peer);
       if(prior!=null&&prior[0]==epoch&&now<prior[1]&&!(work&&prior[2]==0))return false;
-      probes.put(peer,new long[]{epoch,now+(work?WORK_MS:IDLE_MS),work?1:0});return true;
+      probes.put(peer,new long[]{epoch,now+(work?WORK_MS:idleMs),work?1:0});return true;
     }
     synchronized void clear(){probes.clear();}
   }
@@ -466,12 +536,12 @@ public final class PeerEngine implements Closeable {
   void flush(){if(!running)return;TransferManager.queueAutomaticMedia(this);for(Peer p:peers())startDelivery(p);}
   void startDelivery(Peer p){
     long session=generation;
-    if(!running||workerSession.get()!=null&&workerSession.get()!=session||sending.containsKey(p.id))return;
+    if(!directPeerAllowed(p.id,p.host)||!running||workerSession.get()!=null&&workerSession.get()!=session||sending.containsKey(p.id))return;
     boolean work=pendingDeliveryWork(p.id);
     // Presence is announced over UDP. Idle TLS probes to stale saved addresses
     // add no useful presence information and must not churn while a peer is away.
-    if(!p.online()&&!work)return;
-    if(!deliveryPacing.claim(p.id,queueEpoch.get(),System.nanoTime()/1000000L,p.online()&&work))return;
+    if(!directOnly&&!p.online()&&!work)return;
+    if(!deliveryPacing.claim(p.id,queueEpoch.get(),System.nanoTime()/1000000L,p.online()&&work,directOnly?8000:DeliveryPacing.IDLE_MS))return;
     if(sending.putIfAbsent(p.id,session)!=null)return;
     try{outgoing.execute(()->{workerSession.set(session);long observed=-1;try{do{observed=queueEpoch.get();deliver(p);}while(running&&session==generation&&observed!=queueEpoch.get());}finally{sending.remove(p.id,session);if(running&&session==generation&&observed!=queueEpoch.get())startDelivery(p);}});}catch(RejectedExecutionException e){sending.remove(p.id,session);}
   }
@@ -805,6 +875,7 @@ public final class PeerEngine implements Closeable {
     }
     save();
     remoteCallGrants.remove(conversation);
+    pruneDirectTargets();
     for(Message m:removed)if(!m.fileName.isEmpty())TransferManager.deleteTransfer(this,m);
     if(oldPeer!=null)try{AvatarSync.setPeerAvatar(this,conversation,null);}catch(IOException ignored){}
     notifyChanged();queueEpoch.incrementAndGet();flush();
@@ -833,6 +904,7 @@ public final class PeerEngine implements Closeable {
     save();
     for(Message m:withFiles)TransferManager.deleteTransfer(this,m);
     remoteCallGrants.clear();
+    pruneDirectTargets();
     deleteRecursively(new File(file.getParentFile(),"attachments"));
     deleteRecursively(new File(file.getParentFile(),"avatars"));
     try{uploadPolicy.reset();}catch(IOException ignored){}

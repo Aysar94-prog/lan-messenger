@@ -32,6 +32,7 @@ final class DirectFileTransfer {
           listener.setSoTimeout((int)Math.max(1,(deadline-System.nanoTime())/1_000_000));
           try(Socket raw=listener.accept()){
             e.track(raw);
+            e.checkDirectHost(raw.getInetAddress().getHostAddress());
             raw.setSoTimeout(2000);raw.setTcpNoDelay(true);
             if(!raw.getInetAddress().equals(control.getInetAddress()))continue;
             String supplied;try{supplied=PeerEngine.read(raw);}catch(IOException invalid){continue;}
@@ -96,6 +97,7 @@ final class DirectFileTransfer {
                 if(fast){
                   int port;try{port=Integer.parseInt(header[6]);}catch(NumberFormatException invalid){throw new IOException("Invalid data port");}
                   if(port<1||port>65535||!header[7].matches("[0-9a-f]{64}"))throw new IOException("Invalid data authorization");
+                  e.checkDirectHost(peer.host);
                    raw=new Socket();e.track(raw);e.downloadSockets.put(key,raw);ResumableTransfer.active(e,m,key);
                   raw.bind(new InetSocketAddress(e.bind,0));raw.connect(new InetSocketAddress(peer.host,port),3000);raw.setSoTimeout(PeerEngine.TRANSFER_READ_TIMEOUT_MS);raw.setTcpNoDelay(true);
                   PeerEngine.write(raw,"LM4\tTOKEN\t"+header[7]);if(!PeerEngine.read(raw).equals("LM4\tRAWREADY"))throw new IOException("Data authorization failed");payload=raw;

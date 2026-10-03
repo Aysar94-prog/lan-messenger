@@ -372,7 +372,7 @@ public class MainActivity extends Activity {
     updateProgressLabels(e);
     if(pendingOpen!=null){String target=pendingOpen;pendingOpen=null;showChat(target);return;}
     if(selected!=null)try{e.markRead(selected);}catch(Exception ignored){}
-    List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;if("Online".equals(host.state))for(PeerEngine.Peer p:people)if(p.online())online++;status.setText((host.problem.isEmpty()?host.state:host.state+" · "+host.problem)+" · "+online+" online · "+e.pending()+" queued · "+e.name);
+    List<PeerEngine.Peer> people=e.peers();Collections.sort(people,(a,b)->a.online()==b.online()?a.name.compareToIgnoreCase(b.name):(a.online()?-1:1));int online=0;if("Online".equals(host.state))for(PeerEngine.Peer p:people)if(p.online())online++;status.setText((host.problem.isEmpty()?(e.directOnly()&&"Online".equals(host.state)?"Direct connections":host.state):host.state+" · "+host.problem)+" · "+online+" online · "+e.pending()+" queued · "+e.name);
     if(selected==null){
       // Most recently active conversation first, like a typical chat app — groups and contacts mixed
       // together by last message time, not name/online order. {lastActivity, isGroup, id, group-or-peer}

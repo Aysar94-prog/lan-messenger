@@ -90,6 +90,7 @@ public class WebRtcCallMedia implements ICallMedia {
   // deadlock it against the caller waiting on runOnSignaling.
   private java.util.concurrent.ExecutorService callbackExecutor;
   private volatile boolean mediaReadySent;
+  private PeerEngine directPolicy;
 
   // ── Construction ───────────────────────────────────────────────
 
@@ -288,6 +289,7 @@ public class WebRtcCallMedia implements ICallMedia {
   @Override
   public void setRemoteDescription(String sdp) throws Exception {
     if (sdp == null || sdp.isEmpty()) throw new IllegalArgumentException("Empty SDP");
+    if(directPolicy!=null)sdp=directPolicy.directMediaSdp(sdp);
     ensurePeerConnection();
     applyRemoteDescription(sdp);
   }
@@ -323,6 +325,7 @@ public class WebRtcCallMedia implements ICallMedia {
   @Override
   public void addIceCandidate(String candidate, String sdpMid, int sdpMLineIndex) throws Exception {
     if (candidate == null || candidate.isEmpty()) return;
+    if(directPolicy!=null&&!directPolicy.directCandidateAllowed(candidate))return;
     final IceCandidate ice = new IceCandidate(sdpMid, sdpMLineIndex, candidate);
     runOnSignaling(() -> {
       if (!remoteDescriptionSet) { pendingCandidates.add(ice); return; }
@@ -625,9 +628,12 @@ public class WebRtcCallMedia implements ICallMedia {
 
   public static class Factory implements ICallMedia.Factory {
     private final Context context;
-    public Factory(Context context) { this.context = context; }
+    private final PeerEngine policy;
+    public Factory(Context context) { this(context,null); }
+    public Factory(Context context,PeerEngine policy) { this.context = context;this.policy=policy; }
     @Override public ICallMedia create() throws Exception {
       WebRtcCallMedia media = new WebRtcCallMedia(context);
+      media.directPolicy=policy;
       try { media.initialize(); }
       catch (Exception e) { media.dispose(); throw e; }
       return media;

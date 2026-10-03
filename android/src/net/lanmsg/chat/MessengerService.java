@@ -251,7 +251,7 @@ public class MessengerService extends Service {
     Intent open=new Intent(this,MainActivity.class);
     PendingIntent content=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
     PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,MessengerService.class).setAction("OFFLINE"),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-    String text=state+" · "+(engine==null?0:engine.pending())+" queued";
+    String text=(engine!=null&&engine.directOnly()&&"Online".equals(state)?"Direct connections":state)+" · "+(engine==null?0:engine.pending())+" queued";
     // Append call state if active
     CallController cc = callController;
     if (cc != null) {
@@ -313,7 +313,7 @@ public class MessengerService extends Service {
       WebRtcCallMedia.install(this,callVideoResources);
       callMediaReal = WebRtcCallMedia.probe(this);
       ICallMedia.Factory mediaFactory = new FakeCallMedia.Factory();
-      if (callMediaReal) mediaFactory = new WebRtcCallMedia.Factory(this);
+      if (callMediaReal) mediaFactory = new WebRtcCallMedia.Factory(this,peer);
       CallController cc = new CallController(peer, callSettings);
       cc.setMediaFactory(mediaFactory);
       cc.setAudioOwner(audioOwner); // A05: shared with voice messages
@@ -398,6 +398,17 @@ public class MessengerService extends Service {
     foreground=true;
   }
   // All requests (notification and Activity) meet here; engine creation remains in onCreate only.
+  synchronized void configureDirect(boolean enabled,java.util.Map<String,String> targets,java.util.function.Consumer<String> done){
+    if(engine==null||"Starting".equals(state)||"Stopping".equals(state)){done.accept("Wait for the connection transition to finish.");return;}
+    state="Stopping";PeerEngine peer=engine;
+    CallController cc=callController;if(cc!=null)cc.onOffline();
+    new Thread(()->{
+      String failure="";
+      try{peer.goOffline();peer.configureDirect(enabled,targets);}catch(Exception e){failure=e.getMessage();}
+      final String result=failure;
+      handler.post(()->{synchronized(this){if(stopping)return;state="Offline";transition(requestedOnline);}done.accept(result);});
+    },"lan-direct-settings").start();
+  }
   synchronized void transition(boolean online){
     requestedOnline=online;
     getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).edit().putBoolean("default_online",online).apply();
