@@ -1,5 +1,15 @@
 # A05 resource/interface checkpoint — 2026-10-03
 
+Disk blocker cleared after explicit user cleanup approval on 2026-10-03.
+Removed 1,084 reproducible large transfer-test payloads (.bin/.sec/.parts,
+each at least 16 MiB) only beneath outputs/.build/release-tests/peers-*.
+Recovered 82,405,643,784 bytes; D: now has 82,541,068,288 bytes free (~76.9 GiB).
+Preserved test logs/small peer records, compiled harnesses, video feasibility
+evidence, dependency caches, release packages, source and private signing key.
+Deleted payloads cannot be restored directly; regenerate by rerunning tests.
+Earlier disk-failure results remain failures, not retroactively passing tests.
+Next implementation task remains A06; full regression must be rerun later.
+
 Android execution remains authorized under unchanged plan-v007. User accepted
 audio testing complete; do not repeat manual listening. A02b selects VP8 on a
 separate secured video-only connection. No signed production video APK exists.

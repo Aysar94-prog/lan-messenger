@@ -1,5 +1,10 @@
 # Android status
 
+2026-10-03 maintenance: user-approved cleanup of generated large transfer-test
+payloads under outputs/.build/release-tests cleared the disk blocker (~76.9 GiB
+free). No application/release/signing change; prior full-suite failure remains
+recorded until rerun. A06 is the next authorized implementation task.
+
 Latest source checkpoint: A04 consent/commands and A05 interface/service EGL/fake
 video foundations implemented; actual video adapter/controller/UI still pending.
 Fresh 48-source production compile passed. Resource/fake tests 19/18 passing.
