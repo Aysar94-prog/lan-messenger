@@ -177,3 +177,22 @@ has not been changed. A04 cannot proceed until evidence selects a proven common
 codec and upgrade mechanism; AT01 then needs its post-gate rerun. A03 has no live
 video controls or OS/UI acceptance yet. A2–A5, signed candidate and video releases
 remain Pending. No push or branch/remote change was made.
+
+Continuation 2026-10-03, accepted license policy: the user explicitly accepted
+permissive transitive terms without geographic restrictions. Windows R01 reviewed
+all 25 delivered M155 binary NOTICE components and dispositioned five recent
+WebRTC advisories using pinned source/official fixes, not milestone assumptions.
+The independent metadata checker passed assertions for 40,995 archive entries.
+R01 still needs safe offline packaging: unused third-party header trees cannot
+be cleared by the binary NOTICE alone. No native prototype/device media executed;
+R02/R03/R04, WT01 and A02b remain Pending. Android source, signer, package and
+previous automated/device evidence unchanged. Resume in Windows R01 handoff.
+
+Final continuation milestone: R01 filtered offline input packaged (106 MB,
+complete binary notices, unrelated header trees excluded). R02 native EXE and
+net9 C ABI probe passed; G722 codec factory confirmed, invalid buffers rejected.
+No actual audio/video session or new USB/device interaction yet. Resume R02c/d
+in `windows/video-calling/R02-HANDOFF.md`, then paired R03/R04 for WT01/A02b.
+Existing Windows build passed; tests/run.ps1 rerun stopped at the same five
+recording mmresult 1 failures, later tests not run. Production and Android builds
+not changed by this milestone. Usage 27% five-hour / 12% weekly, not near limit.

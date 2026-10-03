@@ -6,6 +6,14 @@ The user authorized the Android section and phase handoffs, and requested USB ad
 The frozen plan hash was verified as
 `4ea7877d6643b5c89246b075d7a301d73b38bea28f644303383fa42f7ca0efbf`.
 Current execution record: [video handoff](video-calling/HANDOFF.md).
+Latest dependency milestone: Windows replacement offline input packaged and
+native/.NET ABI smoke passed with G722 present; real media pairing has not begun.
+R02 endpoint construction, R03/R04 and A02b still Pending. Full regression rerun
+again stopped at Windows recording device mmresult 1; no new Android acceptance.
+Continuation: user accepted permissive transitive licenses without geographic
+restrictions for the Windows replacement audit. Binary notice review and recent
+advisory dispositions advanced; offline input/header packaging remains Pending.
+No new Android media/device acceptance or A02b pass is implied.
 A01 ownership/state design and A02 provisional contract are documented; initial
 AT01 draft checks pass 43/43. AP01 is a separate test-only libwebrtc endpoint under
 `tests/video-feasibility/android`, built/signed with a throwaway key and installed

@@ -2,6 +2,28 @@
 
 ## Replacement R01 execution audit (2026-10-03)
 
+Latest phase result: R01 filtered offline test input packaged with complete
+binary notices; R02 started and native EXE + net9 x64 C ABI checks passed, including
+G722 enumeration and three invalid-buffer checks. `/MT` matches upstream static
+CRT; no linker checks suppressed. R02 endpoint/media work and R03/R04 remain
+Pending; this is not audio/video interoperability. See
+[R02 phase handoff](video-calling/R02-HANDOFF.md) for hashes, reproduction and tasks.
+Windows Release build passed; full tests/run.ps1 rerun again failed five recording
+device checks (mmresult 1), later tests not run. Production dependency unchanged.
+The audit progress paragraphs below describe the earlier pre-packaging stage.
+
+User explicitly accepted separately reviewed permissive transitive licenses
+("اقبل واكمل"), retaining the no-geographic-restriction requirement. All 25
+delivered binary NOTICE sections were reviewed, including IJG/zlib, LLVM
+exceptions, BSD variants and public-domain grants. This closes the policy
+question, not all distribution/security obligations. Five identified recent
+WebRTC advisories have source-specific dispositions in the R01 handoff.
+The new upstream metadata checker passed hash/provenance/path/notice/COFF
+assertions for 40,995 entries. Offline packaging must not blindly redistribute
+all headers: the archive also contains unused third-party headers beyond the
+binary NOTICE inventory. R01 remains In progress; no media executed and R02+
+remain Pending. Android A02b and production source/packages are unchanged.
+
 Continued alternative audit found shiguredo's M155 input with matching official
 SHA256, explicit pinned core/dependency revisions and bundled NOTICE. It resolves
 the earlier missing-metadata concern but includes IJG/zlib transitive license

@@ -6,6 +6,14 @@ Apache-2.0 or BSD alternative without geographic restrictions.
 
 ## Decision and execution boundary
 
+Execution update: the user authorized R01–R04, then explicitly accepted
+separately audited permissive transitive licenses (including IJG/zlib) on
+2026-10-03 with "اقبل واكمل". Geographic restrictions remain excluded.
+This does not approve production migration, waive notices/security review,
+or select the earlier m150 binary. The better-pinned M155 static input is now
+being audited for a project-owned direct native bridge; see R01-AUDIT-HANDOFF.md.
+The original recommendation/approval language below is historical research.
+
 SIPSorcery 10.0.17, SIPSorcery.VP8 and SIPSorceryMedia.FFmpeg are **rejected for
 the new selection**. A video codec change alone does not remove the restricted
 RTC core. Existing source references, vendored historical inputs and releases

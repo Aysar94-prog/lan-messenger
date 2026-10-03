@@ -4,6 +4,13 @@ Execution of R01–R04 was explicitly approved by the user. R01 is In progress;
 the inspected prebuilt input is **HOLD**, not selected. R02/R03/R04 and Both A02b
 remain Pending. No production library change or prototype media execution.
 
+Latest result: R01 minimal offline test input preparation completed after
+accepted policy/review/filtering. Original m150 binary remains HOLD. M155 filtered
+input and R02 ABI/link smoke are recorded in R02-HANDOFF.md, including package
+hash and exact static-CRT ABI correction. R02 endpoint work still Pending;
+no actual media or production migration. Earlier HOLD/next-step text below is
+historical audit progression, not the latest packaged-input status.
+
 ## Verified input evidence
 
 Official release `webrtc-sdk/libwebrtc`, `libwebrtc.m150.7871.03`, wrapper commit
@@ -63,6 +70,57 @@ Executed as a separate pwsh process: checksum/PE assertions passed, 45 archive
 entries, no bundled third-party notice file, expected HOLD exit 2 verified.
 
 ## Next steps / authority
+
+### Accepted policy and completed review continuation
+
+User's "اقبل واكمل" explicitly permits separately audited permissive transitive
+licenses, still without geographic-use restrictions. The earlier decision request
+below is resolved. No production migration or security waiver was approved.
+
+All 25 delivered binary NOTICE sections have now been read: BSD variants,
+Apache-2.0, MIT/NCSA legacy LLVM terms and LLVM exceptions, IJG/zlib, FFT/ooura
+permissive grants and G711/G722/sqrt public-domain grants. No geographic-use
+restriction was found in those examined texts. Preserve complete NOTICE,
+copyrights, patent notices and required IJG acknowledgement when distributing.
+This is scoped to the delivered binary notice inventory, not every bundled header.
+
+Recent advisory source dispositions (reviewed 2026-10-03):
+
+| Advisory / issue | Pinned-input disposition and evidence |
+|---|---|
+| CVE-2026-79187 / 523296105 | Official Chromium fix `5643da4a3d7eca3d0b9b523647c7e14e37f294c4` modifies only Blink media-stream adapter/map files. Its iframe/main-thread disposal defect is browser-layer code, absent from this standalone library. This is an applicability inference from the changed paths and build scope, not a claim about all UAF defects. |
+| CVE-2026-87430 / 542449805 | Fix `437408bd428c915b11f44df4f35cf1834acd61c9` is in the pinned core's ancestor log; H264 stride rounding corrected. H264 is also disabled by this input's build recipe. |
+| CVE-2026-87579 / 504690157 | Fix `caf9532b632ed80d6c0b73576d1330fb38aec248` is in the pinned core's ancestor log; validates H264 resolution. H264 disabled. |
+| CVE-2026-87630 / 502783118 | Fix `424a6bd0b7f93659204ecccff1d61d63c25937e2` is in the pinned core's ancestor log; moves oversized RTP payload guard earlier. |
+| CVE-2026-103631 / 567088927 | The pinned core revision itself is the M155 backport of payload-capacity/reduction checks (original `fc6666263eafa63878d02102189e3dabe9c90455`). This is not merely a version-date inference. |
+
+No claim of exhaustive vulnerability freedom. Production needs ongoing component
+security review, toolchain/ABI verification and R03/R04 actual-device evidence.
+Official release recipe has `rtc_use_h264=false` and Windows
+`use_custom_libcxx=false`/`use_custom_libcxx_for_host=false`; no codec substitution.
+Native input has no H264/H265 encoder support; VP8 is the first paired candidate.
+
+`tests/video-feasibility/windows/audit-upstream.ps1` independently checks pinned
+SHA256, safe/non-aliased paths, version/core pins, all 25 notice component names,
+library size/signature and absence of executable DLL/EXE files. Assertions passed:
+40,995 entries, static library 369,225,972 bytes. It reports HOLD (exit 2), never
+extracts/links/loads native code, and is not part of the production test runner.
+The caller must capture native exit status explicitly because PowerShell's
+native-command preference can map a nonzero child status to its own exit 1.
+
+Remaining R01 work: prepare a minimal reproducible offline native input with
+complete notices and hash manifest under vendor/nuget. ZIP is stored rather than
+compressed and carries 372 MB of headers, including unused FFmpeg headers;
+binary NOTICE does not clear redistribution of every such header. Do not blindly
+vendor/extract/repackage all headers or label them all BSD. Review required header
+closure/licenses or use a documented distributor-supported minimal SDK subset.
+Only then select input and begin R02 linking. About 3.6 GB free; no user files
+deleted. Old m150 wrapper remains HOLD and is not the direct M155 bridge ABI.
+
+Sources: [Blink fix](https://chromium.googlesource.com/chromium/src/+/5643da4a3d7eca3d0b9b523647c7e14e37f294c4),
+[pinned RTP fix](https://webrtc.googlesource.com/src/+/f89edcb7be1f4be029ee7186e36b2b35ec03373e),
+[September advisory](https://chromereleases.googleblog.com/2026/09/stable-channel-update-for-desktop_0808145027.html),
+[October advisory](https://chromereleases.googleblog.com/2026/10/stable-channel-update-for-desktop.html).
 
 ### Newer upstream build reviewed after the initial HOLD
 
