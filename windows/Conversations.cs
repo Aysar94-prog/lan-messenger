@@ -234,15 +234,16 @@ public sealed partial class PeerEngine
             var removed=messages.Where(m=>m.GroupId.Length>0?m.GroupId==conversation:m.From==conversation||m.To==conversation).ToArray();
             var oldMessages=messages.ToArray();var oldHidden=hidden.ToArray();
             peers.TryGetValue(conversation,out var oldPeer);groups.TryGetValue(conversation,out var oldGroup);
+            trustedCallGrants.TryGetValue(conversation,out var oldGrant);
             var wasForgotten=forgotten.Contains(conversation);var hadPendingLeave=pendingLeaves.ContainsKey(conversation);
             foreach(var m in removed)hidden.Add(m.From+"/"+m.Id);
             messages.RemoveAll(m=>removed.Contains(m));
-            if(oldPeer!=null){peers.Remove(conversation);forgotten.Add(conversation);}
+            if(oldPeer!=null){peers.Remove(conversation);trustedCallGrants.Remove(conversation);forgotten.Add(conversation);}
             if(oldGroup!=null){groups.Remove(conversation);pendingLeaves[conversation]=oldGroup.Owner;}
             try{Save();}
             catch{
                 messages.Clear();messages.AddRange(oldMessages);hidden.Clear();hidden.UnionWith(oldHidden);
-                if(oldPeer!=null){peers[conversation]=oldPeer;if(!wasForgotten)forgotten.Remove(conversation);}
+                if(oldPeer!=null){peers[conversation]=oldPeer;if(oldGrant.Fingerprint is not null)trustedCallGrants[conversation]=oldGrant;if(!wasForgotten)forgotten.Remove(conversation);}
                 if(oldGroup!=null){groups[conversation]=oldGroup;if(!hadPendingLeave)pendingLeaves.Remove(conversation);}
                 throw;
             }
@@ -264,8 +265,9 @@ public sealed partial class PeerEngine
             var oldAcked=memberAcked.ToDictionary(kv=>kv.Key,kv=>new Dictionary<string,int>(kv.Value));
             var oldPendingHandoff=new HashSet<string>(pendingOwnershipHandoff);
             var oldVoiceDrafts=new Dictionary<string,VoiceDraft>(voiceDrafts);
+            var oldTrustedCalls=new Dictionary<string,(string Fingerprint,int Mask)>(trustedCallGrants);
             var withFiles=messages.Where(m=>m.FileName.Length>0).ToArray();
-            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();pendingOwnershipHandoff.Clear();voiceDrafts.Clear();
+            messages.Clear();groups.Clear();hidden.Clear();departedHistory.Clear();memberAcked.Clear();pendingOwnershipHandoff.Clear();voiceDrafts.Clear();trustedCallGrants.Clear();
             foreach(var id in oldPeers.Keys)forgotten.Add(id);
             peers.Clear();
             try{Save();}
@@ -275,6 +277,7 @@ public sealed partial class PeerEngine
                 foreach(var kv in oldDeparted)departedHistory[kv.Key]=kv.Value;foreach(var kv in oldAcked)memberAcked[kv.Key]=kv.Value;
                 pendingOwnershipHandoff.UnionWith(oldPendingHandoff);
                 foreach(var kv in oldVoiceDrafts)voiceDrafts[kv.Key]=kv.Value;
+                foreach(var kv in oldTrustedCalls)trustedCallGrants[kv.Key]=kv.Value;
                 forgotten.Clear();forgotten.UnionWith(oldForgotten);pendingLeaves.Clear();foreach(var kv in oldPendingLeaves)pendingLeaves[kv.Key]=kv.Value;
                 throw;
             }

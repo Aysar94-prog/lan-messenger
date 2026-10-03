@@ -1,5 +1,18 @@
 # LAN Messenger project status and platform comparison
 
+Trusted-call/icon source checkpoint 2026-10-03: the user-supplied artwork is now
+the Android adaptive/legacy launcher icon and Windows executable/window/tray icon.
+Both platforms persist certificate-bound per-contact trusted-call scopes and expose
+an explicit **Trusted call access** control; the implemented scope is voice
+auto-answer only. Revocation, remote forget, contact deletion and delete-all clear
+the grant. Android 2.2.45/code72 ARM64 signed test candidate built with the original
+certificate (`LanMessenger-2.2.45-trusted-dev.apk`, SHA-256
+`e801f62792e3916900cf27c61da880b8842596541a0bb82a5595d12cdd8bb07a`).
+CallCheck 422/0 and Windows Release build/publish passed. This is not a release or
+physical-device acceptance. Remote speaker and camera control, video auto-answer,
+and Windows production video remain pending; there is no new wire command yet.
+See [trusted-call/icon plan](PLAN-TRUSTED-CALL-ACCESS-AND-APP-ICON.md).
+
 Latest Android cleanup-fix test candidate is 2.2.44/code71 (ARM64), installed over
 2.2.43 with original signer and unchanged first-install time. Reproduced/fixed
 receiver video-track double disposal; three native adapter lifetimes and next

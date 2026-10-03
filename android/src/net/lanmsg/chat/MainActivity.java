@@ -492,6 +492,13 @@ public class MainActivity extends Activity {
     }catch(Exception error){Toast.makeText(this,error.getMessage(),Toast.LENGTH_LONG).show();}
   }
 
+  void trustedCallAccess(){PeerEngine e=engine();if(e==null||selected==null)return;PeerEngine.Peer peer=null;for(PeerEngine.Peer p:e.peers())if(p.id.equals(selected))peer=p;if(peer==null)return;if(!peer.trusted()){Toast.makeText(this,"Verify this device first.",Toast.LENGTH_LONG).show();return;}final PeerEngine.Peer target=peer;int mask=e.trustedCallMask(target.id);
+    LinearLayout panel=column();panel.setPadding(dp(20),dp(8),dp(20),0);panel.addView(label("Trusted calls from this verified device can connect immediately. Your microphone may activate; the ongoing call notification, mute and hang-up controls remain available.",15));
+    CheckBox voice=new CheckBox(this);voice.setText("Automatically answer voice calls");voice.setChecked((mask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0);panel.addView(voice);
+    TextView pending=label("Automatic video answer and remote camera/speaker control require the remaining cross-platform video/control protocol work and are not enabled by this build.",13);pending.setTextColor(Color.DKGRAY);panel.addView(pending);
+    new AlertDialog.Builder(this).setTitle("Trusted call access").setView(panel).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{int next=voice.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VOICE:0;try{e.setTrustedCallMask(target.id,next);render();Toast.makeText(this,next==0?"Trusted call access is off.":"Voice calls from this device will auto-answer.",Toast.LENGTH_LONG).show();}catch(Exception error){problem(error);}}).show();
+  }
+
   // A return-to-call bar, shown on the people screen while a call is live. A call is not tied to a
   // conversation, so leaving the chat must not hide the only controls for ending it. Only the
   // people screen gets it: inside a chat the call overlay is already on top.
@@ -572,6 +579,7 @@ public class MainActivity extends Activity {
     // self-call is not a thing, so neither can offer it.
     if(isPeer)menu.getMenu().add("Call");
     if(isPeer)menu.getMenu().add("Verify device");
+    if(isPeer)menu.getMenu().add("Trusted call access");
     // Group-only. It used to be added unconditionally, so a direct conversation offered "Group
     // members", and tapping it opened nothing at all: showMembers() looks for a group whose id
     // matches `selected`, finds none, and falls through to a toast telling the user the obvious.
@@ -588,6 +596,7 @@ public class MainActivity extends Activity {
       if(title.equals("Call"))startCallTo(selected);
       else if(title.equals("Clear conversation"))clearChat();
       else if(title.equals("Verify device"))verifyDevice();
+      else if(title.equals("Trusted call access"))trustedCallAccess();
       else if(title.equals("Group members"))showMembers();
       else if(title.equals("Leave group"))confirmDeleteConversation(selectedGroup.id,selectedGroup.name,true);
       return true;});menu.show();}

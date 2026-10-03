@@ -38,6 +38,7 @@ $toolsDir = Join-Path $SdkRoot 'build-tools\35.0.0'
 $platformJar = Join-Path $SdkRoot 'platforms\android-34\android.jar'
 $keyFile = Join-Path $PSScriptRoot '..\.private\development.keystore'
 $manifest = Join-Path $PSScriptRoot 'AndroidManifest.xml'
+$appResDir = Join-Path $PSScriptRoot 'res'
 
 if (!(Test-Path -LiteralPath $keyFile)) {
   throw 'Signing key not found at .private\development.keystore'
@@ -119,7 +120,7 @@ $manifestText = [IO.File]::ReadAllText($manifest)
 $manifestText = $manifestText -replace 'android:versionCode="\d+"', "android:versionCode=`"$VersionCode`""
 $manifestText = $manifestText -replace 'android:versionName="[^"]*"', "android:versionName=`"$VersionName`""
 [IO.File]::WriteAllText($manifestForBuild, $manifestText, (New-Object Text.UTF8Encoding($false)))
-& "$toolsDir\aapt.exe" package -f -M $manifestForBuild -I $platformJar -F "$BuildRoot\unsigned.apk"
+& "$toolsDir\aapt.exe" package -f -M $manifestForBuild -S $appResDir -I $platformJar -F "$BuildRoot\unsigned.apk"
 if ($LASTEXITCODE -ne 0) { throw "aapt package failed" }
 
 # Add every dex d8 produced (WebRTC is large enough to need more than one)

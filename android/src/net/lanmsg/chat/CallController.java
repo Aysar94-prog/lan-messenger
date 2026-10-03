@@ -422,6 +422,10 @@ public class CallController {
 
       CallSession snap = session.snapshot();
       notifyCallback(snap);
+      if((engine.trustedCallMask(authenticatedPeerId)&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0){
+        try{acceptInternal(frame.callId,false,false);return session==null?null:session.snapshot();}
+        catch(IOException unavailable){CallLog.w("Trusted auto-answer unavailable: "+unavailable.getMessage());}
+      }
       return snap;
     }
   }

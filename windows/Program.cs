@@ -85,6 +85,7 @@ sealed partial class ChatWindow : Form
     public ChatWindow(string? dataDirectory,IStorageProtector? protector)
     {
         Text="LAN Messenger"; Size=new Size(1140,810); MinimumSize=new Size(940,650); StartPosition=FormStartPosition.CenterScreen;
+        try{var appIcon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);if(appIcon!=null){Icon=appIcon;tray.Icon=appIcon;}}catch{}
         Font=new Font("Segoe UI",11); BackColor=PanelBg; RightToLeft=RightToLeft.No;
         var data=dataDirectory??Environment.GetEnvironmentVariable("LAN_MESSENGER_DATA") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"LanMessenger");
         preferencePath=Path.Combine(data,"network-preference.txt");

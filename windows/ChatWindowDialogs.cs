@@ -120,11 +120,27 @@ sealed partial class ChatWindow
             layout.Controls.Add(new Label{Text=peer.KeyChanged?"KEY CHANGED — do not send until you have checked with this person.":"Compare this entire safety code on BOTH devices in person or through a trusted channel.",AutoSize=true,MaximumSize=new Size(590,0)});
             layout.Controls.Add(new TextBox{Text=formatted,ReadOnly=true,Multiline=true,Width=590,Height=65,Font=new Font("Consolas",13)});
             layout.Controls.Add(new Label{Text="On the other device, select your contact and open Verify device. Confirm on each device only if all groups match.",AutoSize=true,MaximumSize=new Size(590,0)});
-            var confirm=new Button{Text="Codes match — verify",AutoSize=true,Enabled=!peer.KeyChanged};var revoke=new Button{Text="Revoke verification",AutoSize=true,Enabled=peer.Verified.Length>0};layout.Controls.Add(confirm);layout.Controls.Add(revoke);dialog.Controls.Add(layout);
+            var confirm=new Button{Text="Codes match — verify",AutoSize=true,Enabled=!peer.KeyChanged};var revoke=new Button{Text="Revoke verification",AutoSize=true,Enabled=peer.Verified.Length>0};var trusted=new Button{Text="Trusted call access…",AutoSize=true,Enabled=peer.Trusted};layout.Controls.Add(confirm);layout.Controls.Add(revoke);layout.Controls.Add(trusted);dialog.Controls.Add(layout);
             confirm.Click+=(_,_)=>{try{engine.Verify(peer.Id,code);dialog.Close();Render();}catch(Exception error){MessageBox.Show(error.Message,"Verification failed");}};
             revoke.Click+=(_,_)=>{if(MessageBox.Show("Stop trusting this device? Messages will stay queued until you compare and verify its code again.","Revoke verification",MessageBoxButtons.YesNo)==DialogResult.Yes){engine.Revoke(peer.Id);dialog.Close();Render();}};
+            trusted.Click+=(_,_)=>ShowTrustedCallAccess(peer,dialog);
             dialog.ShowDialog(this);
         }catch(Exception e){MessageBox.Show(e.Message,"Verify device");}
+    }
+
+    void ShowTrustedCallAccess(PeerEngine.Peer peer,Form owner)
+    {
+        var mask=engine.TrustedCallMask(peer.Id);
+        using var dialog=new Form{Text="Trusted call access",Size=new Size(540,330),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        var panel=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(18),AutoScroll=true};
+        panel.Controls.Add(new Label{Text="Allow this verified device to answer calls without asking. Camera and video controls remain unavailable on Windows until production video calling is complete.",AutoSize=true,MaximumSize=new Size(480,0)});
+        var voice=new CheckBox{Text="Automatically answer voice calls",AutoSize=true,Checked=(mask&PeerEngine.TrustedAutoAnswerVoice)!=0};
+        var video=new CheckBox{Text="Automatically answer video calls (not available yet)",AutoSize=true,Enabled=false};
+        var camera=new CheckBox{Text="Allow remote front/rear camera control (not available yet)",AutoSize=true,Enabled=false};
+        var speaker=new CheckBox{Text="Allow remote speaker control (planned protocol)",AutoSize=true,Enabled=false};
+        var save=new Button{Text="Save",AutoSize=true};panel.Controls.AddRange([voice,video,camera,speaker,save]);dialog.Controls.Add(panel);
+        save.Click+=(_,_)=>{var next=voice.Checked?PeerEngine.TrustedAutoAnswerVoice:0;if(next!=0&&MessageBox.Show("Calls from this device will connect immediately and may activate your microphone. You can mute or hang up at any time.","Enable trusted call access",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;engine.SetTrustedCallMask(peer.Id,next);dialog.Close();owner.Close();Render();};
+        dialog.ShowDialog(owner);
     }
     async Task AddAddress()
     {

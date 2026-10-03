@@ -3,6 +3,17 @@
 Prepared 2026-10-03. Planning only: no application code, generated icon asset,
 build, package, install, release, or protocol change has been made.
 
+## Execution checkpoint — 2026-10-03
+
+Execution was authorized after plan commit `bb4da3d`. L01-L03, T01-T04 and T06
+are implemented for the currently deliverable voice scope. V01 has automated
+Android persistence/revoke coverage; V02/T05 and remote control frames are still
+pending; V03 is build/call-suite verified but not physically accepted. Android
+candidate build and Windows publish details are recorded in their platform status
+files. T07-T10 and remote speaker/camera/video behavior are not implemented and
+must not be inferred from the presence of reserved storage-mask constants or UI
+copy. No release was produced.
+
 ## Requested outcomes and scope
 
 | Workstream | Platform | Requested outcome | Current reality |
@@ -133,4 +144,3 @@ call notification that the user taps to bring the app into an eligible state.
 4. T08 and Windows V06 only along the existing R05 Windows video migration path.
 5. V07-V08, status/comparison updates, signed/local packages only when separately
    requested, then a local commit.
-

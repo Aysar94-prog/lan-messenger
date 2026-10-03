@@ -10,6 +10,7 @@ namespace LanMessenger;
 public sealed partial class PeerEngine : IDisposable
 {
     public const int DiscoveryPort=43871, MessagePort=43872;
+    public const int TrustedAutoAnswerVoice=1,TrustedAutoAnswerVideo=2,TrustedRemoteCamera=4,TrustedRemoteSpeaker=8;
     public sealed record Peer(string Id,string Name,string Host,int Port,long Seen,string Fingerprint="",string Verified="",string PublicKey="",string SentAvatarHash="",string ReceivedAvatarHash="") { public bool Online=>Now-Seen<12000; public bool Trusted=>Fingerprint.Length>0&&Fingerprint==Verified; public bool KeyChanged=>Verified.Length>0&&Fingerprint!=Verified; public string Security=>KeyChanged?"KEY CHANGED":Trusted?"Verified":"Verify device"; }
     public sealed record Message(string Id,string From,string To,string Text,long Time,string Status,string GroupId="",string FileName="",long FileSize=0,string FileHash="",string Signature="",bool TtlEligible=false);
     const long GroupTtlMs=168L*3600*1000;
@@ -19,6 +20,7 @@ public sealed partial class PeerEngine : IDisposable
     readonly IStorageProtector protector;
     static readonly byte[] StorageMagic=Encoding.ASCII.GetBytes("LMSEC3\n");
     readonly Dictionary<string,Peer> peers=[];
+    readonly Dictionary<string,(string Fingerprint,int Mask)> trustedCallGrants=[];
     readonly List<Message> messages=[];
     CancellationTokenSource stop=new();
     readonly object networkGate=new();
@@ -172,9 +174,11 @@ public sealed partial class PeerEngine : IDisposable
     {
         lock(gate){var p=peers[peerId];if(p.KeyChanged)throw new IOException("Device key changed. Revoke the old verification explicitly before pairing again.");if(PairingCode(peerId)!=expectedCode)throw new IOException("Device key changed while this dialog was open. Try again.");peers[peerId]=p with{Verified=p.Fingerprint};try{Save();}catch{peers[peerId]=p;throw;}}Notify();
     }
-    public void Revoke(string peerId){lock(gate){var p=peers[peerId];peers[peerId]=p with{Verified=""};try{Save();}catch{peers[peerId]=p;throw;}}Notify();}
+    public void Revoke(string peerId){lock(gate){var p=peers[peerId];trustedCallGrants.TryGetValue(peerId,out var oldGrant);peers[peerId]=p with{Verified=""};trustedCallGrants.Remove(peerId);try{Save();}catch{peers[peerId]=p;if(oldGrant.Fingerprint is not null)trustedCallGrants[peerId]=oldGrant;throw;}}Notify();}
     void RecordCertificate(string peerId,string fingerprint,byte[] publicKey){lock(gate){var p=peers[peerId];var encodedKey=publicKey.Length>0?Convert.ToBase64String(publicKey):p.PublicKey;if(p.Fingerprint==fingerprint&&p.PublicKey==encodedKey)return;peers[peerId]=p with{Fingerprint=fingerprint,PublicKey=encodedKey};try{Save();}catch{peers[peerId]=p;throw;}}Notify();}
     bool Trusted(string peerId,string fingerprint){lock(gate)return peers.TryGetValue(peerId,out var p)&&p.Verified.Length>0&&p.Verified==fingerprint;}
+    public int TrustedCallMask(string peerId){lock(gate){if(!peers.TryGetValue(peerId,out var p)||!p.Trusted||!trustedCallGrants.TryGetValue(peerId,out var g)||g.Fingerprint!=p.Verified)return 0;return g.Mask;}}
+    public void SetTrustedCallMask(string peerId,int mask){lock(gate){if(!peers.TryGetValue(peerId,out var p)||!p.Trusted)throw new IOException("Verify this device before granting trusted call access.");mask&=15;trustedCallGrants.TryGetValue(peerId,out var old);if(mask==0)trustedCallGrants.Remove(peerId);else trustedCallGrants[peerId]=(p.Verified,mask);try{Save();}catch{if(old.Fingerprint is not null)trustedCallGrants[peerId]=old;else trustedCallGrants.Remove(peerId);throw;}}Notify();}
     // Fired when an inbound CALLCONNECT handoff is recognized: (peerId, authenticated stream,
     // callId). The engine's own `Receive` dispatch loop stops owning the socket at that point --
     // whatever handles this event (the call layer) becomes responsible for its lifetime, same as

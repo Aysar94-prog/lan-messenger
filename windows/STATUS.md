@@ -1,5 +1,18 @@
 # Windows status
 
+2026-10-03 trusted-call/icon source checkpoint: the supplied logo is embedded as a
+multi-resolution executable icon and used by the main window and tray. Verified
+contacts now have a certificate-bound **Trusted call access** setting for automatic
+voice-call answering. The grant is encrypted with peer state and is cleared by
+verification revoke/remote forget, key mismatch (ineligible), contact deletion or
+delete-all. Incoming calls still pass global allow, verified identity, busy,
+rate-limit and Offline checks before the normal accept/media path. Release build
+and framework-dependent publish passed; published EXE SHA-256
+`c0d6f9adafe538a91772108296a07510fad8c6224df9c81bf6926a4063729a0e`.
+No release or physical call acceptance is claimed. Remote speaker control and all
+camera/video scopes remain visibly unavailable pending the shared control contract
+and R05 Windows production video work.
+
 User accepts audio testing complete and requests no repeated listening. A02b
 shared video choice: VP8/separate secured video PC (Android A02b-CONTRACT.md).
 R05 production migration is authorized but not implemented; production dependency

@@ -1,5 +1,18 @@
 # Android status
 
+LATEST TRUSTED-CALL/ICON SOURCE CANDIDATE: 2.2.45/code72 ARM64 built and signed
+with the original certificate as `outputs/LanMessenger-2.2.45-trusted-dev.apk`
+(SHA-256 `e801f62792e3916900cf27c61da880b8842596541a0bb82a5595d12cdd8bb07a`).
+The supplied artwork is packaged as adaptive and legacy launcher icons. Verified
+contacts have a certificate-bound **Trusted call access** setting; the implemented
+scope automatically answers voice calls through the existing admission and accept
+path. Revoke/remote forget, contact deletion and delete-all clear the grant.
+CallCheck passes 422/0, including new grant persistence, ACCEPT-frame and revoke
+tests; APK v2/v3 signature and icon resource resolution pass. Not installed or
+device-accepted. Video auto-answer and remote camera/speaker control remain pending
+the new shared control contract and device/background acceptance; this build does
+not claim them and adds no control frame.
+
 LATEST CLEANUP-FIX TEST CANDIDATE: 2.2.44/code71 ARM64 built and USB-upgraded
 with original signer; first-install time unchanged. APK SHA256
 e951d6aec05b5a65766fe84526288248e596b9293f7a11e93adf20baf50cc8fa.

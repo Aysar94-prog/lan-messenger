@@ -15,7 +15,7 @@
   <uses-feature android:name="android.hardware.camera" android:required="false" />
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
   <!-- 0.7.0 raised the attachment cap to 200 MiB; the in-memory read/encrypt/send path needs headroom on real devices. -->
-  <application android:label="LAN Messenger" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="false" android:largeHeap="true" android:extractNativeLibs="true">
+  <application android:label="LAN Messenger" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="false" android:largeHeap="true" android:extractNativeLibs="true">
     <service android:name=".MessengerService" android:exported="false" android:foregroundServiceType="connectedDevice|microphone|camera" />
     <provider android:name=".CameraAttachmentProvider" android:authorities="net.lanmsg.chat.camera" android:exported="false" android:grantUriPermissions="true" />
     <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize" android:windowSoftInputMode="adjustResize">

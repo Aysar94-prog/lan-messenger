@@ -104,6 +104,8 @@ public sealed class CallController
             try { SendFrame(transport, CallSignaling.Ringing(frame.Cid, ++sequence)); } catch { }
             ScheduleRingTimeout();
             NotifyCallback(session.Snapshot());
+            if ((engine.TrustedCallMask(peerId) & PeerEngine.TrustedAutoAnswerVoice) != 0)
+                _ = AcceptAsync();
         }
     }
 

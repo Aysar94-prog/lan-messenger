@@ -22,6 +22,7 @@ public final class CallCheck {
     testInvitationLimiter();
     testControllerLifecycle();
     testControllerIncoming();
+    testTrustedAutoAnswer();
     testControllerMute();
     testFrameParse();
     testGlareResolution();
@@ -363,6 +364,21 @@ public final class CallCheck {
     eng.close();
     for (File f : eng.file.getParentFile().listFiles()) f.delete();
     eng.file.getParentFile().delete();
+  }
+
+  static void testTrustedAutoAnswer() throws Exception {
+    System.out.println("testTrustedAutoAnswer...");
+    PeerEngine eng=dummyEngine();String peerId=UUID.randomUUID().toString();
+    PeerEngine.Peer peer=new PeerEngine.Peer(peerId,"Trusted caller","10.0.0.2",43872);peer.fingerprint="trusted-fingerprint";peer.verified=peer.fingerprint;
+    synchronized(eng){eng.peers.put(peerId,peer);}eng.setTrustedCallMask(peerId,PeerEngine.TRUSTED_AUTO_ANSWER_VOICE);
+    eq(eng.trustedCallMask(peerId),PeerEngine.TRUSTED_AUTO_ANSWER_VOICE,"TA01-grant-roundtrip");
+    CallSettings settings=new CallSettings(eng.file.getParentFile());CallController ctrl=new CallController(eng,settings);ctrl.setMediaFactory(new FakeCallMedia.Factory());ctrl.start();
+    final List<byte[]> sent=Collections.synchronizedList(new ArrayList<>());String callId=UUID.randomUUID().toString();CallProtocol.Frame invite=CallSignaling.invite(callId,1,peerId,eng.id);
+    CallSession snap=ctrl.onInvite(invite,peerId,sent::add);
+    check(snap!=null&&snap.state==CallProtocol.State.Connecting,"TA02-auto-answer-connects",snap==null?"null snapshot":snap.state.toString());
+    boolean accepted=false;for(byte[] wire:sent){CallProtocol.Frame f=CallSignaling.parse(wire);if(f!=null&&CallProtocol.ACCEPT.equals(f.type))accepted=true;}
+    check(accepted,"TA03-accept-sent","");ctrl.shutdown();File dir=eng.file.getParentFile();eng.close();
+    eng=new PeerEngine(dir,"TestDevice",new TestProtector(dir));eq(eng.trustedCallMask(peerId),PeerEngine.TRUSTED_AUTO_ANSWER_VOICE,"TA04-grant-persists");eng.revoke(peerId);eq(eng.trustedCallMask(peerId),0,"TA05-revoke-clears");eng.close();
   }
 
   static void testControllerMute() throws Exception {

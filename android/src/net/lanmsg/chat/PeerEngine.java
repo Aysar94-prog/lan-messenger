@@ -15,6 +15,7 @@ import java.util.function.BiConsumer;
 /** Shared wire protocol: protocol.md. No Android dependencies, so desktop tests exercise this exact engine. */
 public final class PeerEngine implements Closeable {
   public static final int DISCOVERY_PORT=43871, MESSAGE_PORT=43872;
+  public static final int TRUSTED_AUTO_ANSWER_VOICE=1,TRUSTED_AUTO_ANSWER_VIDEO=2,TRUSTED_REMOTE_CAMERA=4,TRUSTED_REMOTE_SPEAKER=8;
   public static final class Peer {
     public String id,name,host; public int port; public long seen; public String fingerprint="",verified="",publicKey="",sentAvatarHash="",receivedAvatarHash="";
     Peer(String i,String n,String h,int p){id=i;name=n;host=h;port=p;}
@@ -37,6 +38,8 @@ public final class PeerEngine implements Closeable {
   final SecureIdentity.Protector protector;
   static final byte[] MAGIC="LMSEC3\n".getBytes(StandardCharsets.US_ASCII);
   final LinkedHashMap<String,Peer> peers=new LinkedHashMap<>();
+  final LinkedHashMap<String,TrustedCallGrant> trustedCallGrants=new LinkedHashMap<>();
+  static final class TrustedCallGrant {final String fingerprint;final int mask;TrustedCallGrant(String f,int m){fingerprint=f;mask=m;}}
   final ArrayList<Message> messages=new ArrayList<>();
   ExecutorService connections, outgoing;
   ScheduledExecutorService timer;
@@ -137,6 +140,7 @@ public final class PeerEngine implements Closeable {
     LinkedHashMap<String,HashSet<String>> loadedDeparted=new LinkedHashMap<>();LinkedHashMap<String,HashMap<String,Integer>> loadedAcked=new LinkedHashMap<>();
     HashSet<String> loadedEverTransferred=new HashSet<>();HashSet<String> loadedPendingHandoff=new HashSet<>();
     LinkedHashMap<String,VoiceDraft> loadedVoiceDrafts=new LinkedHashMap<>();
+    LinkedHashMap<String,TrustedCallGrant> loadedTrustedCalls=new LinkedHashMap<>();
     for(int i=1;i<lines.size()-1;i++){String[] a=lines.get(i).split("\t",-1);
       if(a[0].equals("P")&&(a.length==5||a.length==7||a.length==8||a.length==10)){Peer p=new Peer(a[1],dec(a[2]),a[3],Integer.parseInt(a[4]));if(a.length>=7){p.fingerprint=a[5];p.verified=a[6];}if(a.length>=8)p.publicKey=a[7];if(a.length==10){p.sentAvatarHash=a[8];p.receivedAvatarHash=a[9];}loadedPeers.put(a[1],p);}
       else if(a[0].equals("M")&&(a.length==8||a.length==12||a.length==14))loadedMessages.add(new Message(a[1],a[2],a[3],dec(a[5]),Long.parseLong(a[4]),a[6],a.length>=12?a[8]:"",a.length>=12?dec(a[9]):"",a.length>=12?Long.parseLong(a[10]):0,a.length>=12?a[11]:"",a.length==14?a[12]:"",a.length==14&&a[13].equals("1")));
@@ -164,6 +168,7 @@ public final class PeerEngine implements Closeable {
       else if(a[0].equals("O")&&a.length==2)loadedPendingHandoff.add(a[1]);
       else if(a[0].equals("J")||a[0].equals("Q")){} // Removed join-request feature; tolerate old rows already on disk instead of failing to load.
       else if(a[0].equals("R")&&a.length==10){VoiceDraft d=new VoiceDraft(a[1],a[2],a[3].equals("1"),Long.parseLong(a[4]),Long.parseLong(a[5]),a[6],Long.parseLong(a[7]),Long.parseLong(a[8]));d.sendTransactionId=a[9];loadedVoiceDrafts.put(a[1],d);}
+      else if(a[0].equals("C")&&a.length==4){int mask=Integer.parseInt(a[3]);if(mask<0||mask>15)throw new IOException("Invalid trusted call grant");loadedTrustedCalls.put(a[1],new TrustedCallGrant(a[2],mask));}
       else throw new IOException("Invalid storage row");}
     groups.clear();for(Map.Entry<String,Group> kv:loadedGroups.entrySet()){if(loadedEverTransferred.contains(kv.getKey()))kv.getValue().everTransferredOwnership=true;groups.put(kv.getKey(),kv.getValue());}
     hidden.clear();hidden.addAll(loadedHidden);
@@ -172,6 +177,7 @@ public final class PeerEngine implements Closeable {
     pendingOwnershipHandoff.clear();pendingOwnershipHandoff.addAll(loadedPendingHandoff);
     id=h[1];name=dec(h[2]);peers.clear();peers.putAll(loadedPeers);messages.clear();messages.addAll(loadedMessages);
     voiceDrafts.clear();voiceDrafts.putAll(loadedVoiceDrafts);
+    trustedCallGrants.clear();trustedCallGrants.putAll(loadedTrustedCalls);
   }
   synchronized void save()throws IOException {
     StringBuilder text=new StringBuilder("LMSTORE4\t"+id+"\t"+enc(name)+"\n");
@@ -185,6 +191,7 @@ public final class PeerEngine implements Closeable {
     for(Group g:groups.values())if(g.everTransferredOwnership)text.append("T\t").append(g.id).append('\n');
     for(String groupId:pendingOwnershipHandoff)text.append("O\t").append(groupId).append('\n');
     for(VoiceDraft d:voiceDrafts.values())text.append("R\t").append(d.id).append('\t').append(d.conversationId).append('\t').append(d.isGroup?"1":"0").append('\t').append(d.createdAt).append('\t').append(d.updatedAt).append('\t').append(d.state).append('\t').append(d.byteSize).append('\t').append(d.durationMs).append('\t').append(d.sendTransactionId).append('\n');
+    for(Map.Entry<String,TrustedCallGrant> kv:trustedCallGrants.entrySet())text.append("C\t").append(kv.getKey()).append('\t').append(kv.getValue().fingerprint).append('\t').append(kv.getValue().mask).append('\n');
     text.append("END\n");File tmp=new File(file+".tmp"),bak=new File(file+".bak");
     try(FileOutputStream out=new FileOutputStream(tmp)){out.write(MAGIC);out.write(protector.protect(text.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not encrypt local data",e);}
     if(file.exists()){if(bak.exists()&&!bak.delete())throw new IOException("Cannot update storage backup.");if(!file.renameTo(bak))throw new IOException("Cannot back up storage.");}
@@ -311,7 +318,9 @@ public final class PeerEngine implements Closeable {
   public synchronized void verify(String peerId,String expectedCode)throws IOException {
     Peer p=peers.get(peerId);if(p==null)throw new IOException("Choose a device");if(p.keyChanged())throw new IOException("Device key changed. Revoke old verification before pairing again.");if(!pairingCode(peerId).equals(expectedCode))throw new IOException("Device key changed while this dialog was open. Try again.");String old=p.verified;p.verified=p.fingerprint;try{save();}catch(IOException e){p.verified=old;throw e;}notifyChanged();
   }
-  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;p.verified="";try{save();}catch(IOException e){p.verified=old;throw e;}try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
+  public synchronized void revoke(String peerId)throws IOException{Peer p=peers.get(peerId);String old=p.verified;TrustedCallGrant oldGrant=trustedCallGrants.remove(peerId);p.verified="";try{save();}catch(IOException e){p.verified=old;if(oldGrant!=null)trustedCallGrants.put(peerId,oldGrant);throw e;}try{onRevoke.accept(peerId);}catch(Exception ignored){}notifyChanged();}
+  public synchronized int trustedCallMask(String peerId){Peer p=peers.get(peerId);TrustedCallGrant g=trustedCallGrants.get(peerId);return p!=null&&p.trusted()&&g!=null&&g.fingerprint.equals(p.verified)?g.mask:0;}
+  public synchronized void setTrustedCallMask(String peerId,int mask)throws IOException{Peer p=peers.get(peerId);if(p==null||!p.trusted())throw new IOException("Verify this device before granting trusted call access.");mask&=15;TrustedCallGrant old=trustedCallGrants.get(peerId);if(mask==0)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,new TrustedCallGrant(p.verified,mask));try{save();}catch(IOException e){if(old==null)trustedCallGrants.remove(peerId);else trustedCallGrants.put(peerId,old);throw e;}notifyChanged();}
   synchronized void recordCertificate(String peerId,String fingerprint,byte[] publicKey)throws IOException{Peer p=peers.get(peerId);String encodedKey=publicKey!=null&&publicKey.length>0?Base64.getEncoder().encodeToString(publicKey):p.publicKey;if(p.fingerprint.equals(fingerprint)&&p.publicKey.equals(encodedKey))return;String old=p.fingerprint,oldKey=p.publicKey;p.fingerprint=fingerprint;p.publicKey=encodedKey;try{save();}catch(IOException e){p.fingerprint=old;p.publicKey=oldKey;throw e;}notifyChanged();}
   synchronized boolean trusted(String peerId,String fingerprint){Peer p=peers.get(peerId);return p!=null&&!p.verified.isEmpty()&&p.verified.equals(fingerprint);}
   void receive(Socket socket){SSLSocket s=null;boolean handedOff=false;try{s=(SSLSocket)socket;s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();String fingerprint=SecureIdentity.remote(s);String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))return;remember(h[2],dec(h[3]),s.getInetAddress().getHostAddress(),Integer.parseInt(h[4]));recordCertificate(h[2],fingerprint,SecureIdentity.remotePublicKey(s));write(s,hello());
@@ -716,14 +725,15 @@ public final class PeerEngine implements Closeable {
   public synchronized void deleteConversation(String conversation)throws IOException {
     ArrayList<Message> removed=new ArrayList<>(),old=new ArrayList<>(messages);HashSet<String> oldHidden=new HashSet<>(hidden);
     Peer oldPeer=peers.get(conversation);Group oldGroup=groups.get(conversation);
+    TrustedCallGrant oldGrant=trustedCallGrants.get(conversation);
     boolean wasForgotten=forgotten.contains(conversation);boolean hadPendingLeave=pendingLeaves.containsKey(conversation);
     for(Message m:messages)if(!m.groupId.isEmpty()?m.groupId.equals(conversation):m.from.equals(conversation)||m.to.equals(conversation)){removed.add(m);hidden.add(m.from+"/"+m.id);}
     messages.removeAll(removed);
-    if(oldPeer!=null){peers.remove(conversation);forgotten.add(conversation);}
+    if(oldPeer!=null){peers.remove(conversation);trustedCallGrants.remove(conversation);forgotten.add(conversation);}
     if(oldGroup!=null){groups.remove(conversation);pendingLeaves.put(conversation,oldGroup.owner);}
     try{save();}catch(IOException e){
       messages.clear();messages.addAll(old);hidden.clear();hidden.addAll(oldHidden);
-      if(oldPeer!=null){peers.put(conversation,oldPeer);if(!wasForgotten)forgotten.remove(conversation);}
+      if(oldPeer!=null){peers.put(conversation,oldPeer);if(oldGrant!=null)trustedCallGrants.put(conversation,oldGrant);if(!wasForgotten)forgotten.remove(conversation);}
       if(oldGroup!=null){groups.put(conversation,oldGroup);if(!hadPendingLeave)pendingLeaves.remove(conversation);}
       throw e;
     }
@@ -741,13 +751,15 @@ public final class PeerEngine implements Closeable {
     LinkedHashMap<String,HashSet<String>> oldDeparted=new LinkedHashMap<>();for(Map.Entry<String,HashSet<String>> kv:departedHistory.entrySet())oldDeparted.put(kv.getKey(),new HashSet<>(kv.getValue()));
     LinkedHashMap<String,HashMap<String,Integer>> oldAcked=new LinkedHashMap<>();for(Map.Entry<String,HashMap<String,Integer>> kv:memberAcked.entrySet())oldAcked.put(kv.getKey(),new HashMap<>(kv.getValue()));
     HashSet<String> oldPendingHandoff=new HashSet<>(pendingOwnershipHandoff);
+    LinkedHashMap<String,TrustedCallGrant> oldTrustedCalls=new LinkedHashMap<>(trustedCallGrants);
     ArrayList<Message> withFiles=new ArrayList<>();for(Message m:messages)if(!m.fileName.isEmpty())withFiles.add(m);
-    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();pendingOwnershipHandoff.clear();
+    messages.clear();groups.clear();hidden.clear();departedHistory.clear();memberAcked.clear();pendingOwnershipHandoff.clear();trustedCallGrants.clear();
     forgotten.addAll(oldPeers.keySet());
     peers.clear();
     try{save();}catch(IOException e){
       messages.addAll(old);hidden.addAll(oldHidden);peers.putAll(oldPeers);groups.putAll(oldGroups);
       departedHistory.putAll(oldDeparted);memberAcked.putAll(oldAcked);pendingOwnershipHandoff.addAll(oldPendingHandoff);
+      trustedCallGrants.putAll(oldTrustedCalls);
       forgotten.clear();forgotten.addAll(oldForgotten);pendingLeaves.clear();pendingLeaves.putAll(oldPendingLeaves);
       throw e;
     }
