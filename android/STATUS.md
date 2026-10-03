@@ -1,5 +1,19 @@
 # Android status
 
+LATEST CLEANUP-FIX TEST CANDIDATE: 2.2.44/code71 ARM64 built and USB-upgraded
+with original signer; first-install time unchanged. APK SHA256
+e951d6aec05b5a65766fe84526288248e596b9293f7a11e93adf20baf50cc8fa.
+Fixed demonstrated double disposal of receiver-owned video track, which blocked
+later media initialization. Baseline failure reproduced; corrected actual native
+adapter passed three camera/video lifetimes plus following voice-only setup and
+cleanup. Pure video385/0, JVM native50/0, TLS8+19 and call417 pass. Full normal
+regression ended exit1 at16-member reinvite capability refusal (FullMember10);
+later tail not run.
+Packaged two-phone acceptance remains pending; update BOTH Android endpoints.
+No manual sound test repeated; Windows video still pending. Details and phases:
+[cleanup repair handoff](video-calling/CLEANUP-FIX-HANDOFF.md).
+Older snapshots below are historical, not active runner/release claims.
+
 FINAL TEST-CANDIDATE RECORD:2.2.43/code70 arm64 APK rebuilt and reinstalled,
 6349233 bytes, SHA256 4018ac369352602ba87005945b3166a59de971d0edbc858218b02d475f1f5855.
 Original signer retained. Pure video385/0, native JVM41/0, TLS8/19 and voice-call

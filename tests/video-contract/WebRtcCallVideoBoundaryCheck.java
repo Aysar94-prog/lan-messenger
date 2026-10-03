@@ -48,6 +48,23 @@ public final class WebRtcCallVideoBoundaryCheck {
       rejects(()->video.initialize(22,()->true),"shutdown prevents resurrection");
       check(released.get()==opened.get(),"no retained root after orderly failure cleanup");
     } finally {video.closeAll();resources.close();}
+    // The pinned SDK disposes receiver-owned tracks during PeerConnection.dispose.
+    // A borrowed, already-disposed remote wrapper must not poison parent cleanup.
+    for(int round=0;round<3;round++){
+      WebRtcCallVideo cleanup=new WebRtcCallVideo(null,null,resources,()->true);
+      Class<?> nodeType=Class.forName("net.lanmsg.chat.WebRtcCallVideo$Node");
+      Constructor<?> nodeConstructor=nodeType.getDeclaredConstructors()[0];nodeConstructor.setAccessible(true);
+      Object node=nodeConstructor.newInstance(2L,(ICallMedia.CaptureGate)()->true);
+      Field remoteTrack=nodeType.getDeclaredField("remoteTrack");remoteTrack.setAccessible(true);
+      VideoTrack borrowed=new VideoTrack(1L);
+      Field nativeTrack=MediaStreamTrack.class.getDeclaredField("nativeTrack");nativeTrack.setAccessible(true);
+      nativeTrack.setLong(borrowed,0L); // No JNI: model the SDK's completed disposal.
+      remoteTrack.set(node,borrowed);
+      Field active=WebRtcCallVideo.class.getDeclaredField("active");active.setAccessible(true);active.set(cleanup,node);
+      check(cleanup.closeAll(),"disposed receiver track does not block terminal cleanup");
+      check(active.get(cleanup)==null,"terminal cleanup clears retired video generation");
+      check(cleanup.closeAll(),"retired receiver cleanup remains idempotent");
+    }
     Class<?> type=Class.forName("net.lanmsg.chat.WebRtcCallVideo$AwaitSdp");
     Constructor<?> constructor=type.getDeclaredConstructor();constructor.setAccessible(true);
     Method await=type.getDeclaredMethod("await");await.setAccessible(true);

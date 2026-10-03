@@ -14,6 +14,12 @@ import org.json.JSONObject;
 public final class ProductionVideoAdapterCheck {
   private ProductionVideoAdapterCheck(){}
   public static JSONObject run(Context context,BooleanSupplier visible)throws Exception {
+    JSONObject result=null;
+    for(int round=0;round<3;round++)result=runOnce(context,visible);
+    result.put("completedMediaLifetimes",3);
+    return result;
+  }
+  private static JSONObject runOnce(Context context,BooleanSupplier visible)throws Exception {
     CallVideoResources resources=WebRtcCallMedia.newVideoResources();
     WebRtcCallMedia.install(context,resources);
     ICallMedia a=null,b=null;
@@ -68,8 +74,33 @@ public final class ProductionVideoAdapterCheck {
     }finally{
       allowed.set(false);generated.shutdownNow();generated.awaitTermination(3,TimeUnit.SECONDS);
       ice.shutdown();ice.awaitTermination(3,TimeUnit.SECONDS);
-      if(a!=null)a.dispose();if(b!=null)b.dispose();resources.close();
+      boolean cleanA=closeVideo(a),cleanB=closeVideo(b);
+      try{
+        if(a!=null)a.dispose();if(b!=null)b.dispose();
+        java.lang.reflect.Field poisoned=WebRtcCallMedia.class.getDeclaredField("factoryPoisoned");poisoned.setAccessible(true);
+        if(!cleanA||!cleanB||poisoned.getBoolean(null))
+          throw new IllegalStateException("Production cleanup failed: videoA="+cleanA+", videoB="+cleanB+", factoryBlocked="+poisoned.getBoolean(null));
+        ICallMedia next=new WebRtcCallMedia.Factory(context).create();
+        try{next.createOffer();}finally{next.dispose();}
+        if(poisoned.getBoolean(null))throw new IllegalStateException("Following voice-only media cleanup failed");
+      }finally{resources.close();}
     }
+  }
+  private static boolean closeVideo(ICallMedia media){
+    if(media==null)return true;
+    WebRtcCallVideo video=(WebRtcCallVideo)media.video();
+    if(video==null)return true;
+    boolean clean=video.closeAll();
+    if(!clean)try{
+      java.lang.reflect.Field active=WebRtcCallVideo.class.getDeclaredField("active");active.setAccessible(true);
+      Object node=active.get(video);
+      if(node!=null){
+        java.lang.reflect.Field remote=node.getClass().getDeclaredField("remoteTrack");remote.setAccessible(true);
+        VideoTrack track=(VideoTrack)remote.get(node);
+        android.util.Log.e("ProductionCleanupCheck","cleanup retained remoteTrack="+(track!=null)+", remoteDisposed="+(track!=null&&track.isDisposed()));
+      }
+    }catch(Exception ignored){}
+    return clean;
   }
   private static ICallMedia.VideoListener listener(CountDownLatch ready,AtomicReference<String> failure,
       ExecutorService ice,ICallMedia.Video other){

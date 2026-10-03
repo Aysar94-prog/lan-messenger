@@ -1,5 +1,15 @@
 # Handoff — Android call screen, 2026-10-02
 
+LATEST 2026-10-03: Android cleanup-fix candidate 2.2.44/code71 built and USB
+installed, original signer, SHA256
+e951d6aec05b5a65766fe84526288248e596b9293f7a11e93adf20baf50cc8fa.
+Baseline native cleanup failure reproduced, receiver-track double disposal fixed;
+three native media lifetimes followed by voice setup/cleanup pass. Detailed task
+status/evidence: android/video-calling/CLEANUP-FIX-HANDOFF.md. Full runner3981
+ENDED exit1 at16-member reinvite capability refusal (FullMember10); later tail
+not run. Log cleanup71-full-tests.log. Earlier22510 also ended; do not poll either.
+Two-phone packaged acceptance and Windows migration remain pending.
+
 FINAL candidate checkpoint: Android2.2.43/code70 APK built/USB-installed,
 SHA256 4018ac369352602ba87005945b3166a59de971d0edbc858218b02d475f1f5855.
 Full normal regression22510 ENDED exit1 at16-member reinvite capability refusal;

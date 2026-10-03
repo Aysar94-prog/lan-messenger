@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+Latest Android cleanup-fix test candidate is 2.2.44/code71 (ARM64), installed over
+2.2.43 with original signer and unchanged first-install time. Reproduced/fixed
+receiver video-track double disposal; three native adapter lifetimes and next
+voice-only setup/cleanup pass. Packaged two-phone video remains pending; Windows
+2.2.42 remains voice-only. This changes no wire contract or achieved parity.
+See android/video-calling/CLEANUP-FIX-HANDOFF.md. Older snapshots below are historical.
+
 Latest installed Android TEST CANDIDATE is2.2.43/code70, arm64, original signer;
 the earlier stable pair in the release table below remains2.2.42. Candidate
 startup/data-visible retention and separate physical camera adapter checks pass.

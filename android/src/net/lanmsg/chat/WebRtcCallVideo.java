@@ -311,9 +311,12 @@ final class WebRtcCallVideo implements ICallMedia.Video {
     n.ready=false;
     stop(n);
     if(n.track!=null) {for(VideoSink sink:local.values())n.track.removeSink(sink);}
-    if(n.remoteTrack!=null) {for(VideoSink sink:remote.values())n.remoteTrack.removeSink(sink);}
+    if(n.remoteTrack!=null && !n.remoteTrack.isDisposed()) {for(VideoSink sink:remote.values())n.remoteTrack.removeSink(sink);}
     if(n.pc!=null){n.pc.close();n.pc.dispose();n.pc=null;}
-    if(n.remoteTrack!=null){n.remoteTrack.dispose();n.remoteTrack=null;}
+    // onTrack supplies a receiver-owned wrapper. The pinned SDK may dispose it
+    // with the PC/transceiver; do not dispose that wrapper twice. Also tolerate
+    // cleanup retry after the PC was released but later resource release failed.
+    if(n.remoteTrack!=null){if(!n.remoteTrack.isDisposed())n.remoteTrack.dispose();n.remoteTrack=null;}
     if(n.track!=null){n.track.dispose();n.track=null;}
     if(n.source!=null){n.source.dispose();n.source=null;}
     n.pending.clear();n.seen.clear();

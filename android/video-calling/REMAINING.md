@@ -1,5 +1,12 @@
 # Android video release remaining checklist — 2026-10-03
 
+Latest cleanup repair: Android2.2.44/code71 supersedes2.2.43 for testing.
+Receiver-track double disposal reproduced/fixed; three native media lifetimes,
+following voice setup/cleanup, pure385/JVM50/TLS8+19/call417 pass. Signed APK
+USB-installed without clearing data. Exact two-phone acceptance still pending;
+both endpoints must update. Full regression result and current repair phases:
+`CLEANUP-FIX-HANDOFF.md`. Windows/R05/Both gates are unchanged.
+
 ## Current continuation (supersedes the historical table below)
 
 | Android task | Source / package status | Remaining acceptance |
