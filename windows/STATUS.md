@@ -1,5 +1,17 @@
 # Windows status
 
+## Video feasibility prerequisites (2026-10-03 continuation)
+
+W00/W01 are In progress; W02 is blocked on clarification of the exact package's
+license coverage. WT01 and Both A02b remain Pending. PC physical integrated webcam
+and driver were inventoried, but formats and actual capture are unverified.
+Two exact codec candidates were downloaded to temporary review outputs only;
+no new dependency was selected/vendored, no prototype or production code changed,
+and no Windows–Android video interoperability is claimed. See
+[W0 feasibility and handoff](video-calling/W0-FEASIBILITY.md) for task-level status,
+package hashes, source/security observations, license evidence and resume steps.
+
+
 ## Release 2.2.42, real-device bugfix pass (2026-10-03): UI freeze on Call, missing ringtone
 
 First actual manual use of the packaged 2.2.42 build on real Windows hardware surfaced two bugs

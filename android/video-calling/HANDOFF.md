@@ -138,6 +138,19 @@ failures and next steps here before approaching the limit.
 
 ## Resume boundary
 
+Continuation 2026-10-03: Windows W00/W01 inventory and candidate review started.
+Physical integrated Windows webcam exists (formats/capture still Pending). W02
+now requires clarification of full package license coverage: exact VP8 candidate
+and existing SIPSorcery core carry additional geographic-use restrictions not
+captured by the README's short BSD label. No candidate selected/vendored or new
+prototype executed. See `windows/video-calling/W0-FEASIBILITY.md` for evidence,
+task statuses and the user decision needed. USB phone remains R8YY80A8VLB on
+same LAN. Usage 4% five-hour / 8% weekly; not near limit. Android source and
+production package are unchanged in this continuation.
+End checks: existing Windows Release build passed (0 errors, existing CS1998);
+draft fixtures 43/0 and A03 permission fixtures 18/0; diff check passed. Full-suite
+failure/incomplete results above remain open and were not rerun for docs-only edits.
+
 Android execution is waiting for Windows WT01 and Both A02b. The frozen contract
 has not been changed. A04 cannot proceed until evidence selects a proven common
 codec and upgrade mechanism; AT01 then needs its post-gate rerun. A03 has no live
