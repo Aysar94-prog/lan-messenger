@@ -1,5 +1,16 @@
 # Android video calling — execution handoff
 
+CURRENT: user accepts audio test complete and forbids wasting time repeating it.
+A02b confirmed VP8/separate secured video PC; exact contract in A02b-CONTRACT.md.
+Next: final-contract AT01 fixtures, then Android A04 consent and AT02. Historical
+listening blocks below are superseded by this explicit user disposition.
+scrcpy is approved for interface checks; separate UI from audio forwarding.
+Current source checkpoint: A1-CONSENT-HANDOFF.md. AT01 confirmed validator 100/0;
+AT02 consent 64/0 and effects 27/0. CallUi exposes call-bound distinct video
+commands; actual A07 signaling/native binding and video controls still Pending.
+Next dependency-ordered production step A05/EGL, then A06 separate VP8 camera PC.
+Usage 81%/20%; near-limit handoff saved. No signed video candidate yet.
+
 Latest human correction: "i didnt hear any thing" supersedes the selected
 both-audible answer. Listening acceptance is FAILED/not demonstrated, not PASS.
 See PAIRED-FEASIBILITY.md for decoded samples/energy and post-test earpiece route.
@@ -225,3 +236,9 @@ codec proof: native VP8 generated encode/decode passed twice, net9 ABI once; eac
 RTP or Android device command was used; not WT01/A02b. Next is native endpoint
 ownership, SDP/ICE/audio, then generated paired media upgrade. Production Android
 code/signing/version unchanged. Usage 36% five-hour / 13% weekly, not near limit.
+# Latest A05 checkpoint — 2026-10-03
+
+Continue from [A05 resource handoff](A2-RESOURCE-HANDOFF.md), not historical
+audio/listening blockers. Source/DEX build, fresh call tests 408/0 and explicit
+video foundations 289/0 passed. Full regression stopped at disk exhaustion.
+A06 production camera/video adapter is next; no signed video release yet.

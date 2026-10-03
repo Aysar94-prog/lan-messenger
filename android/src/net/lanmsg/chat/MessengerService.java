@@ -25,6 +25,7 @@ public class MessengerService extends Service {
   // creates one, and never owns the controller.
   volatile CallUi callUi;
   final AudioOwnership audioOwner = new AudioOwnership();
+  final CallVideoResources callVideoResources = WebRtcCallMedia.newVideoResources();
   // Set by the A04 probe: true once the WebRTC native stack is confirmed usable on this device.
   volatile boolean callMediaReal;
   // Message shown once for the user when the native stack is unavailable, so a device that cannot
@@ -263,6 +264,7 @@ public class MessengerService extends Service {
       // A04: real WebRTC media, installed once into the permanent service host. The probe loads
       // libjingle_peerconnection_so and exercises a real audio track, so a device that cannot
       // run it degrades to fake media instead of failing every call.
+      WebRtcCallMedia.install(this,callVideoResources);
       callMediaReal = WebRtcCallMedia.probe(this);
       ICallMedia.Factory mediaFactory = new FakeCallMedia.Factory();
       if (callMediaReal) mediaFactory = new WebRtcCallMedia.Factory(this);
@@ -382,5 +384,5 @@ public class MessengerService extends Service {
     stopSelf();
   }
   void releaseMulticast(){if(multicast!=null&&multicast.isHeld())multicast.release();multicast=null;}
-  @Override public synchronized void onDestroy(){stopping=true;handler.removeCallbacksAndMessages(null);CallNotifier.clear(this);PeerEngine peer=engine;engine=null;CallController cc=callController;callController=null;callUi=null;if(cc!=null)cc.shutdown();if(peer!=null)peer.close();releaseMulticast();if(foreground)stopForeground(true);super.onDestroy();}
+  @Override public synchronized void onDestroy(){stopping=true;handler.removeCallbacksAndMessages(null);CallNotifier.clear(this);PeerEngine peer=engine;engine=null;CallController cc=callController;callController=null;callUi=null;if(cc!=null)cc.shutdown();callVideoResources.close();if(peer!=null)peer.close();releaseMulticast();if(foreground)stopForeground(true);super.onDestroy();}
 }

@@ -117,6 +117,7 @@ public final class CallProtocol {
 
     public Frame copy() {
       Frame f = new Frame(type, callId, senderSequence, negotiationGeneration);
+      f.protocolVersion = protocolVersion;
       if (body != null) f.body = new LinkedHashMap<>(body);
       return f;
     }

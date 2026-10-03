@@ -1,5 +1,19 @@
 # Android status
 
+Latest source checkpoint: A04 consent/commands and A05 interface/service EGL/fake
+video foundations implemented; actual video adapter/controller/UI still pending.
+Fresh 48-source production compile passed. Resource/fake tests 19/18 passing.
+DEX compilation passed; fresh call tests 408/0 and video-contract groups 289/0.
+See [A05 handoff](video-calling/A2-RESOURCE-HANDOFF.md) for exact resume steps.
+Full regression stopped during transfers because D: was full, not a full pass.
+Older chronological checkpoints below do not override this current disposition.
+
+Current user direction: audio testing accepted complete; do not repeat listening.
+A02b selects VP8 on a separate secured video-only connection from actual paired
+evidence. Shared exact wire/consent contract: video-calling/A02b-CONTRACT.md.
+Android production video work resumes at A04; older listening caveats below are
+historical and must not be used to reopen the accepted audio test.
+
 Latest human listening result: no sound heard. Audible acceptance remains open;
 passed packets/decoded samples are insufficient. No signed video release exists.
 

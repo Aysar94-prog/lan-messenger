@@ -8,6 +8,9 @@ import android.os.Process;
 
 import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
+import org.webrtc.EglBase;
+import org.webrtc.DefaultVideoEncoderFactory;
+import org.webrtc.DefaultVideoDecoderFactory;
 import org.webrtc.IceCandidate;
 import org.webrtc.MediaConstraints;
 import org.webrtc.PeerConnection;
@@ -46,9 +49,15 @@ public class WebRtcCallMedia implements ICallMedia {
   private static JavaAudioDeviceModule sharedAdm;
   private static AudioManager sharedAudioManager;
   private static int factoryRefs;
+  private static CallVideoResources installedVideoResources;
+  private static CallVideoResources factoryVideoResources;
+  private static CallVideoResources.Lease factoryContextLease;
+  private static boolean factoryPoisoned;
   private static int savedAudioMode = -1;
 
   private Context appContext;
+  private final CallVideoResources videoResources;
+  private boolean factoryLeaseHeld, initialized;
   private HandlerThread signalingThread;
   private Handler signaling;
 
@@ -85,6 +94,32 @@ public class WebRtcCallMedia implements ICallMedia {
 
   private WebRtcCallMedia(Context context) {
     this.appContext = context.getApplicationContext();
+    synchronized(INIT_LOCK) {
+      if(installedVideoResources==null)installedVideoResources=newVideoResources();
+      videoResources=installedVideoResources;
+    }
+  }
+
+  public static CallVideoResources newVideoResources() {
+    return new CallVideoResources(() -> {
+      final EglBase egl=EglBase.create();
+      return new CallVideoResources.Root() {
+        public Object sharedContext() {return egl.getEglBaseContext();}
+        public void close() {egl.release();}
+      };
+    });
+  }
+  public static void install(Context context,CallVideoResources resources) {
+    if(resources==null)throw new IllegalArgumentException("Missing service video resources");
+    synchronized(INIT_LOCK) {installedVideoResources=resources;}
+    install(context);
+  }
+  ICallMedia.RendererLease acquireRendererLease() {
+    synchronized(INIT_LOCK) {
+      if(disposed || !factoryLeaseHeld || factoryVideoResources!=videoResources)
+        throw new IllegalStateException("No live call renderer context");
+      return videoResources.acquireRenderer();
+    }
   }
 
   /** Must be called from the service before any call media is created. */
@@ -119,7 +154,9 @@ public class WebRtcCallMedia implements ICallMedia {
   private static final String TAG = "LanCallMedia";
 
   @Override
-  public void initialize() throws Exception {
+  public synchronized void initialize() throws Exception {
+    if(initialized)return;
+    if(disposed)throw new IllegalStateException("Media already disposed");
     synchronized (INIT_LOCK) {
       if (!nativeReady) {
         // Load the native library and set up the process-wide WebRTC state. Done once.
@@ -141,6 +178,7 @@ public class WebRtcCallMedia implements ICallMedia {
     });
 
     synchronized (INIT_LOCK) {
+      if(factoryPoisoned)throw new IllegalStateException("Native media cleanup failed; restart the app");
       if (sharedFactory == null) {
         if (sharedAdm == null) {
           // Hardware AEC/NS when the device has it; otherwise WebRTC's software processing.
@@ -153,12 +191,26 @@ public class WebRtcCallMedia implements ICallMedia {
         PeerConnectionFactory.Options options = new PeerConnectionFactory.Options();
         options.disableEncryption = false;   // DTLS-SRTP is mandatory for calls
         options.disableNetworkMonitor = false;
+        try {
+        factoryContextLease=videoResources.acquireMedia();
+        factoryVideoResources=videoResources;
+        EglBase.Context eglContext=(EglBase.Context)factoryContextLease.sharedContext();
         sharedFactory = PeerConnectionFactory.builder()
           .setOptions(options)
           .setAudioDeviceModule(sharedAdm)
+          .setVideoEncoderFactory(new DefaultVideoEncoderFactory(eglContext,true,true))
+          .setVideoDecoderFactory(new DefaultVideoDecoderFactory(eglContext))
           .createPeerConnectionFactory();
+        } catch(Throwable error) {
+          if(factoryContextLease!=null)factoryContextLease.close();
+          factoryContextLease=null;factoryVideoResources=null;
+          if(sharedAdm!=null){sharedAdm.release();sharedAdm=null;}
+          throw new RuntimeException("Could not initialize media factory/context",error);
+        }
       }
+      if(factoryVideoResources!=videoResources)throw new IllegalStateException("Previous service media is still closing");
       factoryRefs++;
+      factoryLeaseHeld=true;
     }
 
     // MediaConstraints' mandatory/optional lists are final references to mutable lists, so they are
@@ -181,6 +233,7 @@ public class WebRtcCallMedia implements ICallMedia {
       } catch (Exception e) { failure[0] = e; }
     });
     if (failure[0] != null) throw new RuntimeException("Could not create the WebRTC audio source", failure[0]);
+    initialized=true;
   }
 
   // ── SDP / ICE ──────────────────────────────────────────────────
@@ -288,7 +341,7 @@ public class WebRtcCallMedia implements ICallMedia {
   }
 
   @Override
-  public void dispose() {
+  public synchronized void dispose() {
     if (disposed) return;
     disposed = true;
     stopStatsPolling();
@@ -530,11 +583,19 @@ public class WebRtcCallMedia implements ICallMedia {
 
   private void releaseFactory() {
     synchronized (INIT_LOCK) {
+      if(!factoryLeaseHeld)return;
+      factoryLeaseHeld=false;
       factoryRefs--;
       if (factoryRefs > 0) return;
       factoryRefs = 0;
-      if (sharedFactory != null) { try { sharedFactory.dispose(); } catch (Throwable ignored) {} sharedFactory = null; }
+      if (sharedFactory != null) {
+        try { sharedFactory.dispose(); }
+        catch (Throwable error) {factoryPoisoned=true;return;}
+        sharedFactory = null;
+      }
       if (sharedAdm != null) { try { sharedAdm.release(); } catch (Throwable ignored) {} sharedAdm = null; }
+      if(factoryContextLease!=null){factoryContextLease.close();factoryContextLease=null;}
+      factoryVideoResources=null;
     }
   }
 

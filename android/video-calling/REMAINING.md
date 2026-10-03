@@ -14,9 +14,9 @@ there is still no signed production video release or honest completion-time esti
 
 | Task / platform | Status | Dependencies | Work / acceptance and testing |
 |---|---|---|---|
-| A02b / Both | Pending | AP01, WT01/R03/R04 | Select proven common codec/upgrade from actual encoded video plus continuous G722; local loopback alone insufficient. Re-run AT01. |
-| A04 / Android | Pending | A03, A02b | Explicit video accept/voice answer/upgrade decline/camera-on consent; denied or stale actions keep audio and camera off. AT02 fake race/permission tests. |
-| A05 / Android | Pending | A04, A02b, AT01 | Media interface and service-owned EGL; renderer release order and sink lifetimes tested. |
+| A02b / Both | Selection/spec complete | AP01, WT01/R03/R04 | VP8 separate secured video PC selected from paired evidence; A02b-CONTRACT.md. Confirmed syntax fixtures 100/0; controller enforcement and C# mirror remain later work. |
+| A04 / Android | Policy/commands implemented; integration pending | A03, A02b | Consent fixtures 64/0 and command fixtures 27/0. Actual controller binding and visible actions await A07/A09; OS acceptance not claimed. |
+| A05 / Android | Interface/EGL/fake implemented; device acceptance pending | A04, A02b, AT01 | Resource fixtures 19/0 and fake adapter 18/0. Native factory/context ownership compiles; production video adapter awaits A06. See A2-RESOURCE-HANDOFF.md. |
 | A06 / Android | Pending | A05, A02b | Selected codec, capturer/source/track, authorized SDP and secure video. Legacy voice remains camera/video-m-line free. |
 | A07 / Android | Pending | A06, A02b | Invitation/consent/generations/collision/late ICE/rollback and camera-state convergence; fake failure scenarios in AT03. |
 | A07d / Android | Pending | A07 | Bounded diagnostics plus allowlisted copied report; missing/reset/unit/sanitization fixtures in AT03. |
@@ -37,6 +37,8 @@ AT01–AT05, and candidate upgrade acceptance precedes A13 completion as specifi
 in the frozen plan. Final Both B0–B2 production interoperability/release decisions
 are separate and must not be implied complete by Android candidate preparation.
 
-Next authorized step is offline endpoint packaging then A02b contract/fixtures,
-because A04/production media cannot bypass A02b. Use USB adb for AP01, never replace
-production app for a prototype. Current production release remains 2.2.42/code69.
+Next authorized step is A06 production media, then A07 controller integration.
+Full regression stopped at disk exhaustion during transfers; later checks remain
+unrun. Ensure sufficient D: space before further full tests/build packaging. Use
+USB adb; never replace production app with a prototype. Current production release
+remains 2.2.42/code69. Audio listening is accepted complete by the user.

@@ -32,6 +32,46 @@ public interface ICallMedia {
   /** Stop all capture, playback and networking.  May be called more than once. */
   void dispose();
 
+  /** Optional separate video connection. A v1/fake adapter may return null. */
+  default Video video() { return null; }
+
+  /** Renderer owns its surfaces/sinks; this lease keeps the service EGL root alive
+   * until those surfaces have detached and released. No Android types in the core. */
+  interface RendererLease extends AutoCloseable {
+    Object sharedContext();
+    @Override void close();
+  }
+  interface FrameSink {
+    /** Borrowed native frame, valid only during this callback; never retain it. */
+    void onFrame(Object frame);
+  }
+  interface CaptureGate { boolean mayCapture(); }
+  interface Video {
+    /** Initialize a video-only secured PC. This must not acquire/start a camera. */
+    void initialize(long generation, CaptureGate gate) throws Exception;
+    String createOffer(long generation) throws Exception;
+    String createAnswer(long generation, String sdp) throws Exception;
+    void setRemoteAnswer(long generation, String sdp) throws Exception;
+    void addIce(long generation, String candidate, String mid, int index) throws Exception;
+    /** Explicit local action, rechecking gate at actual acquisition. */
+    void startCamera(long generation) throws Exception;
+    void stopCamera(long generation);
+    void switchCamera(long generation) throws Exception;
+    void attachLocal(FrameSink sink);
+    void detachLocal(FrameSink sink);
+    void attachRemote(FrameSink sink);
+    void detachRemote(FrameSink sink);
+    RendererLease acquireRendererLease();
+    void setListener(VideoListener listener);
+    /** Releases only video, never healthy audio. Stale generations are ignored. */
+    void dispose(long generation);
+  }
+  interface VideoListener {
+    void onIce(long generation, String candidate, String mid, int index);
+    void onReady(long generation);
+    void onError(long generation, String message);
+  }
+
   // ── Statistics (sampled asynchronously during Connected) ────────
 
   /** Snapshot of current media statistics.  All counts are cumulative. */

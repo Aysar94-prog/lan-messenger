@@ -24,6 +24,43 @@ public class CallUi {
 
   private CallController controller;
   private CallSettings settings;
+  private volatile CallVideoActions videoActions;
+
+  /** Service binds the call's consent commands; never retain an Activity here. */
+  public void bindVideoActions(CallVideoActions actions) { videoActions = actions; }
+
+  private CallVideoActions videoAction(String expectedCallId, boolean incoming) throws java.io.IOException {
+    CallSession s=current;
+    CallVideoActions actions=videoActions;
+    if(s==null || expectedCallId==null || !expectedCallId.equals(s.callId)
+        || s.state!=(incoming?CallProtocol.State.IncomingRinging:CallProtocol.State.Connected))
+      throw new java.io.IOException("That video action is no longer available");
+    if(actions==null || !actions.isForCall(expectedCallId))
+      throw new java.io.IOException("Video is not available for this call");
+    return actions;
+  }
+  public CallVideoConsent.Result acceptVideo(String callId) throws java.io.IOException {
+    return videoAction(callId,true).acceptVideo(callId);
+  }
+  public void answerWithVoice(String callId) throws Exception {
+    if(videoActions!=null && videoActions.isForCall(callId))videoAction(callId,true).answerWithVoice(callId);
+    else accept(callId);
+  }
+  public CallVideoConsent.Result requestVideo(String callId) throws java.io.IOException {
+    return videoAction(callId,false).requestVideo(callId);
+  }
+  public CallVideoConsent.Result acceptVideoUpgrade(String callId,String request) throws java.io.IOException {
+    return videoAction(callId,false).acceptUpgrade(callId,request);
+  }
+  public CallVideoConsent.Result declineVideoUpgrade(String callId,String request) throws java.io.IOException {
+    return videoAction(callId,false).declineUpgrade(callId,request);
+  }
+  public CallVideoConsent.Result turnCameraOn(String callId) throws java.io.IOException {
+    return videoAction(callId,false).turnCameraOn(callId);
+  }
+  public void turnCameraOff(String callId) throws java.io.IOException {
+    videoAction(callId,false).turnCameraOff(callId);
+  }
   private final List<CallController.Callback> observers = new CopyOnWriteArrayList<>();
 
   // ── Current snapshot ───────────────────────────────────────────
@@ -318,6 +355,7 @@ public class CallUi {
 
   /** Release the controller and settings.  Only the service calls this, when it shuts down. */
   public void unbind() {
+    videoActions = null;
     for (CallController.Callback observer : observers) {
       if (controller != null) controller.removeListener(observer);
     }

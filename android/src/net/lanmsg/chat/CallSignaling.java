@@ -97,14 +97,25 @@ public final class CallSignaling {
     if (length < 0 || length > CallProtocol.MAX_FRAME_BYTES || 4 + length != wire.length)
       return null;
 
-    String json = new String(wire, 4, length, StandardCharsets.UTF_8);
+    String json;
+    try { json = StandardCharsets.UTF_8.newDecoder()
+      .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+      .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+      .decode(ByteBuffer.wrap(wire, 4, length)).toString(); }
+    catch (java.nio.charset.CharacterCodingException e) { return null; }
     Map<String,Object> root;
     try { root = parseJsonObject(json); }
     catch (Exception e) { return null; }
 
     CallProtocol.Frame f = new CallProtocol.Frame();
     try {
+      if (Long.valueOf(2).equals(root.get("v"))) {
+        if (!root.keySet().equals(new HashSet<String>(Arrays.asList("v","t","cid","seq","gen")))
+            && !root.keySet().equals(new HashSet<String>(Arrays.asList("v","t","cid","seq","gen","b")))) return null;
+        if (!(root.get("seq") instanceof Long) || !(root.get("gen") instanceof Long)) return null;
+      }
       Object v = root.get("v");   f.protocolVersion = v instanceof Number ? ((Number)v).intValue() : 1;
+      if (f.protocolVersion == 2 && !Long.valueOf(2).equals(v)) return null;
       f.type       = stringField(root, "t");
       f.callId     = stringField(root, "cid");
       Object s = root.get("seq"); f.senderSequence = s instanceof Number ? ((Number)s).longValue() : 0;
@@ -128,6 +139,7 @@ public final class CallSignaling {
   private static class JsonParser {
     final String src;
     int pos;
+    int depth;
 
     JsonParser(String s) { this.src = s; this.pos = 0; }
 
@@ -137,6 +149,8 @@ public final class CallSignaling {
     void skipWhitespace() { while (pos < src.length() && Character.isWhitespace(src.charAt(pos))) pos++; }
 
     Object parseValue() {
+      if (++depth > 16) throw new RuntimeException("JSON nesting limit");
+      try {
       char c = peek();
       if (c == '"') return parseString();
       if (c == '{') return parseObject();
@@ -144,6 +158,7 @@ public final class CallSignaling {
       if (c == 't' || c == 'f') return parseBoolean();
       if (c == 'n') { parseNull(); return null; }
       return parseNumber();
+      } finally { --depth; }
     }
 
     String parseString() {
@@ -160,14 +175,17 @@ public final class CallSignaling {
             case 'n': sb.append('\n'); break;
             case 'r': sb.append('\r'); break;
             case 't': sb.append('\t'); break;
+            case 'b': sb.append('\b'); break;
+            case 'f': sb.append('\f'); break;
             case 'u':
               if (pos + 4 > src.length()) throw new RuntimeException("\\u at EOF");
               sb.append((char)Integer.parseInt(src.substring(pos, pos+4), 16));
               pos += 4;
               break;
-            default: sb.append('\\').append(e);
+            default: throw new RuntimeException("Invalid JSON escape");
           }
         } else {
+          if (c < 0x20) throw new RuntimeException("Unescaped control character");
           sb.append(c);
         }
       }
@@ -181,6 +199,7 @@ public final class CallSignaling {
       while (true) {
         String key = parseString();
         expect(':');
+        if (m.containsKey(key)) throw new RuntimeException("Duplicate JSON field");
         m.put(key, parseValue());
         if (peek() == '}') { read(); return m; }
         expect(',');
@@ -222,13 +241,19 @@ public final class CallSignaling {
         while (pos < src.length() && Character.isDigit(src.charAt(pos))) pos++;
       }
       String num = src.substring(start, pos);
-      return isFloat ? Double.parseDouble(num) : Long.parseLong(num);
+      if (!num.matches("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"))
+        throw new RuntimeException("Invalid JSON number");
+      // An arithmetic conditional promotes Long to Double and loses large counters.
+      if (isFloat) return Double.valueOf(num);
+      return Long.valueOf(num);
     }
   }
 
   static Map<String,Object> parseJsonObject(String json) {
     JsonParser p = new JsonParser(json);
     Object val = p.parseValue();
+    p.skipWhitespace();
+    if (p.pos != json.length()) throw new RuntimeException("Trailing JSON data");
     if (!(val instanceof Map))
       throw new RuntimeException("Top-level JSON must be an object");
     @SuppressWarnings("unchecked")

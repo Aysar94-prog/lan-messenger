@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+Android video source checkpoint 2026-10-03: consent policy/commands and service
+EGL/media interface foundations implemented. Java/DEX build, call checks 408/0
+and explicit video foundations 289/0 passed; full regression stopped on disk
+exhaustion. Actual production video media/controller/UI and signed candidate are
+not complete. No release compatibility/parity change. See
+[Android phase handoff](android/video-calling/A2-RESOURCE-HANDOFF.md).
+
 Video feasibility update 2026-10-03: test-only Windows native/physical Android
 generated VP8 pairing passed both directions with G722 and isolated video failure
 continuity. Neither production release has video; compatibility/parity and

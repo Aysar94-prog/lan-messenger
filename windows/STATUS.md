@@ -1,5 +1,10 @@
 # Windows status
 
+User accepts audio testing complete and requests no repeated listening. A02b
+shared video choice: VP8/separate secured video PC (Android A02b-CONTRACT.md).
+R05 production migration is authorized but not implemented; production dependency
+and Windows video acceptance remain separate. Older listening entries are historical.
+
 Latest human listening correction: no sound heard, overriding earlier selected
 both-audible response. Replacement audible acceptance remains OPEN; no factory
 switch or release accepted from packet counters alone.

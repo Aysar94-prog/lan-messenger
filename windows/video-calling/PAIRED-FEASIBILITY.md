@@ -1,5 +1,12 @@
 # Paired native/Android feasibility — 2026-10-03
 
+LATEST USER DISPOSITION: audio testing is accepted complete, including the
+previously working voice-call releases. Do not repeat manual listening. Preserve
+the historical scrcpy/listening observations below without using them as a new
+blocker. A02b now confirms VP8/separate secured video PC; Android production
+continues under android/video-calling/A02b-CONTRACT.md. Application migration,
+physical-camera/video UI and exact release acceptance are still distinct.
+
 Scope: Both, test-only R02/R04 media evidence. Not a production video release.
 Frozen plan-v007 SHA256 remains
 `4ea7877d6643b5c89246b075d7a301d73b38bea28f644303383fa42f7ca0efbf`.
@@ -93,6 +100,15 @@ Usage checkpoint: 59% five-hour / 17% weekly, not near exhaustion. Save a new
 handoff before a near-limit pause. Production signer, data and frozen plan intact.
 
 ## End verification checkpoint
+
+Listening retest: user answered yes but qualified that all sound came from the
+laptop, attributing it to adb. Do NOT accept separate phone output from this
+ambiguous report. Read-only check found zero adb forward/reverse rules and
+PhoneExperienceHost.exe running; its presence alone does not prove audio mirroring.
+Phone audio dump during the retest reports voice/music routing to earpiece.
+ADB controls the endpoint; media uses secure LAN PeerConnections. Next physical
+acceptance should exclude screen/audio mirroring and distinguish output at each
+device, not assume transport or audible independence from packet counts.
 
 LATEST HUMAN RESULT: the user initially selected both audible, then immediately
 corrected it to "i didnt hear any thing". The correction is authoritative:
