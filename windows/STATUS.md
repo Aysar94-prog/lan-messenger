@@ -1,5 +1,50 @@
 # Windows status
 
+## 2026-10-04 WVC-03 advisory review: stopped, input not selected
+
+Reviewed current Chromium advisories against the exact pinned M155 input and **stopped**
+without selecting it, because one material issue is unresolved. Full evidence:
+[WVC-03 advisory review](video-calling/WVC-03-ADVISORY-REVIEW.md). **No security
+clearance is claimed and none was given**; the R01 gate remains `HOLD`.
+
+**Correcting an earlier claim in this file.** WVC-03 was previously recorded as blocked
+"because only the test-only M155 package exists". That was wrong about the cause. The input
+is present and verifies: the pinned upstream archive matches its official `.shasum`
+(`4cd8fce2…`), and the M155 package (`0131cad1…`) pins exact commits in `VERSIONS`
+(`WEBRTC_SRC_COMMIT=f89edcb7be1f4be029ee7186e36b2b35ec03373e`, `M155.8059`) and carries a
+complete 106,381-character `NOTICE` enumerating 24 components. The blocker is the
+advisory/security gate, not a missing artifact.
+
+**Material unresolved issue.** CVE-2026-103631 — *High*, buffer overflow in WebRTC — was
+reported 2026-09-28 and shipped in M154 stable `154.0.8037.97/.98` on 2026-10-01/02, i.e.
+after the inferred M155 branch point. Inclusion in M155 would need a separate cherry-pick,
+and nothing available offline establishes that it landed before build `155.8059.2` was cut.
+Applicability to this project is high rather than speculative: a WebRTC buffer overflow is
+reached through RTP/media frame handling, which is what a calling feature does. Seven
+further media/RTC advisories in the window (M151–M153) are assessed as already fixed in the
+pin; one M154 item is assessed as likely fixed. No source-level mitigation exists because
+the library is not ours to patch.
+
+**License and provenance, established.** Copyleft screening of the delivered `NOTICE`
+returns no AGPL/GPL/LGPL obligation, no CC-BY-NC, no Commons Clause and no geographic
+restriction: the 6 `GPL` hits are the Apache-2.0 appendix plus a public-domain dedication,
+and all 88 `MPL` hits are substrings of `SIMPLY`/`IMPLIED` inside BSD warranty text.
+Remaining gap: `sdk/webrtc/DEPS` is a 55-byte stub that does not pin the Chromium core
+revision, so that revision is still unestablished from the artifact.
+
+**Process defect found.** `audit-input.ps1` cannot audit the candidate: it defaults to the
+**m150** DLL archive, requires exactly one `lib/libwebrtc.dll`, and hardcodes m150-era
+`reasons` plus constant `gate`/`selected`/`securityDispositionComplete` fields. The M155
+package has zero DLLs, so fed the real candidate the script throws. Two runnability defects
+were fixed so it executes under Windows PowerShell 5.1 (missing
+`System.IO.Compression.FileSystem` load; .NET-5-only `SHA256.HashData` /
+`Convert.ToHexString`); it now reproduces the recorded evidence exactly, still exit 2
+`HOLD`. **Its verdict logic was left untouched on purpose** — editing `gate = 'HOLD'` to
+`PASS` would be self-approval.
+
+**Not performed:** no selection, no production-named package, no native bridge or adapter,
+no build against the static library. Production video remains disabled.
+
 ## 2026-10-04 implementation pass: managed v2 video coordination (not a release)
 
 Implemented in source on top of local commit `f27f05b`. **No release was packaged and
@@ -40,9 +85,11 @@ and a hand-authored expectation must all match — which is the only interoperab
 evidence this pass produced, and it is evidence about parsing and serialization, **not**
 about moving pictures.
 
-**Not done, and not implied.** No native video adapter: only the *test-only* M155
-package exists locally and the plan forbids shipping it, so `ICallVideoMedia` has no
-production implementation. **Consequently this build advertises voice only.**
+**Not done, and not implied.** No native video adapter, and now a specific reason: the
+pinned M155 input is **held at the advisory gate** over an unresolved WebRTC buffer
+overflow (see the review entry above), so it cannot be selected and
+`ICallVideoMedia` has no production implementation. **Consequently this build advertises
+voice only.**
 `CallVideoSupport` defaults to false, and `CallController.VideoEnabled`'s getter is
 `videoEnabled && VideoMediaFactory != null`, so no assignment can produce a build that
 claims VP8 with nothing to serve it. A peer that probes this build gets no CALLCAPS

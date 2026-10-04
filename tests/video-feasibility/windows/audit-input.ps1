@@ -4,6 +4,9 @@ param(
 )
 # R01 read-only input gate. Does not load DLLs, restore packages or run media.
 $ErrorActionPreference = 'Stop'
+# [IO.Compression.ZipFile] lives in a separate assembly and is not auto-loaded by Windows PowerShell
+# 5.1, so the gate threw before reaching any check. Loading it explicitly is harmless on PowerShell 7+.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $expectedHash = '4cd8fce2939b67b034200b124e4559cf343387a047118755925a0551328df84d'
 $actualHash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
 $publishedHash = ((Get-Content -LiteralPath $PublishedChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
@@ -28,7 +31,13 @@ try {
   if ([BitConverter]::ToUInt32($bytes,$peOffset) -ne 0x4550) { throw 'Invalid PE signature.' }
   $machine = [BitConverter]::ToUInt16($bytes,$peOffset + 4)
   if ($machine -ne 0x8664) { throw 'Candidate is not x64; architecture changed.' }
-  $dllHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+  # [Security.Cryptography.SHA256]::HashData and [Convert]::ToHexString are .NET 5+ APIs and do not
+  # exist in Windows PowerShell 5.1, so this gate could not complete there either. The streaming API
+  # behaves identically on 5.1 and 7+; keeping lower-case hex means recorded hashes stay comparable
+  # across runs and PowerShell versions.
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $dllHash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
   $noticeFiles = @($entries | Where-Object { $_ -match '(^|/)(NOTICE|LICENSE_THIRD_PARTY|THIRD_PARTY_NOTICES)(\.[^/]*)?$' })
   [pscustomobject]@{
     task = 'R01 Windows dependency audit'
