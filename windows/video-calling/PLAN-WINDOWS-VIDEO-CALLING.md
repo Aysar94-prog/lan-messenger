@@ -32,18 +32,18 @@ Windows Direct-connections UI, or unrelated attachment/compose changes.
 Three deviations are recorded here rather than buried, because each one changes what a
 later row is allowed to assume.
 
-1. **Section B was reordered, not skipped — and is still unstarted.** Rows 05–08 and
+1. **Section B was reordered, not skipped — and is now starting.** Rows 05–08 and
    gate T02 assumed the native voice replacement lands first and that video activation
-   follows it. This pass implements the managed v2 coordination (09–10) *ahead* of it,
+   follows it. An earlier pass implemented the managed v2 coordination (09–10) *ahead* of it,
    behind an `ICallVideoMedia` seam with `FakeCallVideoMedia` as the only implementation.
-   Nothing regresses in voice: Windows voice stays on the proven SIPSorcery 10.0.17 +
-   G722 + winmm adapter, which is untouched. The reason is that WVC-03 is blocked — and
-   after the 2026-10-04 review the block is an **advisory** block, not a missing-artifact
-   one: the pinned input verifies and the M155 package retains full provenance, but
-   CVE-2026-103631 (High, buffer overflow in WebRTC) is unresolved against the pinned
-   `155.8059.2`, so the input cannot be selected. Sequencing video behind it would have
-   produced no progress at all on the rows that carry the actual wire risk. WVC-08
-   (default factory switch and SIPSorcery removal) still gates real video.
+   Nothing regressed in voice: Windows voice stays on the proven SIPSorcery 10.0.17 +
+   G722 + winmm adapter, which was untouched. **Why it was reordered:** WVC-03 was blocked at
+   the time, on an advisory that has since been shown to be wrong — the first pass concluded
+   CVE-2026-103631 was unresolved against the pin, when in fact the pinned commit *is* the
+   fix (WVC-03 row). Sequencing video behind that false block would have produced no progress
+   at all on the rows carrying the actual wire risk. **Now that WVC-03 passes, Section B
+   proceeds** — WVC-08 (default factory switch and SIPSorcery removal) still gates real
+   video, and production video stays disabled until the WVC-T03/T04/T05 and WVC-08 gates pass.
 2. **`RuntimeIdentifier` is deliberately not set.** WVC-02 pinned `PlatformTarget=x64`,
    which is what fixes the compiled architecture and P/Invoke resolution. Setting a RID
    additionally drags in the win-x64 runtime and apphost packs, which the vendored
@@ -176,9 +176,9 @@ pass did not partially build them and then describe them as pending work in prog
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-01 Windows baseline | Done | None | Recorded: clean tree apart from this task's own files; `dotnet build -c Release` succeeds with exactly one pre-existing `CS1998` warning in `ChatWindowVoice.cs`; `tests/run.ps1` exits 0. User's in-flight Android work was left untouched and is committed separately in `f27f05b`. | Reproducible baseline report — satisfied by the build + full-suite exit 0 above. No group-suite failure to classify: the historically flaky 16-member case did not reproduce. |
+| WVC-01 Windows baseline | Done | None | Recorded: clean tree apart from this task's own files; `dotnet build -c Release` succeeds with exactly one pre-existing `CS1998` warning in `ChatWindowVoice.cs`; `tests/run.ps1` exits 0. User's in-flight Android work was left untouched and is committed separately in `f27f05b`. | Reproducible baseline report — satisfied by the build + full-suite exit 0 above. No group-suite failure occurred on the baseline run, so there was nothing to classify at this point; see WVC-T03 for the failure that did occur later. |
 | WVC-02 Windows architecture | Done (decision) | 01 | **x64 only**, approved by the user as a support reduction, because the native video adapter is libwebrtc, which ships x64 binaries only. Applied `PlatformTarget=x64`. `RuntimeIdentifier` deliberately deferred — see deviation 2 above. | Architecture support documented with explicit user approval. Physical camera enumeration and RGB/IR inventory remain under WVC-12 and are **not** done; no webcam was attached to this pass. |
-| WVC-03 Windows production dependency | Blocked (advisory) | 02 | Reviewed 2026-10-04; **stopped, no selection made**. See [WVC-03-ADVISORY-REVIEW.md](WVC-03-ADVISORY-REVIEW.md). Correcting an earlier claim here: the input is **not** missing. The pinned upstream archive verifies against its official `.shasum`, and the M155 package pins exact commits in `VERSIONS` (`f89edcb7…`) and carries a complete 106 KB `NOTICE` covering 24 permissively licensed components with no copyleft or geographic restriction. The blocker is the R01 advisory/security gate, which is still `HOLD`/`selected=false` with security disposition pending, and one material issue is now unresolved: **CVE-2026-103631, High, buffer overflow in WebRTC**, shipped 2026-10-02 in M154 — after the inferred M155 branch point — with no offline evidence that the pinned `155.8059.2` contains the fix. | Automated/read-only only: advisory window parsed from the Chrome Releases feed (10 media/RTC-relevant CVEs, 7 assessed already fixed, 1 assessed likely fixed, 1 unresolved); license screen performed against delivered NOTICE; `audit-input.ps1` made runnable under PS 5.1 and reproduced, still exit 2 HOLD. **Not** performed: any selection, production package, native build, or security clearance. |
+| WVC-03 Windows production dependency | Done (gate PASS) | 02 | Reviewed 2026-10-04, **corrected and passed** — see [WVC-03-ADVISORY-REVIEW.md](WVC-03-ADVISORY-REVIEW.md). **This reverses the earlier STOP in this same row.** The blocker was reported as CVE-2026-103631 (High, buffer overflow in WebRTC) being absent from the pin; that was wrong. Fetching the pinned commit `f89edcb7…` from official upstream shows it is titled `[M155] Harden payload capacity and reduction checks in RTP packetizers`, carries `Bug: chromium:567088927` — the advisory's own bug id — and sits at `refs/branch-heads/8059@{34859}` (our branch), cherry-picked from `fc666626…`. **The pin IS the fix**; the earlier pass reached the opposite conclusion from an inferred branch-point date rather than from upstream evidence. No re-pin needed. Also corrected: the NOTICE inventory is **25** components, not 24 — the earlier count dropped `libc++` because its extraction regex excluded `+`. | Automated/read-only only: advisory window parsed from the Chrome Releases feed (10 media/RTC-relevant CVEs); patch inclusion resolved against official upstream; license screen against the delivered NOTICE; `audit-upstream.ps1` rewritten to audit **both** the upstream archive and the vendored package, derive its verdict from `$fail`/`$unresolved` instead of hardcoding it, and prove the package's `webrtc.lib` is byte-identical to the audited archive's (`c5ae79fe…`). Runs **PASS, exit 0**, and four negative tests (missing package, wrong artifact, tampered identity commit, unknown relation) all correctly return HOLD exit 2. Honest limit: 1 of 7 advisory rows is machine-verified; 3 are `ancestor` and 3 `scope`, carried from R01's reviewed upstream evidence and labelled as not machine-verified. **License delta is zero** — all 25 components are inside the set already approved, so nothing new to approve. Residual: Chromium core revision is not pinned by the 55-byte `DEPS` stub, disclosed rather than treated as blocking. Production video remains disabled regardless. |
 | WVC-04 Both contract reconciliation | Done | 01 | Reconciled against the actual Android source rather than the provisional plan names: `CALLCAPS` → `LM4\tCALLCAPS\t2\tVP8`; grants `LM4\tCALLGRANTS\t1` → `1\t<0..15>` with `TRUSTED_AUTO_ANSWER_VOICE=1`, `TRUSTED_AUTO_ANSWER_VIDEO=2`, `TRUSTED_REMOTE_CAMERA=4`, `TRUSTED_REMOTE_SPEAKER=8`; v2 envelope `v/t/cid/seq/gen[/b]`. Windows parses and emits all of it. | Field/state table is the shared corpora plus `CallVideoProtocol`; every rejection case is pinned by a fixture, not by prose. No protocol downgrade: a peer that cannot answer CALLCAPS stays on unchanged v1 voice. |
 | WVC-T01 Both wire fixtures | Done | 04 | `tests/video-contract/fixtures/call-frames.txt` (107 records) and `capabilities.txt` (38 records), read independently by `SharedFrameFixtureCheck.java`/`CallCapabilityFixtureCheck.java` and by `CallFrameFixtureCheck.cs`/`CallCapabilitiesFixtureCheck.cs`. Format is `name\|expectParse\|expectValid\|payload`, with `#SAMPLE`/`@name@` expansion and `b64:` for raw wire bytes. | **Both parsers accept and reject identically, and both match a hand-authored expectation, on all 145 records** — `tests/video-contract/run.ps1` diffs the two verdict files. Legacy v1 voice fixtures are included and unchanged. Serialization comparison respects JSON key-order semantics (payloads are verbatim JSON text). |
 
@@ -186,8 +186,9 @@ pass did not partially build them and then describe them as pending work in prog
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-Rows 05–08 and gate T02 were **not started**; see deviation 1 above. They remain the
-correct path to production, and WVC-08 still gates real video.
+Rows 05–08 and gate T02 were **not started** in the passes up to and including the WVC-03
+gate rewrite; see deviation 1 above. They remain the correct path to production, and WVC-08
+still gates real video.
 
 One consequence must be stated plainly, because it is easy to misread: with no
 `ICallVideoMedia` factory installed, `VideoEnabled` is false, so this build never
@@ -208,7 +209,7 @@ adapter-integration stage, where a backend exists but a particular camera may no
 | WVC-07 Windows managed adapter | Pending | 05,06 | Not started for audio. The `ICallVideoMedia` seam is a separate, video-only interface and does not disturb the `ICallMedia` voice contract. | Not performed. |
 | WVC-T02 Both authenticated voice gate | Pending | 07,01 | Not run. | Not performed. |
 | WVC-08 Windows offline integration/switch | Pending | T02,03 | Not started. SIPSorcery remains the production voice factory. | Not performed. |
-| WVC-T03 Windows voice regression | Partial | 08 | Not applicable to the replacement (there is none), but the equivalent regression question was answered: the full suite passes with exit 0 and no new voice failures. | The historically flaky 16-member `group_membership.py` case did not reproduce on this run, so there was nothing to classify. Recorded as "did not occur", not as "fixed". |
+| WVC-T03 Windows voice regression | Partial | 08 | Not applicable to the replacement (there is none), but the equivalent regression question was answered: the full suite passes with exit 0 and no new voice failures. | **Unresolved intermittent failure, carried forward.** The historically flaky 16-member `group_membership.py` case **did occur** in a later run of this pass (abort at `run.ps1:85`, exit 1, only PASS lines printed, empty stderr) and the immediate re-run exited 0. That is **not** a fix: a passing re-run does not prove a non-reproducing failure is resolved, and no diagnosis was obtained. Not attributed to the known zombie-`dotnet` contention either, because no evidence for that was gathered here. No application code changed between the two runs. |
 
 ### C. Add authenticated v2 and isolated video coordination
 

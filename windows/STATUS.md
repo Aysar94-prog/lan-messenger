@@ -1,49 +1,88 @@
 # Windows status
 
-## 2026-10-04 WVC-03 advisory review: stopped, input not selected
+## 2026-10-04 WVC-03 advisory review: corrected, gate PASS, input selected for Section B
 
-Reviewed current Chromium advisories against the exact pinned M155 input and **stopped**
-without selecting it, because one material issue is unresolved. Full evidence:
-[WVC-03 advisory review](video-calling/WVC-03-ADVISORY-REVIEW.md). **No security
-clearance is claimed and none was given**; the R01 gate remains `HOLD`.
+Reviewed current Chromium advisories against the exact pinned M155 input. An earlier pass of
+this review **stopped without selecting the input**; that pass was wrong, and the correction
+is recorded here in full rather than quietly overwritten. Full evidence:
+[WVC-03 advisory review](video-calling/WVC-03-ADVISORY-REVIEW.md). **No security clearance is
+claimed and none was given** — what changed is that the blocking finding was a false one.
 
-**Correcting an earlier claim in this file.** WVC-03 was previously recorded as blocked
-"because only the test-only M155 package exists". That was wrong about the cause. The input
-is present and verifies: the pinned upstream archive matches its official `.shasum`
-(`4cd8fce2…`), and the M155 package (`0131cad1…`) pins exact commits in `VERSIONS`
-(`WEBRTC_SRC_COMMIT=f89edcb7be1f4be029ee7186e36b2b35ec03373e`, `M155.8059`) and carries a
-complete 106,381-character `NOTICE` enumerating 24 components. The blocker is the
-advisory/security gate, not a missing artifact.
+**The correction.** The stop was justified by CVE-2026-103631 (*High*, buffer overflow in
+WebRTC) being absent from the pin. That conclusion came from an *inferred* M155 branch-point
+date versus the M154 stable release date, and it is wrong. Fetching the pinned commit
+`f89edcb7be1f4be029ee7186e36b2b35ec03373e` from official upstream
+(`webrtc.googlesource.com/src/+/f89edcb7…`) shows it is titled
+`[M155] Harden payload capacity and reduction checks in RTP packetizers`, carries
+`Bug: chromium:567088927` — the advisory's own bug id — sits at
+`refs/branch-heads/8059@{34859}` (our branch), and was cherry-picked from
+`fc6666263eafa63878d02102189e3dabe9c90455`. **The pin *is* the fix**, so the build contains it
+and no re-pin is needed. The R01 disposition table had in fact recorded this correctly at the
+time; the later pass re-derived the same advisory as unresolved and did not check it.
 
-**Material unresolved issue.** CVE-2026-103631 — *High*, buffer overflow in WebRTC — was
-reported 2026-09-28 and shipped in M154 stable `154.0.8037.97/.98` on 2026-10-01/02, i.e.
-after the inferred M155 branch point. Inclusion in M155 would need a separate cherry-pick,
-and nothing available offline establishes that it landed before build `155.8059.2` was cut.
-Applicability to this project is high rather than speculative: a WebRTC buffer overflow is
-reached through RTP/media frame handling, which is what a calling feature does. Seven
-further media/RTC advisories in the window (M151–M153) are assessed as already fixed in the
-pin; one M154 item is assessed as likely fixed. No source-level mitigation exists because
-the library is not ours to patch.
+**Second correction: 25 components, not 24.** The `NOTICE` inventory is 25, not 24. The
+earlier count dropped `libc++` because its extraction regex character class excluded `+`.
+`libc++` is MIT/NCSA with LLVM exceptions, inside the set already approved.
 
-**License and provenance, established.** Copyleft screening of the delivered `NOTICE`
-returns no AGPL/GPL/LGPL obligation, no CC-BY-NC, no Commons Clause and no geographic
-restriction: the 6 `GPL` hits are the Apache-2.0 appendix plus a public-domain dedication,
+**Licence delta versus prior approval: zero.** The shipped inventory is the same 25 names R01
+already read and approved (BSD variants, Apache-2.0, MIT/NCSA legacy LLVM terms with LLVM
+exceptions, IJG/zlib, FFT/ooura permissive, G711/G722/sqrt public-domain; no geographic-use
+restriction). There are no newly introduced and no previously unapproved components, so the
+allowlist question the earlier pass left open is answered by comparison rather than by a new
+approval. Copyleft screening still returns no AGPL/GPL/LGPL obligation, no CC-BY-NC and no
+Commons Clause: the 6 `GPL` hits are the Apache-2.0 appendix plus a public-domain dedication,
 and all 88 `MPL` hits are substrings of `SIMPLY`/`IMPLIED` inside BSD warranty text.
-Remaining gap: `sdk/webrtc/DEPS` is a 55-byte stub that does not pin the Chromium core
-revision, so that revision is still unestablished from the artifact.
 
-**Process defect found.** `audit-input.ps1` cannot audit the candidate: it defaults to the
-**m150** DLL archive, requires exactly one `lib/libwebrtc.dll`, and hardcodes m150-era
-`reasons` plus constant `gate`/`selected`/`securityDispositionComplete` fields. The M155
-package has zero DLLs, so fed the real candidate the script throws. Two runnability defects
-were fixed so it executes under Windows PowerShell 5.1 (missing
-`System.IO.Compression.FileSystem` load; .NET-5-only `SHA256.HashData` /
-`Convert.ToHexString`); it now reproduces the recorded evidence exactly, still exit 2
-`HOLD`. **Its verdict logic was left untouched on purpose** — editing `gate = 'HOLD'` to
-`PASS` would be self-approval.
+**The gate was rewritten and now derives its verdict.**
+`tests/video-feasibility/windows/audit-upstream.ps1` — not `audit-input.ps1` — is the gate for
+this input. The earlier pass identified `audit-input.ps1`'s defects but missed that it audits
+the **m150 DLL archive** (defaults to `libwebrtc-win-x64-release.zip`, requires exactly one
+`lib/libwebrtc.dll`, hardcodes m150-era `reasons` and constant
+`gate`/`selected`/`securityDispositionComplete`). The M155 candidate ships zero DLLs — only
+`sdk/webrtc/lib/webrtc.lib` — so that script throws on the real input. It is now marked
+superseded and its verdict deliberately left untouched; editing `gate = 'HOLD'` to `PASS`
+would have been self-approval.
 
-**Not performed:** no selection, no production-named package, no native bridge or adapter,
-no build against the static library. Production video remains disabled.
+`audit-upstream.ps1` now audits **both** the official upstream archive
+(`webrtc.windows_x86_64.zip`, 751,214,637 bytes, SHA-256 `3460e4fe…`, 40,995 entries) and the
+vendored package a build would reference, computes `gate` from accumulated `$fail`/`$unresolved`
+lists instead of asserting it, builds `reasons` from those lists, and proves store-and-forward
+integrity by hashing both copies of the library: 369,225,972 bytes, SHA-256 `c5ae79fe…`,
+**byte-identical**. Advisory inclusion is expressed as a relation per advisory, and the gate
+distinguishes what it can prove offline from what is carried from reviewed upstream evidence.
+It reports `PASS`, exit 0. Metadata only: never extracts, links, loads or executes native code.
+
+**The derived gate was proven load-bearing**, since a gate that always passes is worthless:
+missing package, wrong artifact passed as package, tampered identity commit, and an advisory
+relation set to `unknown` each return `HOLD` exit 2 with a specific reason. Building those
+tests caught two real defects, both fixed — an over-strict path check that rejected the
+nupkg's own root metadata (`input-manifest.json`, `.nuspec`), and a crash instead of a verdict
+when a malformed package collapsed an empty array to `$null`.
+
+**Honest limit of the PASS.** 1 of 7 advisory rows is machine-verified (CVE-2026-103631, by
+identity). 3 are tagged `ancestor` and 3 `scope` — carried from R01's reviewed upstream
+evidence, reported as *not* machine-verified, because proving ancestry needs a WebRTC git
+clone that is not available offline. The gate labels the distinction in its own output so it
+stays visible. Residual provenance limitation, disclosed not hidden: `sdk/webrtc/DEPS` is a
+55-byte stub that does not pin the Chromium core revision, so that revision remains
+unestablished from the artifact; `VERSIONS` plus the pinned archive digest identify the
+shipped library beyond doubt, and the WebRTC commit — the revision the advisory fixes — is
+pinned.
+
+**Not performed, and still outstanding:** no production-named package, no native bridge or
+adapter, no build against the static library. Production video **remains disabled**
+(`CallVideoSupport` defaults false; `VideoEnabled` requires an installed media backend) until
+the WVC-T03/T04/T05 and WVC-08 automated gates pass, and WVC-12/14/15/16 physical acceptance
+needs a real webcam and two physical phones. Selection unblocks Section B integration; it does
+not switch video on.
+
+**Unresolved intermittent failure, carried forward.** `tests/group_membership.py` aborted once
+in this pass (`run.ps1:85`, exit 1 via `Check-Result`) after printing only PASS lines, with
+empty captured stderr; the immediate re-run exited 0. Recorded as an **unresolved intermittent
+failure**, explicitly **not** as fixed — a passing re-run does not prove a non-reproducing
+failure is resolved, and no diagnosis was obtained. Not attributed to the known zombie-`dotnet`
+contention, because no evidence for that was gathered. No application code changed between the
+two runs.
 
 ## 2026-10-04 implementation pass: managed v2 video coordination (not a release)
 

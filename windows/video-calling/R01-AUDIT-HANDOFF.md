@@ -187,3 +187,34 @@ Sources:
 [tagged build recipe](https://github.com/webrtc-sdk/libwebrtc/blob/libwebrtc.m150.7871.03/build/libwebrtc_win_build.cmd),
 [Google August advisory](https://chromereleases.googleblog.com/2026/08/stable-channel-update-for-desktop_0256176589.html),
 [Google September advisory](https://chromereleases.googleblog.com/2026/09/stable-channel-update-for-desktop_0808145027.html).
+
+## 2026-10-04 gate outcome: PASS, selected for Section B integration only
+
+Appended later; everything above is the original m150-era record and is left as written.
+
+- `selected` = **true**, for the purpose the gate was blocking: building the Section B native
+  bridge and adapter against the pinned M155 static library.
+- `securityDispositionComplete` = **true** for the advisories in the reviewed window.
+- `sourceRevisionVerified` = **true** for the WebRTC source revision, which is what the
+  advisory fixes turn on.
+- Previous state was `selected=false`, `securityDispositionComplete=false`.
+
+The gate that produced this state is `tests/video-feasibility/windows/audit-upstream.ps1`,
+**not** `audit-input.ps1`. The latter audits the m150 DLL archive and cannot read the M155
+candidate at all; it is now marked superseded and its hardcoded verdict was deliberately left
+untouched. `audit-upstream.ps1` was rewritten to audit both the official upstream archive and
+the vendored package, derive its verdict from evidence rather than assert it, and prove the
+package's `webrtc.lib` is byte-identical to the audited archive's. It reports PASS / exit 0
+and returns HOLD / exit 2 on four tested failure inputs.
+
+Key correction to the record above: the disposition table's CVE-2026-103631 row was right and
+was not acted on in time. That row already recorded that the pinned core revision **is** the
+M155 backport of the fix. A later pass re-derived the same CVE as unresolved from a
+branch-point date inference, which was wrong. Reading the pinned commit directly from
+`webrtc.googlesource.com` confirms it: `[M155] Harden payload capacity and reduction checks in
+RTP packetizers`, `Bug: chromium:567088927`, `refs/branch-heads/8059@{34859}`. Full evidence
+and the licence-delta answer (zero new components) are in
+[WVC-03-ADVISORY-REVIEW.md](WVC-03-ADVISORY-REVIEW.md).
+
+Selection does **not** enable video. Production video stays disabled until the WVC-T03/T04/T05
+and WVC-08 automated gates pass, and WVC-12/14/15/16 physical acceptance remains outstanding.

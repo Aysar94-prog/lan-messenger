@@ -2,6 +2,12 @@ param(
   [string]$Archive = 'D:\LAN-Messenger\outputs\.build\video-feasibility\libwebrtc-review\libwebrtc-win-x64-release.zip',
   [string]$PublishedChecksum = 'D:\LAN-Messenger\outputs\.build\video-feasibility\libwebrtc-review\libwebrtc-win-x64-release.zip.shasum'
 )
+# SUPERSEDED by audit-upstream.ps1. Retained only as the record of the older m150 DLL archive.
+# This script audits libwebrtc-win-x64-release.zip, which ships a DLL; the M155 candidate ships a
+# static library instead, so this script cannot speak about the input that would actually be built
+# against -- it throws when fed it. Its gate/reasons are hardcoded m150-era constants, which is
+# precisely why the replacement derives its verdict from evidence. Do not "fix" the verdict here;
+# use audit-upstream.ps1.
 # R01 read-only input gate. Does not load DLLs, restore packages or run media.
 $ErrorActionPreference = 'Stop'
 # [IO.Compression.ZipFile] lives in a separate assembly and is not auto-loaded by Windows PowerShell
