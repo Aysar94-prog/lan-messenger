@@ -12,6 +12,18 @@ public final class CallVideoConsentCheck {
   }
   private static boolean capture(CallVideoConsent c) { return c.canCapture(CALL,true,true,true); }
   public static void main(String[] args) {
+    CallVideoConsent receiveOnly=new CallVideoConsent(CALL,true,false,true);
+    check(receiveOnly.acceptInitialReceiveOnly(OTHER)==CallVideoConsent.Result.Ignored,"receive-only bound to call");
+    check(receiveOnly.acceptInitialReceiveOnly(CALL)==CallVideoConsent.Result.Ready,"trusted receive-only answer");
+    receiveOnly.setConnected(CALL,true);
+    check(receiveOnly.authorizeGeneration(CALL,CALL,2),"receive-only permits video negotiation");
+    check(receiveOnly.markMediaReady(CALL,2),"receive-only ready");
+    check(!capture(receiveOnly),"receive-only never authorizes camera implicitly");
+    check(receiveOnly.cameraOn(CALL,false)==CallVideoConsent.Result.Denied,"locked new camera denied");
+    check(!capture(receiveOnly),"denied camera remains off");
+    check(receiveOnly.cameraOn(CALL,true)==CallVideoConsent.Result.Ready,"later explicit eligible camera action");
+    check(capture(receiveOnly),"explicit camera consent works after receive-only answer");
+    check(receiveOnly.acceptInitialReceiveOnly(CALL)==CallVideoConsent.Result.Ignored,"duplicate receive-only answer ignored");
     CallVideoConsent incoming=new CallVideoConsent(CALL,true,false,true);
     check(!capture(incoming),"invitation does not capture");
     check(incoming.acceptInitial(OTHER,true,true)==CallVideoConsent.Result.Ignored,"foreign call action");

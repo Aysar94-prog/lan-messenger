@@ -52,6 +52,19 @@ public final class CallVideoConsent {
     return Result.Ready;
   }
 
+  /** Explicit trusted initial video acceptance without authorizing local capture.
+   * The controller alone selects this path after checking the certificate-bound grant. */
+  public synchronized Result acceptInitialReceiveOnly(String expected) {
+    if (!live(expected) || caller || initialAnswered) return Result.Ignored;
+    if (!capable || !invitedVideo) return Result.Unsupported;
+    initialAnswered = true;
+    localConsent = peerConsent = true;
+    cameraWanted = false;
+    request = callId;
+    usedRequests.add(request);
+    return Result.Ready;
+  }
+
   /** Sending acceptance failed before audio connected: permit an explicit retry/voice answer. */
   public synchronized void rollbackInitialAnswer(String expected) {
     if (!live(expected) || connected || caller) return;

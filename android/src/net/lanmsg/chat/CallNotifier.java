@@ -19,8 +19,8 @@ import android.media.RingtoneManager;
  *  withdrawn, or a different call than the one the action was raised for.
  *
  *  Two channels, deliberately:
- *   - "calls_ringing" is high importance and makes sound: it is the only notification in the app
- *     that is allowed to alert.
+ *   - "calls_ringing_v2" is default importance, with a separate ringtone: incoming
+ *     calls are actionable without an unsolicited heads-up/full-screen popup.
  *   - "calls_active" is low importance and silent: an established call should be visible and
  *     actionable without repeatedly interrupting.
  */
@@ -28,7 +28,8 @@ final class CallNotifier {
 
   private CallNotifier() {}
 
-  static final String CHANNEL_RINGING = "calls_ringing";
+  // New channel: existing high-importance channels cannot be lowered programmatically.
+  static final String CHANNEL_RINGING = "calls_ringing_v2";
   static final String CHANNEL_ACTIVE  = "calls_active";
   static final int NOTIFICATION_RINGING = 40;
   static final int NOTIFICATION_ACTIVE  = 41;
@@ -48,7 +49,7 @@ final class CallNotifier {
     NotificationManager manager = context.getSystemService(NotificationManager.class);
     if (manager == null) return;
     manager.createNotificationChannel(new NotificationChannel(CHANNEL_RINGING,
-      "Incoming calls", NotificationManager.IMPORTANCE_HIGH));
+      "Incoming calls", NotificationManager.IMPORTANCE_DEFAULT));
     manager.createNotificationChannel(new NotificationChannel(CHANNEL_ACTIVE,
       "Ongoing calls", NotificationManager.IMPORTANCE_LOW));
   }
@@ -56,6 +57,7 @@ final class CallNotifier {
   private static PendingIntent serviceAction(Context context, String action, String callId, int id) {
     Intent intent = new Intent(context, MessengerService.class)
       .setAction(action)
+      .setData(android.net.Uri.parse("lanmsg-call://action/" + callId + "/" + action))
       .putExtra(EXTRA_CALL_ID, callId);
     return PendingIntent.getService(context, id, intent,
       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
@@ -77,23 +79,44 @@ final class CallNotifier {
   static void showRinging(Context context, CallSession call, String peerName) {
     NotificationManager manager = context.getSystemService(NotificationManager.class);
     if (manager == null) return;
-    String text = "Incoming voice call";
-    Notification n = new Notification.Builder(context, CHANNEL_RINGING)
+    PendingIntent decline = serviceAction(context, ACTION_DECLINE, call.callId, 1);
+    PendingIntent accept = serviceAction(context, ACTION_ACCEPT, call.callId, 2);
+    String text = call.invitedVideo ? "Incoming video call" : "Incoming voice call";
+    Notification.Builder builder = new Notification.Builder(context, CHANNEL_RINGING)
       .setSmallIcon(android.R.drawable.stat_notify_chat)
       .setContentTitle(peerName)
       .setContentText(text)
       .setCategory(Notification.CATEGORY_CALL)
-      .setPriority(Notification.PRIORITY_HIGH)
+      .setPriority(Notification.PRIORITY_DEFAULT)
       .setVisibility(Notification.VISIBILITY_PRIVATE)
       .setContentIntent(openApp(context, call.callId))
-      .addAction(new Notification.Action.Builder(null, "Decline",
-        serviceAction(context, ACTION_DECLINE, call.callId, 1)).build())
-      .addAction(new Notification.Action.Builder(null, "Accept",
-        serviceAction(context, ACTION_ACCEPT, call.callId, 2)).build())
+      .setOnlyAlertOnce(true)
       .setOngoing(true)
-      .setAutoCancel(false)
-      .build();
-    manager.notify(NOTIFICATION_RINGING, n);
+      .setAutoCancel(false);
+    if (android.os.Build.VERSION.SDK_INT >= 31) {
+      builder.setStyle(Notification.CallStyle.forIncomingCall(
+        new android.app.Person.Builder().setName(peerName).build(), decline, accept)
+        .setIsVideo(call.invitedVideo));
+    } else {
+      builder.addAction(new Notification.Action.Builder(null, "Decline", decline).build())
+        .addAction(new Notification.Action.Builder(null, "Accept", accept).build());
+    }
+    // Retain lock-screen actions even when private caller details are redacted.
+    Notification.Builder publicBuilder=new Notification.Builder(context,CHANNEL_RINGING)
+      .setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle("LAN Messenger call")
+      .setContentText(text).setCategory(Notification.CATEGORY_CALL).setOngoing(true)
+      .setContentIntent(openApp(context,call.callId));
+    if(android.os.Build.VERSION.SDK_INT>=31){
+      publicBuilder.setStyle(Notification.CallStyle.forIncomingCall(
+        new android.app.Person.Builder().setName("LAN Messenger").build(),decline,accept)
+        .setIsVideo(call.invitedVideo));
+    }else{
+      publicBuilder.addAction(new Notification.Action.Builder(null,"Decline",decline).build())
+        .addAction(new Notification.Action.Builder(null,"Accept",accept).build());
+    }
+    builder.setPublicVersion(publicBuilder.build());
+    Notification n = builder.build();
+    ((MessengerService)context).postCallForeground(NOTIFICATION_RINGING,n);
     playRingtone(context);
   }
 
@@ -102,6 +125,7 @@ final class CallNotifier {
     NotificationManager manager = context.getSystemService(NotificationManager.class);
     if (manager == null) return;
     stopRingtone(context);
+    manager.cancel(NOTIFICATION_RINGING);
 
     String title = call.isCaller ? "Calling " + peerName : "Call with " + peerName;
     Notification.Builder b = new Notification.Builder(context, CHANNEL_ACTIVE)
@@ -122,7 +146,7 @@ final class CallNotifier {
       b.addAction(new Notification.Action.Builder(null, call.muted ? "Unmute" : "Mute",
         serviceAction(context, ACTION_MUTE, call.callId, 4)).build());
     }
-    manager.notify(NOTIFICATION_ACTIVE, b.build());
+    ((MessengerService)context).postCallForeground(NOTIFICATION_ACTIVE,b.build());
   }
 
   /** Withdraw every call notification.  Called the moment a call reaches a terminal state, so a
@@ -133,6 +157,8 @@ final class CallNotifier {
     if (manager == null) return;
     manager.cancel(NOTIFICATION_RINGING);
     manager.cancel(NOTIFICATION_ACTIVE);
+    MessengerService host=(MessengerService)context;
+    host.clearCallForeground();
   }
 
   private static Ringtone ringtone;

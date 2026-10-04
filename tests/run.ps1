@@ -14,6 +14,8 @@ Push-Location (Join-Path $PSScriptRoot '..')
 try {
   python tests/android_service_lifecycle.py
   Check-Result
+  python tests/android_call_notification_check.py
+  Check-Result
   dotnet build tests/CsharpHarness/CsharpHarness.csproj -c Release --configfile NuGet.Config -o "$TestRoot\csharp"
   Check-Result
   dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-check (Join-Path $PSScriptRoot 'voice_messages/vectors')

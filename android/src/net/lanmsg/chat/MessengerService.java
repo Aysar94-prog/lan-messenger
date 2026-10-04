@@ -14,6 +14,17 @@ public class MessengerService extends Service {
   volatile boolean stopping;
   volatile String state="Offline";
   boolean requestedOnline, foreground;
+  private Notification foregroundCallNotification;
+  private int foregroundCallNotificationId=1;
+  void postCallForeground(int id,Notification notification){
+    if(stopping)return;
+    foregroundCallNotification=notification;foregroundCallNotificationId=id;
+    startForegroundSafely();
+  }
+  void clearCallForeground(){
+    foregroundCallNotification=null;foregroundCallNotificationId=1;
+    if(foreground&&!stopping&&"Online".equals(state))startForegroundSafely();
+  }
   final IBinder binder=new LocalBinder();
   public class LocalBinder extends Binder {MessengerService host(){return MessengerService.this;}}
 
@@ -30,24 +41,18 @@ public class MessengerService extends Service {
   private volatile String cameraIntentCall;
   void callActivityVisible(boolean visible){
     callActivityVisible=visible;
-    if(!visible){
-      cameraForeground=false;cameraIntentCall=null;
-      CallUi model=callUi;CallSession call=model==null?null:model.getCurrent();
-      CallController cc=callController;
-      if(cc!=null&&call!=null){CallVideoCoordinator video=cc.video(call.callId);if(video!=null)video.revokeCapture();}
-      if(foreground)startForegroundSafely();
-    }
+    // A camera FGS prepared while visible belongs to the call, not the Activity.
+    // Do not demote/restart it from onPause (or silently reacquire on resume).
   }
   private boolean cameraEligible(String expected){
-    if(!callActivityVisible||!cameraForeground||!"Online".equals(state)||!callMediaReal){
+    if(!cameraForeground||!"Online".equals(state)||!callMediaReal){
       CallLog.w("Camera capture not ready: visible="+callActivityVisible+" foreground="+cameraForeground
         +" online="+"Online".equals(state)+" media="+callMediaReal);return false;
     }
     if(checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED
         ||!getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY))return false;
     PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
-    KeyguardManager guard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
-    if(power==null||!power.isInteractive()||guard!=null&&guard.isKeyguardLocked()){CallLog.w("Camera capture blocked by screen or keyguard");return false;}
+    if(power==null)return false;
     if(Build.VERSION.SDK_INT>=29&&power.getCurrentThermalStatus()>=PowerManager.THERMAL_STATUS_SEVERE){CallLog.w("Camera capture blocked by thermal state");return false;}
     CallSession call=callUi==null?null:callUi.getCurrent();
     return expected==null||expected.equals(cameraIntentCall)||call!=null&&!call.state.terminal()&&expected.equals(call.callId);
@@ -55,6 +60,8 @@ public class MessengerService extends Service {
   /** Called from an explicit foreground camera action after permission. */
   boolean prepareCallCamera(String expected){
     if(!callActivityVisible||!"Online".equals(state)||checkSelfPermission(android.Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){CallLog.w("Camera preparation refused");return false;}
+    KeyguardManager guard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
+    if(guard!=null&&guard.isKeyguardLocked()){CallLog.w("New camera preparation blocked by keyguard");return false;}
     cameraIntentCall=expected;cameraForeground=true;
     try{startForegroundSafely();}catch(RuntimeException denied){cameraForeground=false;cameraIntentCall=null;return false;}
     boolean ready=cameraEligible(expected);CallLog.i("Camera preparation "+(ready?"ready":"failed")+" call="+expected);return ready;
@@ -110,7 +117,6 @@ public class MessengerService extends Service {
           // A stale Accept cannot bypass policy: the controller re-checks the preference, and
           // the call ID must still match the invitation the action was raised for.
           if (call != null && callId != null && !callId.equals(call.callId)) {
-            if (call.state == CallProtocol.State.IncomingRinging) cc.decline();
             return;
           }
           cc.accept(callId);
@@ -136,7 +142,8 @@ public class MessengerService extends Service {
         default:
           return;
       }
-    } catch (Exception ignored) {
+    } catch (Exception failure) {
+      CallLog.w("Call action "+action+" failed: "+failure.getClass().getSimpleName()+": "+failure.getMessage());
       // The call ended between the notification being raised and the action arriving. The
       // terminal snapshot has already withdrawn the notification.
     }
@@ -212,6 +219,10 @@ public class MessengerService extends Service {
    *  decline never produced one, and an invitation withdrawn by turning the preference off
    *  reaches a terminal snapshot and is cleared immediately. */
   void onCallSnapshot(CallSession call) {
+    // Ignore snapshots queued before a newer state, especially ringing before auto-answer.
+    CallController currentController=callController;
+    CallSession current=currentController==null?null:currentController.snapshot();
+    if(call!=null&&current!=null&&(!call.callId.equals(current.callId)||call.state!=current.state))return;
     if(call==null||call.state.terminal()||call.video!=null&&(call.video.phase==CallVideoConsent.Phase.Voice
         ||call.video.phase==CallVideoConsent.Phase.Ended)){
       if(cameraForeground){cameraForeground=false;cameraIntentCall=null;if(foreground)startForegroundSafely();}
@@ -246,7 +257,10 @@ public class MessengerService extends Service {
   }
 
   final Handler handler=new Handler(Looper.getMainLooper());
-  final Runnable update=new Runnable(){public void run(){if(foreground){getSystemService(NotificationManager.class).notify(1,notification());handler.postDelayed(this,5000);}}};
+  final java.util.concurrent.ThreadPoolExecutor callCommands=new java.util.concurrent.ThreadPoolExecutor(
+    1,1,0L,java.util.concurrent.TimeUnit.MILLISECONDS,new java.util.concurrent.ArrayBlockingQueue<Runnable>(16),
+    task->new Thread(task,"lan-notification-call"));
+  final Runnable update=new Runnable(){public void run(){if(foreground){if(foregroundCallNotification==null)getSystemService(NotificationManager.class).notify(1,notification());handler.postDelayed(this,5000);}}};
   Notification notification(){
     Intent open=new Intent(this,MainActivity.class);
     PendingIntent content=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -364,7 +378,12 @@ public class MessengerService extends Service {
     if(CallNotifier.ACTION_ACCEPT.equals(action)||CallNotifier.ACTION_DECLINE.equals(action)
       ||CallNotifier.ACTION_CANCEL.equals(action)||CallNotifier.ACTION_HANGUP.equals(action)
       ||CallNotifier.ACTION_MUTE.equals(action)){
-      handleCallAction(action,intent.getStringExtra(CallNotifier.EXTRA_CALL_ID));
+      final String expected=intent.getStringExtra(CallNotifier.EXTRA_CALL_ID);
+      CallLog.i("Notification action received: "+action+" call="+expected);
+      // Notification interaction is an OS-supported microphone FGS eligibility path.
+      if(CallNotifier.ACTION_ACCEPT.equals(action))startForegroundSafely();
+      try{callCommands.execute(()->{if(!stopping)handleCallAction(action,expected);});}
+      catch(java.util.concurrent.RejectedExecutionException busy){CallLog.w("Notification command queue unavailable");}
       return START_NOT_STICKY;
     }
     transition(intent==null?getSharedPreferences("lan_messenger_connection",MODE_PRIVATE).getBoolean("default_online",true):!"OFFLINE".equals(action));
@@ -384,17 +403,19 @@ public class MessengerService extends Service {
   // connectedDevice alone (this service's whole reason for being foreground at all) is always a
   // safe subset of what the manifest declares.
   void startForegroundSafely(){
+    Notification currentNotification=foregroundCallNotification==null?notification():foregroundCallNotification;
+    int currentId=foregroundCallNotification==null?1:foregroundCallNotificationId;
     if(Build.VERSION.SDK_INT>=29){
       int type=ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
       if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)type|=ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-      if(cameraForeground&&callActivityVisible&&checkSelfPermission(android.Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)
+      if(cameraForeground&&checkSelfPermission(android.Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)
         type|=ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
-      try{startForeground(1,notification(),type);}
+      try{startForeground(currentId,currentNotification,type);}
       catch(SecurityException denied){
         cameraForeground=false;cameraIntentCall=null;
-        startForeground(1,notification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+        startForeground(currentId,currentNotification,ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
       }
-    }else startForeground(1,notification());
+    }else startForeground(currentId,currentNotification);
     foreground=true;
   }
   // All requests (notification and Activity) meet here; engine creation remains in onCreate only.
@@ -457,5 +478,5 @@ public class MessengerService extends Service {
     stopSelf();
   }
   void releaseMulticast(){if(multicast!=null&&multicast.isHeld())multicast.release();multicast=null;}
-  @Override public synchronized void onDestroy(){stopping=true;handler.removeCallbacksAndMessages(null);CallNotifier.clear(this);PeerEngine peer=engine;engine=null;CallController cc=callController;callController=null;callUi=null;if(cc!=null)cc.shutdown();callVideoResources.close();if(peer!=null)peer.close();releaseMulticast();if(foreground)stopForeground(true);super.onDestroy();}
+  @Override public synchronized void onDestroy(){stopping=true;callCommands.shutdownNow();handler.removeCallbacksAndMessages(null);CallNotifier.clear(this);PeerEngine peer=engine;engine=null;CallController cc=callController;callController=null;callUi=null;if(cc!=null)cc.shutdown();callVideoResources.close();if(peer!=null)peer.close();releaseMulticast();if(foreground)stopForeground(true);super.onDestroy();}
 }

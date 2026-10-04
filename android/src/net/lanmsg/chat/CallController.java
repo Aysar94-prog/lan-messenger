@@ -443,15 +443,15 @@ public class CallController {
       scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
 
       CallSession snap = session.snapshot();
-      notifyCallback(snap);
       int trustedMask=engine.trustedCallMask(authenticatedPeerId);
       boolean trustedVideo=session.invitedVideo
         &&(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
       boolean trustedVoice=(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0;
       if(trustedVideo||trustedVoice){
-        try{acceptInternal(frame.callId,trustedVideo,false);return session==null?null:session.snapshot();}
+        try{acceptInternal(frame.callId,trustedVideo,false,true);return session==null?null:session.snapshot();}
         catch(IOException unavailable){CallLog.w("Trusted auto-answer unavailable: "+unavailable.getMessage());}
       }
+      if(session!=null&&!session.state.terminal())notifyCallback(session.snapshot());
       return snap;
     }
   }
@@ -493,6 +493,9 @@ public class CallController {
     acceptInternal(expectedCallId,video,true);
   }
   private void acceptInternal(String expectedCallId,boolean video,boolean prepared)throws IOException {
+    acceptInternal(expectedCallId,video,prepared,false);
+  }
+  private void acceptInternal(String expectedCallId,boolean video,boolean prepared,boolean trusted)throws IOException {
     synchronized (lock) {
       if (session == null || session.state != CallProtocol.State.IncomingRinging)
         throw new IOException("No incoming call to accept");
@@ -500,7 +503,11 @@ public class CallController {
         throw new IOException("That call is no longer waiting");
       if(video&&videoConsent==null)throw new IOException("Video unavailable");
       if(videoConsent!=null&&!prepared){
-        CallVideoConsent.Result result=videoConsent.acceptInitial(session.callId,video,video&&videoEligibility.mayCapture(session.callId));
+        boolean eligible=video&&videoEligibility.mayCapture(session.callId);
+        // Trusted video authorizes answering, not bypassing OS camera eligibility.
+        CallVideoConsent.Result result=trusted&&video&&!eligible
+          ?videoConsent.acceptInitialReceiveOnly(session.callId)
+          :videoConsent.acceptInitial(session.callId,video,eligible);
         if(result!=CallVideoConsent.Result.Ready&&result!=CallVideoConsent.Result.Voice)
           throw new IOException("Camera permission or foreground access unavailable");
       }

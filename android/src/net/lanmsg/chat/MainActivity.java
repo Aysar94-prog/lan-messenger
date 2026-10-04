@@ -564,7 +564,7 @@ public class MainActivity extends Activity {
     CheckBox video=new CheckBox(this);video.setText("Automatically accept video and open my camera");video.setChecked((mask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0);panel.addView(video);
     CheckBox speaker=new CheckBox(this);speaker.setText("Allow this device to control my speaker");speaker.setChecked((mask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0);panel.addView(speaker);
     CheckBox camera=new CheckBox(this);camera.setText("Allow this device to control my camera and switch front/rear");camera.setChecked((mask&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0);panel.addView(camera);
-    TextView note=label("Automatic camera use still requires this app to be visible, the phone unlocked, and Android camera permission granted.",13);note.setTextColor(Color.DKGRAY);panel.addView(note);
+    TextView note=label("Trusted calls can answer in the background or while locked. Starting a new camera session requires this app visible and unlocked; an already prepared camera can continue with the ongoing call notification. Android permission restrictions still apply.",13);note.setTextColor(Color.DKGRAY);panel.addView(note);
     new AlertDialog.Builder(this).setTitle("Trusted call access").setView(panel).setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{int next=(voice.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VOICE:0)|(video.isChecked()?PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO:0)|(speaker.isChecked()?PeerEngine.TRUSTED_REMOTE_SPEAKER:0)|(camera.isChecked()?PeerEngine.TRUSTED_REMOTE_CAMERA:0);try{e.setTrustedCallMask(target.id,next);render();Toast.makeText(this,next==0?"Trusted call access is off.":"Trusted call access saved.",Toast.LENGTH_LONG).show();}catch(Exception error){problem(error);}}).show();
   }
 

@@ -1,5 +1,25 @@
 # Android status
 
+2026-10-04 background/locked calls checkpoint: authorized by "fix it all".
+Trusted video now auto-accepts receive-only if camera acquisition is unavailable;
+it no longer falls back to ringing solely because the Activity is backgrounded.
+Notification actions are call-bound, asynchronous and logged; stale Accept cannot
+decline a newer call. Incoming CallStyle belongs to the service FGS with redacted
+lockscreen actions; default-importance new channel avoids forced heads-up;
+active calls remove obsolete ringing notification. Already-prepared capture is
+call-owned across Activity pause/lock. NEW camera preparation still requires
+visible/unlocked app; idle trusted camera-service pre-arm is NOT implemented.
+2.2.68 failed on Samsung standalone CallStyle posting and is superseded by corrected
+original-key ARM64 2.2.69/code96 installed on both phones. APK SHA-256
+5a85372b17e8590f8eb8403eb45a34111cc18bebed99f5b36b207bea67d2759f.
+Call440/0, permission40/0, recipient28/0, direct34/0, consent74/0 and all video
+contract/source-wiring/lifecycle checks pass. USB actual auto-accept/media readiness/
+background heartbeat/remote hangup observed; complete locked-device notification
+and camera acceptance remains pending. No all-scenarios or Wi-Fi repair claim.
+USB first-install changed externally between observations; only install -r used,
+no agent uninstall/clear or grant edits. Windows/wire unchanged. See
+[locked-call diagnosis/implementation](../PLAN-ANDROID-LOCKED-CALLS.md).
+
 2026-10-04 recipient-control visibility: implemented after explicit user "start".
 Caller-side recipient controls now require fresh call-scoped confirmation of the
 recipient's grant to this caller (Slave direction): camera scope4 shows camera

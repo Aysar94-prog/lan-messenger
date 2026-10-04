@@ -23,6 +23,7 @@ public final class CallCheck {
     testControllerLifecycle();
     testControllerIncoming();
     testTrustedAutoAnswer();
+    testTrustedLockedVideoAnswer();
     testControllerMute();
     testFrameParse();
     testGlareResolution();
@@ -399,6 +400,30 @@ public final class CallCheck {
     eng.close();
     for (File f : eng.file.getParentFile().listFiles()) f.delete();
     eng.file.getParentFile().delete();
+  }
+
+  static void testTrustedLockedVideoAnswer() throws Exception {
+    for(int mask:new int[]{0,PeerEngine.TRUSTED_AUTO_ANSWER_VOICE,PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO,
+        PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO|PeerEngine.TRUSTED_AUTO_ANSWER_VOICE,PeerEngine.TRUSTED_REMOTE_CAMERA}){
+      PeerEngine eng=dummyEngine();String peerId=UUID.randomUUID().toString();
+      PeerEngine.Peer peer=new PeerEngine.Peer(peerId,"Caller","10.0.0.2",43872);
+      peer.fingerprint="pinned";peer.verified=peer.fingerprint;
+      synchronized(eng){eng.peers.put(peerId,peer);}eng.setTrustedCallMask(peerId,mask);
+      CallController ctrl=new CallController(eng,new CallSettings(eng.file.getParentFile()));
+      ctrl.setMediaFactory(new FakeCallMedia.Factory());ctrl.configureVideo(true,id->false);ctrl.start();
+      List<CallProtocol.State> states=new ArrayList<>();ctrl.addListener(s->states.add(s.state));
+      List<byte[]> sent=new ArrayList<>();String id=UUID.randomUUID().toString();
+      CallProtocol.Frame invite=CallSignaling.invite(id,1,peerId,eng.id);
+      invite.protocolVersion=2;invite.body.put("media","video");
+      CallSession snap=ctrl.onInvite(invite,peerId,sent::add);
+      boolean auto=(mask&(PeerEngine.TRUSTED_AUTO_ANSWER_VOICE|PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO))!=0;
+      check(snap!=null&&snap.state==(auto?CallProtocol.State.Connecting:CallProtocol.State.IncomingRinging),"TL-state-"+mask,"locked eligibility");
+      check(states.contains(CallProtocol.State.IncomingRinging)!=auto,"TL-no-false-ringing-"+mask,states.toString());
+      CallProtocol.Frame accepted=null;for(byte[] bytes:sent){CallProtocol.Frame f=CallSignaling.parse(bytes);if(f!=null&&CallProtocol.ACCEPT.equals(f.type))accepted=f;}
+      check((accepted!=null)==auto,"TL-grant-required-"+mask,"");
+      if(accepted!=null)eq(accepted.body.get("media"),(mask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0?"video":"audio","TL-media-"+mask);
+      ctrl.shutdown();eng.close();
+    }
   }
 
   static void testFrameParse() {

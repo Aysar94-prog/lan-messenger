@@ -1,5 +1,15 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-04 Android locked/background calls: 2.2.69/code96 original-key ARM64 test
+candidate installed on both phones. Trusted video acceptance no longer depends on
+camera startup; notification action identity/threading/FGS presentation and stale
+ring cleanup corrected; already-prepared camera continues across Activity pause.
+Call440/0, permission40/0, recipient28/0, direct34/0, video-contract and lifecycle
+guards pass. Actual USB automatic acceptance/background call observed. Full locked
+notification acceptance and NEW locked-camera startup remain unverified/pending;
+2.2.68 failed candidate superseded. Windows and wire unchanged; Wi-Fi fault unresolved.
+See [Android locked calls](PLAN-ANDROID-LOCKED-CALLS.md).
+
 2026-10-04 Windows planning review: rebuilt the
 [Windows video-call continuation plan](windows/video-calling/PLAN-WINDOWS-VIDEO-CALLING.md)
 against current source and retained evidence. Native separate-PC VP8/G722
