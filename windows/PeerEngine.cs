@@ -178,6 +178,109 @@ public sealed partial class PeerEngine : IDisposable
     void RecordCertificate(string peerId,string fingerprint,byte[] publicKey){lock(gate){var p=peers[peerId];var encodedKey=publicKey.Length>0?Convert.ToBase64String(publicKey):p.PublicKey;if(p.Fingerprint==fingerprint&&p.PublicKey==encodedKey)return;peers[peerId]=p with{Fingerprint=fingerprint,PublicKey=encodedKey};try{Save();}catch{peers[peerId]=p;throw;}}Notify();}
     bool Trusted(string peerId,string fingerprint){lock(gate)return peers.TryGetValue(peerId,out var p)&&p.Verified.Length>0&&p.Verified==fingerprint;}
     public int TrustedCallMask(string peerId){lock(gate){if(!peers.TryGetValue(peerId,out var p)||!p.Trusted||!trustedCallGrants.TryGetValue(peerId,out var g)||g.Fingerprint!=p.Verified)return 0;return g.Mask;}}
+    // A peer's last-answered grant mask. Never persisted and never authoritative: it is bound to the
+    // certificate it was answered over and is re-queried rather than remembered across restarts.
+    readonly Dictionary<string,(string Fingerprint,int Mask,long CheckedAt)> remoteCallGrants=[];
+    // Whether this build answers CALLCAPS at all. The default is true: a shipped build must answer,
+    // or every call against it silently degrades to voice-only. A staged rollout sets it false while
+    // its responder is not yet ready, because claiming v2 and then failing to parse a v2 frame is
+    // strictly worse than never claiming it.
+    public Func<bool> CallVideoSupport {get;set;}=()=>true;
+    // A last-answered grant is presented for at most this long before it counts as unknown, so a
+    // stale answer can never keep offering controls the peer has since withdrawn.
+    public const long RemoteGrantFreshMs=10_000;
+
+    // A02b capability probe: one short verified transaction before the call starts, so both sides
+    // agree on a protocol version before either sends a frame. Every failure mode -- not running,
+    // untrusted peer, connect refused, wrong HELLO, a certificate that no longer matches, no READY,
+    // or a missing/garbled/oversized/slow reply -- resolves to false, i.e. plain v1 voice.
+    //
+    // Deliberately never cached across calls (A02b): a peer that was rebuilt, went offline, or had
+    // its key change must be re-probed, or a remembered "capable" would produce a v2 INVITE to a
+    // peer that can no longer parse one.
+    public bool ProbeCallVideo(string peerId)
+    {
+        Peer? peer;long session;
+        lock(networkGate){if(!Running)return false;session=generation;}
+        lock(gate){if(!peers.TryGetValue(peerId,out peer)||!peer.Trusted)return false;}
+        if(SimulateLegacyBuild)return false;
+        // Bounded twice over: the transaction itself carries the protocol deadline, and this wait is
+        // an independent second bound so a wedged socket can never pin the caller for longer than the
+        // protocol allows.
+        var probe=Task.Run(()=>ProbeCallVideoAsync(peerId,peer,session));
+        if(!probe.Wait(CallCapabilities.TimeoutMs+2000))return false;
+        return probe.Result;
+    }
+
+    async Task<bool> ProbeCallVideoAsync(string peerId,Peer peer,long session)
+    {
+        TcpClient? client=null;SecureChannel? tls=null;
+        try{
+            var started=System.Diagnostics.Stopwatch.StartNew();
+            client=await Connect(peer.Host,peer.Port);
+            tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,false);
+            var hello=(await Read(tls)).Split('\t');
+            if(!ValidHello(hello)||hello[2]!=peerId)return false;
+            var fingerprint=SecureIdentity.Remote(tls);
+            RecordCertificate(peerId,fingerprint,SecureIdentity.RemotePublicKey(tls));
+            if(!Trusted(peerId,fingerprint))return false;
+            if((await Read(tls))!="LM4\tREADY")return false;
+            await CallCapabilities.WriteRequestAsync(tls,stop.Token);
+            var reply=await CallCapabilities.ReadReplyAsync(tls,stop.Token);
+            lock(networkGate){if(!Running||session!=generation)return false;}
+            return CallCapabilities.Supports(reply,Trusted(peerId,fingerprint),SimulateLegacyBuild,started.ElapsedMilliseconds);
+        }catch{return false;}
+        finally{if(tls!=null)tls.Dispose();else if(client!=null)client.Dispose();}
+    }
+
+    // Optional, bounded, verified query of a peer's trusted-call grant mask. Presentation only: a
+    // remembered mask never authorises anything on its own, and every actual use re-reads
+    // TrustedCallMask, which is bound to the certificate the grants were issued against.
+    public bool RefreshRemoteCallGrant(string peerId)
+    {
+        Peer? peer;long session;
+        lock(networkGate){if(!Running)return false;session=generation;}
+        lock(gate){if(!peers.TryGetValue(peerId,out peer)||!peer.Trusted)return false;}
+        var refresh=Task.Run(()=>RefreshRemoteCallGrantAsync(peerId,peer,session));
+        if(!refresh.Wait(CallCapabilities.TimeoutMs+2000))return false;
+        return refresh.Result;
+    }
+
+    async Task<bool> RefreshRemoteCallGrantAsync(string peerId,Peer peer,long session)
+    {
+        TcpClient? client=null;SecureChannel? tls=null;
+        try{
+            client=await Connect(peer.Host,peer.Port);
+            tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,false);
+            var hello=(await Read(tls)).Split('\t');
+            if(!ValidHello(hello)||hello[2]!=peerId)return false;
+            var fingerprint=SecureIdentity.Remote(tls);
+            RecordCertificate(peerId,fingerprint,SecureIdentity.RemotePublicKey(tls));
+            if(!Trusted(peerId,fingerprint))return false;
+            if((await Read(tls))!="LM4\tREADY")return false;
+            await Write(tls,CallCapabilities.GrantsRequest);
+            var mask=CallCapabilities.ParseGrants(await CallCapabilities.ReadReplyAsync(tls,stop.Token));
+            lock(gate){if(mask<0||!Trusted(peerId,fingerprint))return false;}
+            lock(networkGate){if(!Running||session!=generation)return false;}
+            lock(gate){remoteCallGrants[peerId]=(fingerprint,mask,Now);}
+            Notify();
+            return true;
+        }catch{return false;}
+        finally{if(tls!=null)tls.Dispose();else if(client!=null)client.Dispose();}
+    }
+
+    // What the recipient-control UI may offer. Deliberately narrower than the raw mask: it is only
+    // ever shown for a peer that is currently trusted, whose certificate matches the one the mask was
+    // answered over, and whose answer is still fresh.
+    public int RemoteControlDisplayMask(string peerId)
+    {
+        lock(gate){
+            if(!remoteCallGrants.TryGetValue(peerId,out var g))return 0;
+            if(!peers.TryGetValue(peerId,out var p)||!p.Trusted||p.Verified!=g.Fingerprint)return 0;
+            if(g.CheckedAt<=0||Now<g.CheckedAt||Now-g.CheckedAt>=RemoteGrantFreshMs)return 0;
+            return g.Mask&(TrustedRemoteCamera|TrustedRemoteSpeaker);
+        }
+    }
     public void SetTrustedCallMask(string peerId,int mask){lock(gate){if(!peers.TryGetValue(peerId,out var p)||!p.Trusted)throw new IOException("Verify this device before granting trusted call access.");mask&=15;trustedCallGrants.TryGetValue(peerId,out var old);if(mask==0)trustedCallGrants.Remove(peerId);else trustedCallGrants[peerId]=(p.Verified,mask);try{Save();}catch{if(old.Fingerprint is not null)trustedCallGrants[peerId]=old;else trustedCallGrants.Remove(peerId);throw;}}Notify();}
     // Fired when an inbound CALLCONNECT handoff is recognized: (peerId, authenticated stream,
     // callId). The engine's own `Receive` dispatch loop stops owning the socket at that point --
@@ -199,6 +302,18 @@ public sealed partial class PeerEngine : IDisposable
             return;
         }
         if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CAPS"){await Write(tls,"LM4\tCAPS\t2");return;}
+        // A02b: an optional, bounded, verified query. An older peer closes the connection on a request
+        // it does not recognize, which is exactly the safe behaviour -- nothing here is on the path of
+        // an ordinary message, so a build without video support still talks to one that has it.
+        if(!SimulateLegacyBuild&&a.Length==2&&a[0]=="LM4"&&a[1]=="CALLCAPS"){
+            var caps=CallCapabilities.ResponseFor(CallVideoSupport(),SimulateLegacyBuild);
+            if(caps!=null)await Write(tls,caps);
+            return;
+        }
+        // Trusted-call grants are a separate query from capability, and are answered for verified peers
+        // only -- the mask is meaningless without one, and TrustedCallMask already enforces that.
+        if(!SimulateLegacyBuild&&a.Length==3&&a[0]=="LM4"&&a[1]=="CALLGRANTS"&&a[2]=="1"){
+            await Write(tls,CallCapabilities.GrantsResponse(TrustedCallMask(h[2])));return;}
         if((a.Length==6||a.Length==7)&&a[0]=="LM4"&&a[1]=="GROUP"){AcceptGroup(a,h[2],fingerprint);await Write(tls,"LM4\tGROUPACK\t"+a[2]);Notify();return;}
         if(!SimulateLegacyBuild&&(a.Length==5||a.Length==6)&&a[0]=="LM4"&&a[1]=="MEMBERSUPDATE"){HandleMembersUpdate(a,h[2],fingerprint);await Write(tls,$"LM4\tMEMBERSUPDATEACK\t{a[2]}\t{a[3]}");Notify();return;}
         if(a.Length==4&&a[0]=="LM4"&&a[1]=="SEEN"&&Uuid(a[2])&&a[3]==h[2]){MarkSeen(a[2],h[2]);await Write(tls,"LM4\tSEENACK\t"+a[2]);Notify();return;}

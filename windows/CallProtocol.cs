@@ -11,6 +11,13 @@ public static class CallProtocol
         BUSY = "BUSY", CANCEL = "CANCEL", OFFER = "OFFER", ANSWER = "ANSWER", ICE = "ICE",
         MEDIA_READY = "MEDIA_READY", HANGUP = "HANGUP", ERROR = "ERROR", PING = "PING", PONG = "PONG";
 
+    // A02b v2 additions. REMOTE_SPEAKER/REMOTE_CAMERA are the recipient-control commands; the
+    // earlier provisional plan names for them were never implemented on Android and must not be
+    // invented here either (WVC-04). These are only ever legal inside a v2 call.
+    public const string
+        VIDEO_REQUEST = "VIDEO_REQUEST", VIDEO_ACCEPT = "VIDEO_ACCEPT", VIDEO_DECLINE = "VIDEO_DECLINE",
+        VIDEO_STATE = "VIDEO_STATE", REMOTE_SPEAKER = "REMOTE_SPEAKER", REMOTE_CAMERA = "REMOTE_CAMERA";
+
     public enum State { Idle, OutgoingRinging, IncomingRinging, Connecting, Connected, Ending }
     public static bool Terminal(this State s) => s == State.Idle || s == State.Ending;
     public static bool Active(this State s) => s == State.Connecting || s == State.Connected;
@@ -35,6 +42,8 @@ public static class CallProtocol
     public const int MaxFrameBytes = 64 * 1024;
     public const int MaxSdpBytes = 48 * 1024;
     public const int MaxIceCandidates = 128;
+    public const int MaxCandidateBytes = 4 * 1024;
+    public const int MaxVideoRequests = 128;
 
     // The quality-indicator contract's real metric mapping/calibration is deferred (see the
     // plan addendum) — this enum exists so CallSession has somewhere to carry the value without
@@ -51,7 +60,14 @@ public static class CallProtocol
         public Dictionary<string, object>? B;
     }
 
-    public static bool ValidCallId(string? id) => id != null && Guid.TryParseExact(id, "D", out _);
+    // Canonical lowercase 8-4-4-4-12 UUID, matching Android's `UUID.fromString(id).toString()
+    // .equals(id)`. Guid.TryParseExact("D") alone is laxer than the Java original -- it accepts
+    // UPPERCASE hex -- so a cid the Android peer would reject could otherwise be admitted here and
+    // the two ends would disagree about which call a frame belongs to. Round-tripping through
+    // ToString("D") reproduces the Java rule exactly, for v1 as well as v2: both platforms have
+    // always generated the lowercase form, so this can only ever reject malformed input.
+    public static bool ValidCallId(string? id) =>
+        id != null && Guid.TryParseExact(id, "D", out var g) && g.ToString("D") == id;
 
     // Evaluated on the machine RECEIVING the frame: `state`/`isCaller` are local. Returns the role
     // the sender must hold ("caller"/"callee"/"both"), or null to ignore the frame.
@@ -71,6 +87,18 @@ public static class CallProtocol
         ERROR => state.Active() ? "both" : null,
         PING => state.Active() ? "both" : null,
         PONG => state.Active() ? "both" : null,
+        // Recipient controls: the party that PLACED the call drives the other end's camera/speaker,
+        // so the sender must hold the caller role, and only once the call is actually Connected.
+        // Matches CallProtocol.allowedSender's REMOTE_* rows on Android exactly.
+        //
+        // VIDEO_REQUEST/ACCEPT/DECLINE/STATE deliberately have NO row here. On Android those frames
+        // are intercepted before this table is consulted (CallController routes any frame whose type
+        // starts with VIDEO_, or whose body says media=video, straight to CallVideoCoordinator), and
+        // CallVideoCoordinator.permits() is the authority for them -- it checks the bound request id,
+        // the exact active generation and the current consent, which a state/role table cannot
+        // express. Either peer may legitimately request video, so a role table would be wrong anyway.
+        REMOTE_SPEAKER => state == State.Connected ? "caller" : null,
+        REMOTE_CAMERA => state == State.Connected ? "caller" : null,
         _ => null,
     };
 

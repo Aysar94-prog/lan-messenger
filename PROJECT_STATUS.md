@@ -1,5 +1,22 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-04 Windows video-call implementation pass (source only, **not a release**): the
+managed v2 coordination layer is now implemented in Windows source and is
+wire-compatible with Android's existing production video implementation — strict v2
+parser and builders, `CALLCAPS`/`CALLGRANTS` engine responders, capability probe,
+consent/actions/coordinator state machine, two-stage frame admission, v1-preserving
+`CallController` integration, a `CallView` video stage with a clamped draggable preview,
+all four trusted-call grant bits, and `PlatformTarget=x64`. Automated: Release build
+0 errors, full `tests/run.ps1` exit 0, `--call-video-check` 307/0, and the shared corpora
+agree across both platforms (107 frame records, 38 capability records, each also
+matching a hand-authored expectation). **Parity is still not claimed.** There is no
+production native video adapter, so a v2 call negotiates as v2 *audio-only*; Section B
+(the native voice replacement) was deliberately not started and voice stays on the
+proven SIPSorcery + G722 path; and there was no packaging, no webcam, no DPI or renderer
+measurement and no two-device call. Windows `<Version>` is still 2.2.42 and the shipped
+Windows release still contains none of this. Android code and wire are unchanged by this
+pass. See [Windows video calling plan](windows/video-calling/PLAN-WINDOWS-VIDEO-CALLING.md).
+
 2026-10-04 Android locked/background calls: 2.2.69/code96 original-key ARM64 test
 candidate installed on both phones. Trusted video acceptance no longer depends on
 camera startup; notification action identity/threading/FGS presentation and stale

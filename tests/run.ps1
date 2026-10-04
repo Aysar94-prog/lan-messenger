@@ -26,6 +26,14 @@ try {
   Check-Result
   dotnet "$TestRoot\csharp\CsharpHarness.dll" --voice-draft-reconcile-check
   Check-Result
+  # Windows video calling (WVC): the shared call-signalling corpora, run against the Windows
+  # implementation here and against the Android one by tests/video-contract/run.ps1, which diffs the
+  # two verdict files. Both sides are also checked against a hand-authored expectation, so the diff
+  # only ever has to catch a genuine Android/Windows disagreement.
+  dotnet "$TestRoot\csharp\CsharpHarness.dll" --call-video-check
+  Check-Result
+  & tests/video-contract/run.ps1 -JdkRoot $JdkRoot -OutputRoot "$TestRoot\video-contract" -CsharpHarness "$TestRoot\csharp"
+  Check-Result
   python tests/voice_architecture_check.py
   Check-Result
   python tests/voice_drafts.py "$JdkRoot\bin\java.exe" "$TestRoot\java" "$TestRoot\csharp\CsharpHarness.dll" $TestRoot

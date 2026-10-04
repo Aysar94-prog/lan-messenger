@@ -9,5 +9,17 @@
     <AssemblyName>LanMessenger</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>lan-messenger.ico</ApplicationIcon>
+    <!-- WVC-02: x64 only. The native video adapter is libwebrtc, which ships x64 binaries only, so an
+         AnyCPU build would produce something that cannot load its own media stack at run time. Pinning
+         the platform target keeps the produced assembly and its P/Invoke resolution x64 rather than
+         deferring the failure to the first camera acquisition. Voice is unaffected: the
+         SIPSorcery/G722 path it uses is managed and architecture-neutral.
+
+         RuntimeIdentifier is deliberately NOT set yet. It drags in the win-x64 runtime/apphost packs,
+         which the vendored offline feed does not carry, so setting it today would break the build for
+         no benefit: PlatformTarget already fixes the architecture. It belongs with the native adapter,
+         where the apphost actually needs to locate libwebrtc's DLLs beside the exe. -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 <ItemGroup><PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" /><PackageReference Include="SIPSorcery" Version="10.0.17" /></ItemGroup></Project>

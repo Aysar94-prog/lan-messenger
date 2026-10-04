@@ -14,14 +14,23 @@ public sealed class CallSession
     public long ConnectedAtMs { get; }
     public long DurationMs { get; }
     public CallProtocol.EndReason? EndReason { get; }
+    // A02b. VideoCapable records that BOTH peers proved they speak v2 for this call; it is not "this
+    // machine has a camera". InvitedVideo records what the caller actually offered, and is the only
+    // thing that lets a callee answer with video. Video is the live coordinator snapshot, or null when
+    // the call has no video -- which includes a v2 call whose adapter could not be created.
+    public bool VideoCapable { get; }
+    public bool InvitedVideo { get; }
+    public CallVideoCoordinator.Snapshot? Video { get; }
 
     public CallSession(string callId, string peerId, CallProtocol.State state, bool isCaller, bool muted,
         string audioRoute, CallProtocol.Quality quality, long createdAtMs, long connectedAtMs, long durationMs,
-        CallProtocol.EndReason? endReason)
+        CallProtocol.EndReason? endReason, bool videoCapable = false, bool invitedVideo = false,
+        CallVideoCoordinator.Snapshot? video = null)
     {
         CallId = callId; PeerId = peerId; State = state; IsCaller = isCaller; Muted = muted;
         AudioRoute = audioRoute; Quality = quality; CreatedAtMs = createdAtMs; ConnectedAtMs = connectedAtMs;
         DurationMs = durationMs; EndReason = endReason;
+        VideoCapable = videoCapable; InvitedVideo = invitedVideo; Video = video;
     }
 
     // A snapshot taken before ConnectedAtMs was set still reports the duration it had; once
@@ -46,6 +55,9 @@ public sealed class CallSession
         public long ConnectedAtMs;
         public long DurationMs;
         public CallProtocol.EndReason? EndReason;
+        public bool VideoCapable;
+        public bool InvitedVideo;
+        public CallVideoCoordinator.Snapshot? Video;
 
         public Builder(string callId, string peerId, bool isCaller, long nowMs)
         {
@@ -53,7 +65,7 @@ public sealed class CallSession
         }
 
         public CallSession Snapshot() => new(CallId, PeerId, State, IsCaller, Muted, AudioRoute, Quality,
-            CreatedAtMs, ConnectedAtMs, DurationMs, EndReason);
+            CreatedAtMs, ConnectedAtMs, DurationMs, EndReason, VideoCapable, InvitedVideo, Video);
 
         public CallSession SnapshotWithDuration()
         {

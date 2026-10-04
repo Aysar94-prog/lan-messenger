@@ -1,5 +1,70 @@
 # Windows status
 
+## 2026-10-04 implementation pass: managed v2 video coordination (not a release)
+
+Implemented in source on top of local commit `f27f05b`. **No release was packaged and
+no physical-device acceptance was performed or is claimed.** `<Version>` is still
+`2.2.42` and the shipped Windows release still contains none of this. Checklist row by
+row, with evidence levels separated: [Windows video calling plan](video-calling/PLAN-WINDOWS-VIDEO-CALLING.md).
+
+**Implemented code, no device needed.** A strict v2 call-signalling stack that keeps v1
+intact: `CallVideoProtocol.cs` (closed validator — `MaxDepth=16`, duplicate keys
+rejected, exact key set per type, integral signed-64 counters, 64 KiB frame / 48 KiB SDP
+/ 4 KiB ICE bounds, 128 ICE per generation), `CallCapabilities.cs`, `CallFrameAdmission.cs`,
+a rewritten `CallSignaling.cs` (strict UTF-8, all v2 builders), and `PeerEngine.cs`
+responders for `LM4\tCALLCAPS` and `LM4\tCALLGRANTS`. The coordination layer is
+`CallVideoConsent.cs`, `CallVideoActions.cs`, `CallVideoCoordinator.cs`,
+`CallVideoDiagnostics.cs`, `CallVideoPlacement.cs`, `CallVideoResources.cs` and
+`CallCameraPermission.cs`, fronted by an `ICallVideoMedia` seam whose only
+implementation is `FakeCallVideoMedia.cs`. `CallController` gained a v2 INVITE `media`
+tag, audio-only answer, mid-call bilateral upgrade, decline, per-role trusted
+auto-answer, Android's two-stage frame admission (video frames are intercepted before the
+state/role table, and the heartbeat is refreshed only after admission succeeds), and
+`CallSession` gained `VideoCapable`/`InvitedVideo`/`Video` plumbing. `CallView` gained a
+video stage, a draggable preview clamped into the stage, and accept-with-video /
+decline-video / camera / add-video controls; `ShowTrustedCallAccess` now offers all four
+grant bits, each with its own consent prompt on first grant. `PlatformTarget=x64` pins
+the architecture.
+
+**Automated verification actually run.** `dotnet build windows\LanMessenger.csproj -c
+Release` succeeds with 0 errors and only the one pre-existing `ChatWindowVoice.cs(19,16)
+CS1998` warning. Full `tests/run.ps1` exits **0**. `CsharpHarness --call-video-check`
+reports **307 passed, 0 failed**. `tests/video-contract/run.ps1` reports
+`107 records agree between Android and Windows` (shared frame corpus) and
+`38 records agree between Android and Windows` (shared capability corpus), with 0
+failures against a hand-authored expectation on both platforms, plus 432 Android-side
+video checks passing. The corpora are three-way — Android's verdict, Windows's verdict
+and a hand-authored expectation must all match — which is the only interoperability
+evidence this pass produced, and it is evidence about parsing and serialization, **not**
+about moving pictures.
+
+**Not done, and not implied.** No native video adapter: only the *test-only* M155
+package exists locally and the plan forbids shipping it, so `ICallVideoMedia` has no
+production implementation. Consequently a v2 call currently negotiates as **v2
+audio-only** — a legitimate wire outcome (ACCEPT carrying `media=audio`), chosen so
+that a missing camera cannot tear down working audio. Section B (the native voice
+replacement, WVC-05–08) was deliberately not started; voice stays on the proven
+SIPSorcery 10.0.17 + G722 + winmm adapter, untouched. Also not done: webcam capture,
+frame ownership, renderer selection and measurement, call lifecycle/tray/lock/sleep,
+recipient-side grant visibility, candidate packaging, and every physical gate
+(T05/T07/T08/T09). There is no WinForms UI test for calls — a pre-existing gap this
+pass did not close — so the new stage, preview dragging and DPI behaviour are entirely
+unverified on screen. The archived-2.2.42 compatibility claim rests on fixture parity
+and on a plain v1 INVITE still being exactly `caller`/`callee` at generation 0, not on
+a two-device call. `RuntimeIdentifier` was deliberately left unset: it drags in
+win-x64 runtime/apphost packs the vendored offline feed does not carry (NU1101), and
+`PlatformTarget` already fixes the architecture. That is recorded in
+`LanMessenger.csproj` so it is not rediscovered as a defect.
+
+One regression was caught and fixed during this pass, worth recording because it was
+introduced by the work itself: answering an incoming call *with video* routes through
+`CallVideoActions.AcceptVideo`, which lands in `SendAnswerLocked` rather than in
+`AcceptAsync`. The first version of that method created no audio adapter, so a video
+answer would have negotiated nothing and simply timed out. `StartMediaLocked()` is now
+the single place any media adapter is created — which is also what makes "no camera
+acquired during capability probing or ringing" a checkable property rather than an
+aspiration.
+
 2026-10-04 planning-only review: current continuation checklist is
 [Windows video calling plan](video-calling/PLAN-WINDOWS-VIDEO-CALLING.md).
 Native generated-video/G722 feasibility is complete; production Windows remains

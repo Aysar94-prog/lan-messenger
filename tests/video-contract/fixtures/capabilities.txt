@@ -1,0 +1,55 @@
+# Shared capability/grant fixture corpus -- read by BOTH platforms.
+#
+#   tests/video-contract/CallCapabilitiesFixtureCheck.java  (CallCapabilities.java)
+#   tests/CsharpHarness/CallCapabilitiesFixtureCheck.cs      (CallCapabilities.cs)
+#
+# CALLCAPS records:  name|expectCapable|verified|legacy|elapsedMs|reply
+#   The reply field uses \t and \n escapes; a leading '-' means "the peer sent nothing at all"
+#   (no reply, connection closed before an answer), which is the common real-world case.
+#
+# CALLGRANTS records: name|expectMask|reply
+#   expectMask is 0..15, or -1 for "no usable answer at all"
+#   a '-' reply means the peer closed the connection without answering, which is a NULL reply rather
+#   than an empty one -- the common case for a build that predates the query.
+
+# ── CALLCAPS: a peer counts as video-capable only on the exact expected line ──────
+caps-exact|1|1|0|120|LM4\tCALLCAPS\t2\tVP8
+caps-exact-slow-but-inside|1|1|0|9999|LM4\tCALLCAPS\t2\tVP8
+caps-exactly-at-deadline|0|1|0|10000|LM4\tCALLCAPS\t2\tVP8
+caps-past-deadline|0|1|0|10001|LM4\tCALLCAPS\t2\tVP8
+caps-negative-elapsed|0|1|0|-1|LM4\tCALLCAPS\t2\tVP8
+caps-unverified-peer|0|0|0|120|LM4\tCALLCAPS\t2\tVP8
+caps-legacy-build|0|1|1|120|LM4\tCALLCAPS\t2\tVP8
+caps-no-reply|0|1|0|120|-
+caps-empty-reply|0|1|0|120|LM4\tCALLCAPS
+caps-truncated-version|0|1|0|120|LM4\tCALLCAPS\t2
+caps-truncated-codec|0|1|0|120|LM4\tCALLCAPS\t2\t
+caps-wrong-protocol|0|1|0|120|LM4\tCALLCAPS\t3\tVP8
+caps-wrong-protocol-v1|0|1|0|120|LM4\tCALLCAPS\t1\tVP8
+caps-wrong-codec-h264|0|1|0|120|LM4\tCALLCAPS\t2\tH264
+caps-wrong-codec-h265|0|1|0|120|LM4\tCALLCAPS\t2\tH265
+caps-lowercase-cmd|0|1|0|120|LM4\tcallcaps\t2\tVP8
+caps-extra-field|0|1|0|120|LM4\tCALLCAPS\t2\tVP8\textra
+caps-leading-space|0|1|0|120| LM4\tCALLCAPS\t2\tVP8
+caps-trailing-space|0|1|0|120|LM4\tCALLCAPS\t2\tVP8 
+caps-trailing-newline|0|1|0|120|LM4\tCALLCAPS\t2\tVP8\n
+caps-trailing-crlf|0|1|0|120|LM4\tCALLCAPS\t2\tVP8\r\n
+caps-wrong-header|0|1|0|120|LM5\tCALLCAPS\t2\tVP8
+caps-extra-tab|0|1|0|120|LM4\tCALLCAPS\t\t2\tVP8
+
+# ── CALLGRANTS: the mask is bound to the verified certificate, never a capability ──
+grants-none|0|LM4\tCALLGRANTS\t1\t0
+grants-voice|1|LM4\tCALLGRANTS\t1\t1
+grants-auto-video|2|LM4\tCALLGRANTS\t1\t2
+grants-remote-camera|4|LM4\tCALLGRANTS\t1\t4
+grants-remote-speaker|8|LM4\tCALLGRANTS\t1\t8
+grants-all|15|LM4\tCALLGRANTS\t1\t15
+grants-no-reply|-1|-
+grants-empty|-1|
+grants-wrong-version|-1|LM4\tCALLGRANTS\t2\t4
+grants-out-of-range|-1|LM4\tCALLGRANTS\t1\t16
+grants-negative|-1|LM4\tCALLGRANTS\t1\t-1
+grants-not-a-number|-1|LM4\tCALLGRANTS\t1\tx
+grants-extra-field|-1|LM4\tCALLGRANTS\t1\t4\textra
+grants-missing-field|-1|LM4\tCALLGRANTS\t1
+grants-zero-padded|-1|LM4\tCALLGRANTS\t1\t04

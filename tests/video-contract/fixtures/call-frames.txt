@@ -1,0 +1,176 @@
+# Shared call-frame fixture corpus -- read by BOTH parsers.
+#
+# tests/video-contract/SharedFrameFixtureCheck.java runs it against
+#   android/src/net/lanmsg/chat/CallSignaling.java + CallVideoProtocol.java
+# tests/CsharpHarness/CallFrameFixtureCheck.cs runs it against
+#   windows/CallSignaling.cs + CallVideoProtocol.cs
+#
+# Each parser must reach the SAME verdict for every record, and that verdict must also match the
+# expectation written here by hand. Three-way agreement is the point: a change that makes Windows
+# more permissive than Android (or the reverse) breaks interop and is caught here rather than on a
+# phone.
+#
+# Record format (one per line, '|' separated, no '|' may appear in a payload):
+#   name|expectParse|expectValid|payload
+#     expectParse  1 = the frame must parse, 0 = the frame must be refused by the envelope
+#     expectValid  1 = CallVideoProtocol.valid must accept, 0 = must reject, - = not applicable
+#                  (only meaningful for a parsed frame whose protocolVersion is 2)
+#     payload      the exact JSON text to frame, OR b64:<base64 of the complete wire bytes> when
+#                  the case is about bytes rather than text (bad length prefix, invalid UTF-8, ...)
+#
+# Payloads are JSON TEXT and are used exactly as written, which means an SDP sample keeps its CRLF as
+# the two-character escape \r\n: that escape is what belongs inside a JSON string. Unescaping it while
+# reading the file would put a raw control character into the JSON, and both parsers would then refuse
+# the frame as malformed JSON -- a real divergence being reported for a fixture bug.
+#
+# Lines beginning with '#' are comments. "#SAMPLE <name><TAB><text>" defines a reusable text sample,
+# and @name@ inside a payload is replaced by it. The samples exist purely to keep the records
+# readable; they are expanded identically on both sides before use.
+
+#SAMPLE FP	00:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10:11:12:13:14:15:16:17:18:19:1A:1B:1C:1D:1E:1F
+#SAMPLE VOK	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VRTX	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\na=rtpmap:97 rtx/90000\r\na=fmtp:97 apt=96\r\n
+#SAMPLE AOK	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 9\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:9 G722/8000\r\n
+#SAMPLE VH264	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 H264/90000\r\n
+#SAMPLE VTWO	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 9\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:9 G722/8000\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VNOFP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VTCP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 TCP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VP0	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 0 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VP65536	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 65536 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VPT128	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 128\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VOPUS	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP9/90000\r\n
+#SAMPLE AVP8	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 9\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:9 VP8/90000\r\n
+#SAMPLE VLATEFP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@:GG\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VP8ORPHAN	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:97 VP8/90000\r\n
+
+# ── v1 must keep parsing exactly as it always has ────────────────────────────────
+v1-invite-no-media|1|-|{"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d"}}
+v1-invite-explicit-v1|1|-|{"v":1,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d"}}
+v1-ringing-empty-body|1|-|{"t":"RINGING","cid":"00000000-0000-4000-8000-000000000001","seq":2,"gen":0}
+v1-ringing-empty-object|1|-|{"t":"RINGING","cid":"00000000-0000-4000-8000-000000000001","seq":2,"gen":0,"b":{}}
+v1-offer-gen1-audio|1|-|{"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":3,"gen":1,"b":{"sdp":"@AOK@"}}
+v1-has-extra-root-key|1|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":4,"gen":0,"x":1}
+v1-has-extra-body-key|1|-|{"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":5,"gen":1,"b":{"sdp":"@AOK@","extra":1}}
+v1-non-integral-seq|1|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1.0,"gen":0}
+v1-uppercase-cid|0|-|{"t":"PING","cid":"00000000-0000-4000-8000-00000000000A","seq":1,"gen":0}
+v1-braced-cid|0|-|{"t":"PING","cid":"{00000000-0000-4000-8000-000000000001}","seq":1,"gen":0}
+v1-missing-t|0|-|{"cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}
+v1-t-not-string|0|-|{"t":7,"cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}
+v1-body-not-object|0|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":[]}
+v1-duplicate-root-key|0|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"cid":"00000000-0000-4000-8000-000000000002"}
+v1-trailing-data|0|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0} {}
+v1-top-level-array|0|-|[{"t":"PING"}]
+v1-nested-body|1|-|{"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"k":{"a":1}}}
+v1-v-is-string|1|-|{"v":"1","t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}
+
+# ── v2 envelope is closed ───────────────────────────────────────────────────────
+v2-invite-audio|1|1|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d","media":"audio"}}
+v2-invite-video|1|1|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d","media":"video"}}
+v2-ringing|1|1|{"v":2,"t":"RINGING","cid":"00000000-0000-4000-8000-000000000001","seq":2,"gen":0}
+v2-extra-root-key|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"x":1}
+v2-missing-gen|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1}
+v2-seq-as-double|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1.0,"gen":0}
+v2-gen-as-double|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":2.0}
+v2-seq-as-string|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":"1","gen":0}
+v2-version-as-double|0|-|{"v":2.0,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}
+# A "v" that is not a number is not v2, and Android's `instanceof Number` test falls back to v1.
+# Both platforms therefore parse this as a v1 frame -- the record exists to pin that shared decision
+# down, because "v":"2" reading as v2 on one side only would be a silent protocol split.
+v2-version-as-string|1|-|{"v":"2","t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}
+v2-duplicate-body-key|0|-|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d","media":"audio","media":"video"}}
+v2-deep-nesting|0|-|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":{"k":{"l":{"m":{"n":{"o":{"p":1}}}}}}}}}}}}}}}}}
+v2-invalid-utf8|0|-|b64:AAAAUHsidiI6MiwidCI6IlBJTkciLCJjaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJzZXEiOjEsImdlbiI6MMMo
+v2-length-prefix-too-small|0|-|b64:AAAATnsidiI6MiwidCI6IlBJTkciLCJjaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJzZXEiOjEsImdlbiI6MH0=
+v2-length-prefix-negative|0|-|b64:gAAAT3sidiI6MiwidCI6IlBJTkciLCJjaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJzZXEiOjEsImdlbiI6MH0=
+v2-length-prefix-huge|0|-|b64:v////3sidiI6MiwidCI6IlBJTkciLCJjaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJzZXEiOjEsImdlbiI6MH0=
+v2-truncated-payload|0|-|b64:AAAAT3sidiI6MiwidCI6IlBJTkciLCJjaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJzZXEiOjEsImdlbiI6MA==
+v2-empty-wire|0|-|b64:AAAAAA==
+
+# ── INVITE / ACCEPT ─────────────────────────────────────────────────────────────
+v2-invite-no-media-key|1|0|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d"}}
+v2-invite-bad-media|1|0|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d","media":"screen"}}
+v2-invite-gen-not-zero|1|0|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":2,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d","media":"audio"}}
+v2-invite-caller-not-uuid|1|0|{"v":2,"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"alice","callee":"00000000-0000-4000-8000-00000000000d","media":"audio"}}
+v2-accept-audio|1|1|{"v":2,"t":"ACCEPT","cid":"00000000-0000-4000-8000-000000000001","seq":4,"gen":0,"b":{"media":"audio"}}
+v2-accept-gen-not-zero|1|0|{"v":2,"t":"ACCEPT","cid":"00000000-0000-4000-8000-000000000001","seq":4,"gen":1,"b":{"media":"audio"}}
+
+# ── VIDEO_REQUEST / ACCEPT / DECLINE ────────────────────────────────────────────
+v2-video-request|1|1|{"v":2,"t":"VIDEO_REQUEST","cid":"00000000-0000-4000-8000-000000000001","seq":5,"gen":0,"b":{"request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-video-request-gen-not-zero|1|0|{"v":2,"t":"VIDEO_REQUEST","cid":"00000000-0000-4000-8000-000000000001","seq":5,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-video-request-bad-id|1|0|{"v":2,"t":"VIDEO_REQUEST","cid":"00000000-0000-4000-8000-000000000001","seq":5,"gen":0,"b":{"request":"nope"}}
+v2-video-request-extra-key|1|0|{"v":2,"t":"VIDEO_REQUEST","cid":"00000000-0000-4000-8000-000000000001","seq":5,"gen":0,"b":{"request":"00000000-0000-4000-8000-0000000000aa","media":"video"}}
+v2-video-accept-upgrade|1|1|{"v":2,"t":"VIDEO_ACCEPT","cid":"00000000-0000-4000-8000-000000000001","seq":6,"gen":0,"b":{"request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-video-decline|1|1|{"v":2,"t":"VIDEO_DECLINE","cid":"00000000-0000-4000-8000-000000000001","seq":6,"gen":0,"b":{"request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-video-decline-empty-body|1|0|{"v":2,"t":"VIDEO_DECLINE","cid":"00000000-0000-4000-8000-000000000001","seq":6,"gen":0}
+
+# ── OFFER / ANSWER ──────────────────────────────────────────────────────────────
+v2-offer-audio-gen1|1|1|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":"@AOK@"}}
+v2-offer-audio-gen0|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":0,"b":{"media":"audio","sdp":"@AOK@"}}
+v2-offer-audio-gen2|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"audio","sdp":"@AOK@"}}
+v2-answer-audio-gen1|1|1|{"v":2,"t":"ANSWER","cid":"00000000-0000-4000-8000-000000000001","seq":8,"gen":1,"b":{"media":"audio","sdp":"@AOK@"}}
+v2-offer-video-gen2|1|1|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VOK@"}}
+v2-offer-video-gen2-rtx|1|1|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VRTX@"}}
+v2-offer-video-gen1|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VOK@"}}
+v2-offer-video-missing-request|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","sdp":"@VOK@"}}
+v2-offer-video-sdp-h264|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VH264@"}}
+v2-offer-video-sdp-two-mlines|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VTWO@"}}
+v2-offer-video-sdp-no-fingerprint|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VNOFP@"}}
+v2-offer-video-sdp-tcp|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VTCP@"}}
+v2-offer-video-sdp-port-zero|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VP0@"}}
+v2-offer-video-sdp-port-too-big|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VP65536@"}}
+v2-offer-video-sdp-payload-128|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VPT128@"}}
+v2-offer-video-sdp-vp9|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VOPUS@"}}
+v2-offer-video-sdp-short-fingerprint|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VLATEFP@"}}
+v2-offer-video-sdp-orphan-rtp-map|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VP8ORPHAN@"}}
+v2-offer-audio-sdp-vp8|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":"@AVP8@"}}
+v2-offer-sdp-not-string|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":7}}
+v2-answer-video-gen2|1|1|{"v":2,"t":"ANSWER","cid":"00000000-0000-4000-8000-000000000001","seq":8,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VOK@"}}
+
+# ── ICE ─────────────────────────────────────────────────────────────────────────
+v2-ice-video-gen2|1|1|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0}}
+v2-ice-audio-gen1|1|1|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":1,"b":{"media":"audio","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0}}
+v2-ice-no-candidate-prefix|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0}}
+v2-ice-mline-index-1|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":1}}
+v2-ice-mline-index-double|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0.0}}
+v2-ice-audio-with-request|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":1,"b":{"media":"audio","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0}}
+v2-ice-empty-mid|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"","sdpMLineIndex":0}}
+v2-ice-video-gen1|1|0|{"v":2,"t":"ICE","cid":"00000000-0000-4000-8000-000000000001","seq":9,"gen":1,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","candidate":"candidate:1 1 udp 2130706431 10.0.0.1 5000 typ host","sdpMid":"0","sdpMLineIndex":0}}
+
+# ── MEDIA_READY / ERROR ─────────────────────────────────────────────────────────
+v2-media-ready-video|1|1|{"v":2,"t":"MEDIA_READY","cid":"00000000-0000-4000-8000-000000000001","seq":10,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-media-ready-audio-gen1|1|1|{"v":2,"t":"MEDIA_READY","cid":"00000000-0000-4000-8000-000000000001","seq":10,"gen":1,"b":{"media":"audio"}}
+v2-media-ready-video-gen1|1|0|{"v":2,"t":"MEDIA_READY","cid":"00000000-0000-4000-8000-000000000001","seq":10,"gen":1,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa"}}
+v2-error-failed|1|1|{"v":2,"t":"ERROR","cid":"00000000-0000-4000-8000-000000000001","seq":11,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","code":"failed"}}
+v2-error-timeout|1|1|{"v":2,"t":"ERROR","cid":"00000000-0000-4000-8000-000000000001","seq":11,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","code":"timeout"}}
+v2-error-unsupported|1|1|{"v":2,"t":"ERROR","cid":"00000000-0000-4000-8000-000000000001","seq":11,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","code":"unsupported"}}
+v2-error-unknown-code|1|0|{"v":2,"t":"ERROR","cid":"00000000-0000-4000-8000-000000000001","seq":11,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","code":"nope"}}
+v2-error-missing-code|1|0|{"v":2,"t":"ERROR","cid":"00000000-0000-4000-8000-000000000001","seq":11,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa"}}
+
+# ── VIDEO_STATE ─────────────────────────────────────────────────────────────────
+v2-video-state-on|1|1|{"v":2,"t":"VIDEO_STATE","cid":"00000000-0000-4000-8000-000000000001","seq":12,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"revision":1}}
+v2-video-state-gen1|1|0|{"v":2,"t":"VIDEO_STATE","cid":"00000000-0000-4000-8000-000000000001","seq":12,"gen":1,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"revision":1}}
+v2-video-state-negative-revision|1|0|{"v":2,"t":"VIDEO_STATE","cid":"00000000-0000-4000-8000-000000000001","seq":12,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"revision":-1}}
+v2-video-state-camera-string|1|0|{"v":2,"t":"VIDEO_STATE","cid":"00000000-0000-4000-8000-000000000001","seq":12,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":"true","revision":1}}
+v2-video-state-revision-double|1|0|{"v":2,"t":"VIDEO_STATE","cid":"00000000-0000-4000-8000-000000000001","seq":12,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"revision":1.0}}
+
+# ── recipient controls ──────────────────────────────────────────────────────────
+v2-remote-speaker-on|1|1|{"v":2,"t":"REMOTE_SPEAKER","cid":"00000000-0000-4000-8000-000000000001","seq":13,"gen":0,"b":{"speaker":true}}
+v2-remote-speaker-gen2|1|0|{"v":2,"t":"REMOTE_SPEAKER","cid":"00000000-0000-4000-8000-000000000001","seq":13,"gen":2,"b":{"speaker":true}}
+v2-remote-speaker-string|1|0|{"v":2,"t":"REMOTE_SPEAKER","cid":"00000000-0000-4000-8000-000000000001","seq":13,"gen":0,"b":{"speaker":"on"}}
+v2-remote-camera-front|1|1|{"v":2,"t":"REMOTE_CAMERA","cid":"00000000-0000-4000-8000-000000000001","seq":14,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"facing":"front"}}
+v2-remote-camera-keep|1|1|{"v":2,"t":"REMOTE_CAMERA","cid":"00000000-0000-4000-8000-000000000001","seq":14,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":false,"facing":"keep"}}
+v2-remote-camera-bad-facing|1|0|{"v":2,"t":"REMOTE_CAMERA","cid":"00000000-0000-4000-8000-000000000001","seq":14,"gen":2,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"facing":"sideways"}}
+v2-remote-camera-gen1|1|0|{"v":2,"t":"REMOTE_CAMERA","cid":"00000000-0000-4000-8000-000000000001","seq":14,"gen":1,"b":{"request":"00000000-0000-4000-8000-0000000000aa","camera":true,"facing":"front"}}
+
+# ── terminal / keepalive frames carry no body ───────────────────────────────────
+v2-hangup|1|1|{"v":2,"t":"HANGUP","cid":"00000000-0000-4000-8000-000000000001","seq":15,"gen":0}
+# An explicitly empty body object is the same thing as no body at all -- both platforms parse "b" into
+# an empty map, so "b is empty" is satisfied by both. A HANGUP carrying any real field is not.
+v2-hangup-with-body|1|1|{"v":2,"t":"HANGUP","cid":"00000000-0000-4000-8000-000000000001","seq":15,"gen":0,"b":{}}
+v2-hangup-with-field|1|0|{"v":2,"t":"HANGUP","cid":"00000000-0000-4000-8000-000000000001","seq":15,"gen":0,"b":{"reason":"x"}}
+v2-hangup-gen2|1|0|{"v":2,"t":"HANGUP","cid":"00000000-0000-4000-8000-000000000001","seq":15,"gen":2}
+v2-ping-gen2|1|0|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":16,"gen":2}
+v2-pong|1|1|{"v":2,"t":"PONG","cid":"00000000-0000-4000-8000-000000000001","seq":17,"gen":0}
+v2-seq-zero|1|0|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":0,"gen":0}
+v2-negative-gen|1|0|{"v":2,"t":"PING","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":-1}
+v2-unknown-type|1|0|{"v":2,"t":"TELEPORT","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0}

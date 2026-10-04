@@ -131,15 +131,35 @@ sealed partial class ChatWindow
     void ShowTrustedCallAccess(PeerEngine.Peer peer,Form owner)
     {
         var mask=engine.TrustedCallMask(peer.Id);
-        using var dialog=new Form{Text="Trusted call access",Size=new Size(540,330),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        using var dialog=new Form{Text="Trusted call access",Size=new Size(540,400),StartPosition=FormStartPosition.CenterParent,Font=Font};
         var panel=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Padding=new Padding(18),AutoScroll=true};
-        panel.Controls.Add(new Label{Text="Allow this verified device to answer calls without asking. Camera and video controls remain unavailable on Windows until production video calling is complete.",AutoSize=true,MaximumSize=new Size(480,0)});
+        panel.Controls.Add(new Label{Text="What a verified device may do without asking you each time. Grants are per device and are dropped the moment that device is no longer verified.",AutoSize=true,MaximumSize=new Size(480,0)});
         var voice=new CheckBox{Text="Automatically answer voice calls",AutoSize=true,Checked=(mask&PeerEngine.TrustedAutoAnswerVoice)!=0};
-        var video=new CheckBox{Text="Automatically answer video calls (not available yet)",AutoSize=true,Enabled=false};
-        var camera=new CheckBox{Text="Allow remote front/rear camera control (not available yet)",AutoSize=true,Enabled=false};
-        var speaker=new CheckBox{Text="Allow remote speaker control (planned protocol)",AutoSize=true,Enabled=false};
+        // All four bits are now implemented and speak the same protocol as Android. What is still
+        // missing is the native video adapter, so the video-related grants cannot change anything
+        // visible yet -- they are offered (and saved) because they are exactly what authorises those
+        // controls once video exists, and hiding them would silently discard an Android user's grants.
+        var video=new CheckBox{Text="Automatically answer video calls",AutoSize=true,Checked=(mask&PeerEngine.TrustedAutoAnswerVideo)!=0};
+        var camera=new CheckBox{Text="Allow this device to turn my camera on or off",AutoSize=true,Checked=(mask&PeerEngine.TrustedRemoteCamera)!=0};
+        var speaker=new CheckBox{Text="Allow this device to switch my audio between earpiece and speaker",AutoSize=true,Checked=(mask&PeerEngine.TrustedRemoteSpeaker)!=0};
+        panel.Controls.Add(new Label{Text="Video still needs the native video adapter, which is not built yet. Until then a video call negotiates as audio only.",AutoSize=true,MaximumSize=new Size(480,0),ForeColor=Color.DimGray});
         var save=new Button{Text="Save",AutoSize=true};panel.Controls.AddRange([voice,video,camera,speaker,save]);dialog.Controls.Add(panel);
-        save.Click+=(_,_)=>{var next=voice.Checked?PeerEngine.TrustedAutoAnswerVoice:0;if(next!=0&&MessageBox.Show("Calls from this device will connect immediately and may activate your microphone. You can mute or hang up at any time.","Enable trusted call access",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;engine.SetTrustedCallMask(peer.Id,next);dialog.Close();owner.Close();Render();};
+        save.Click+=(_,_)=>
+        {
+            var next=0;
+            if(voice.Checked)next|=PeerEngine.TrustedAutoAnswerVoice;
+            if(video.Checked)next|=PeerEngine.TrustedAutoAnswerVideo;
+            if(camera.Checked)next|=PeerEngine.TrustedRemoteCamera;
+            if(speaker.Checked)next|=PeerEngine.TrustedRemoteSpeaker;
+            // Each grant that acts on this machine gets its own consent prompt, shown only when the
+            // grant is newly taken. Remote camera control is the one that moves a physical device
+            // and exposes a picture, so it must never ride along silently with auto-answer.
+            if((next&PeerEngine.TrustedRemoteCamera)!=0&&(mask&PeerEngine.TrustedRemoteCamera)==0
+                &&MessageBox.Show(owner,"This device will be able to turn your camera on and off during a call, and see the picture.","Enable remote camera control",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;
+            if((next&PeerEngine.TrustedAutoAnswerVoice)!=0&&(mask&PeerEngine.TrustedAutoAnswerVoice)==0
+                &&MessageBox.Show(owner,"Calls from this device will connect immediately and may activate your microphone. You can mute or hang up at any time.","Enable trusted call access",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;
+            engine.SetTrustedCallMask(peer.Id,next);dialog.Close();owner.Close();Render();
+        };
         dialog.ShowDialog(owner);
     }
     async Task AddAddress()

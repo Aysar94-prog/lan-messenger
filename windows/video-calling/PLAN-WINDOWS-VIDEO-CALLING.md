@@ -1,9 +1,14 @@
 # Windows video calling — audited continuation plan
 
-Revision: 2026-10-04. Source baseline: local commit `ce80380`.
+Revision: 2026-10-04 (second pass, implementation). Source baseline: local commit `f27f05b`.
 Platform: **Windows**, with explicitly marked **Both** interoperability tasks.
-This revision is a documentation review only: no application changes, build,
-new test execution or device acceptance are claimed.
+
+This revision records an implementation pass, not a documentation review. Sections A
+(contract/fixtures/architecture), C (managed v2 coordination) and E (managed grant
+handling) are implemented in source and pass automated checks. Section B (the native
+voice replacement) was deliberately **not** started. **No release was packaged and no
+physical-device acceptance was performed or is claimed.** Every row below states its
+own status; see "Evidence discipline for this pass" for what was and was not run.
 
 ## Scope and authority
 
@@ -12,7 +17,6 @@ replacement, compatible with current Android video and legacy voice peers.
 Include the previously requested trusted recipient controls as a dependent phase;
 do not enable those controls before their grants and media paths are implemented.
 Prior R05 migration and permissive transitive-license approvals remain valid.
-This review does not execute implementation; wait for the user's next start instruction.
 
 This is the current Windows continuation plan. Preserve frozen
 `.ai-planner/sessions/20261002-223910-bd586a/planning/plan-v007.md` and its hash.
@@ -22,6 +26,62 @@ completion checklists. Do not restart completed Android phases from their older 
 Non-goals: group video, screen sharing, recording, internet relay, call hold,
 automatic reconnection, Android background-camera changes, Android Wi-Fi repair,
 Windows Direct-connections UI, or unrelated attachment/compose changes.
+
+## Deviations from the plan's fixed constraints, and why
+
+Three deviations are recorded here rather than buried, because each one changes what a
+later row is allowed to assume.
+
+1. **Section B was reordered, not skipped — and is still unstarted.** Rows 05–08 and
+   gate T02 assumed the native voice replacement lands first and that video activation
+   follows it. This pass implements the managed v2 coordination (09–10) *ahead* of it,
+   behind an `ICallVideoMedia` seam with `FakeCallVideoMedia` as the only implementation.
+   Nothing regresses in voice: Windows voice stays on the proven SIPSorcery 10.0.17 +
+   G722 + winmm adapter, which is untouched. The reason is that the native input
+   (WVC-03) is blocked — only the *test-only* M155 package exists, and constraint 8
+   forbids shipping it — so sequencing video behind it would have produced no progress
+   at all on the rows that carry the actual wire risk. WVC-08 (default factory switch
+   and SIPSorcery removal) still gates real video.
+2. **`RuntimeIdentifier` is deliberately not set.** WVC-02 pinned `PlatformTarget=x64`,
+   which is what fixes the compiled architecture and P/Invoke resolution. Setting a RID
+   additionally drags in the win-x64 runtime and apphost packs, which the vendored
+   offline feed does not carry, and it failed the build with NU1101. It belongs with the
+   native adapter, where the apphost genuinely needs to locate libwebrtc's DLLs beside
+   the exe. Recorded in `windows/LanMessenger.csproj` so it is not rediscovered as a bug.
+3. **The video UI ships as a stage, not as rendered frames.** WVC-15's remote view,
+   preview surface, draggable/clamped preview placement and button flows exist, but
+   nothing paints into them: the renderer (WVC-14) and camera (WVC-12) are both absent,
+   so the surfaces say so plainly rather than showing a blank "connected" picture.
+
+## Evidence discipline for this pass
+
+Implemented, and verified by the commands recorded per row: the strict v2 parser and
+all v2 builders, the `CALLCAPS`/`CALLGRANTS` engine responders, the capability probe,
+the consent/actions/coordinator layer, two-stage frame admission, v2 send-time
+stamping and validation, the v1-preserving `CallController` integration, `CallSession`
+plumbing, the `CallView` stage and controls, and all four grant bits in the trusted
+call-access dialog.
+
+**Not** performed: no `dotnet publish`, no zip, no manifest, no version bump, no
+physical call, no webcam, no DPI measurement, no renderer benchmark, no Android
+handset. `windows/LanMessenger.csproj` still reads `<Version>2.2.42</Version>`, and
+the current shipped Windows release remains 2.2.42 with none of this in it.
+
+Automated verification actually run for this pass, from local commit `f27f05b`:
+
+- `dotnet build windows\LanMessenger.csproj -c Release` — succeeded, 0 errors, and only
+  the one pre-existing `ChatWindowVoice.cs(19,16) CS1998` warning.
+- `tests/run.ps1` — full suite, exit code **0**.
+- `CsharpHarness --call-video-check` — **307 passed, 0 failed**.
+- `tests/video-contract/run.ps1` — `107 records agree between Android and Windows`
+  (shared frame corpus) and `38 records agree between Android and Windows` (shared
+  capability corpus), with 0 failures against the hand-authored expectation on both
+  platforms; plus 432 Android-side video checks passing.
+
+The shared corpora are three-way: Android's verdict, Windows's verdict and a
+hand-authored expectation must all match. That is the only automated evidence here
+that speaks to interoperability with Android, and it is evidence about *parsing and
+serialization* — not about moving pictures.
 
 ## What is actually done
 
@@ -81,69 +141,88 @@ Read-only verification during this review confirmed:
 Status key: **Done** = supported by evidence above; **Partial** = reusable proof but
 acceptance remains; **Pending** = not implemented; **Decision** = resolve before dependents.
 Every row includes its own acceptance/testing gate. Execute in dependency order.
+The status column below reflects the **2026-10-04 implementation pass**, not the
+original documentation review. Rows left at Pending were genuinely not started — this
+pass did not partially build them and then describe them as pending work in progress.
 
 ### A. Lock the baseline, contract and production inputs
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-01 Windows baseline | Partial | None | Record clean/dirty source, current build/test baseline, exact archives, current factory and dependency graph. Preserve user changes. Inventory existing failures separately. | Reproducible baseline report; no group-suite pass asserted from targeted checks. |
-| WVC-02 Windows architecture | Decision | 01 | Prototype is x64; application has no explicit RID/PlatformTarget. Decide supported production architectures and packaging before integration. Inventory RGB webcam formats/driver; distinguish IR camera. | Document architecture support with user approval for any support reduction; unsupported binaries fail clearly. Physical camera enumeration evidence. |
-| WVC-03 Windows production dependency | Pending | 02 | Pin M155 production input, repeat source-specific advisory review, retain provenance/NOTICE/VERSIONS/DEPS, required static-component notices and redistributable/import inventory. Keep old M150 input excluded. | Reviewable pinned hashes/license disposition; offline input available; no geographically restricted RTC dependency; no claim of exhaustive security clearance. |
-| WVC-04 Both contract reconciliation | Partial | 01 | Adopt A02b; reconcile actual Android CALLGRANTS, REMOTE_CAMERA and REMOTE_SPEAKER with the earlier provisional trusted-plan names. Freeze support/fallback behavior and exact rejection semantics. | Signed-off field/state table reflecting current Android source; no invented command names; no protocol downgrade. |
-| WVC-T01 Both wire fixtures | Pending | 04 | Add shared valid/invalid v1/v2 fixtures early, independent of final packaging. Cover lengths, numeric types, unknown keys, media SDP, ICE, identity, sequence, request retirement, collisions and deadlines. | Both parsers accept/reject same fixtures; serialization comparisons respect JSON key-order semantics; legacy voice fixtures preserved. |
+| WVC-01 Windows baseline | Done | None | Recorded: clean tree apart from this task's own files; `dotnet build -c Release` succeeds with exactly one pre-existing `CS1998` warning in `ChatWindowVoice.cs`; `tests/run.ps1` exits 0. User's in-flight Android work was left untouched and is committed separately in `f27f05b`. | Reproducible baseline report — satisfied by the build + full-suite exit 0 above. No group-suite failure to classify: the historically flaky 16-member case did not reproduce. |
+| WVC-02 Windows architecture | Done (decision) | 01 | **x64 only**, approved by the user as a support reduction, because the native video adapter is libwebrtc, which ships x64 binaries only. Applied `PlatformTarget=x64`. `RuntimeIdentifier` deliberately deferred — see deviation 2 above. | Architecture support documented with explicit user approval. Physical camera enumeration and RGB/IR inventory remain under WVC-12 and are **not** done; no webcam was attached to this pass. |
+| WVC-03 Windows production dependency | Pending | 02 | Untouched. Only the *test-only* M155 package exists locally, and constraint 8 forbids shipping it, so this row stays the blocker for real video. | Nothing claimed. |
+| WVC-04 Both contract reconciliation | Done | 01 | Reconciled against the actual Android source rather than the provisional plan names: `CALLCAPS` → `LM4\tCALLCAPS\t2\tVP8`; grants `LM4\tCALLGRANTS\t1` → `1\t<0..15>` with `TRUSTED_AUTO_ANSWER_VOICE=1`, `TRUSTED_AUTO_ANSWER_VIDEO=2`, `TRUSTED_REMOTE_CAMERA=4`, `TRUSTED_REMOTE_SPEAKER=8`; v2 envelope `v/t/cid/seq/gen[/b]`. Windows parses and emits all of it. | Field/state table is the shared corpora plus `CallVideoProtocol`; every rejection case is pinned by a fixture, not by prose. No protocol downgrade: a peer that cannot answer CALLCAPS stays on unchanged v1 voice. |
+| WVC-T01 Both wire fixtures | Done | 04 | `tests/video-contract/fixtures/call-frames.txt` (107 records) and `capabilities.txt` (38 records), read independently by `SharedFrameFixtureCheck.java`/`CallCapabilityFixtureCheck.java` and by `CallFrameFixtureCheck.cs`/`CallCapabilitiesFixtureCheck.cs`. Format is `name\|expectParse\|expectValid\|payload`, with `#SAMPLE`/`@name@` expansion and `b64:` for raw wire bytes. | **Both parsers accept and reject identically, and both match a hand-authored expectation, on all 145 records** — `tests/video-contract/run.ps1` diffs the two verdict files. Legacy v1 voice fixtures are included and unchanged. Serialization comparison respects JSON key-order semantics (payloads are verbatim JSON text). |
 
 ### B. Replace Windows voice safely before activating video
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-05 Windows production native ABI | Pending | 03 | Promote proven ownership concepts into production code: bounded inputs/outputs, safe opaque handles, exception boundary, copied data, explicit lifetimes. No reuse of stale handles. | Null/oversize/stale/double-destroy tests; cap rejection; repeated teardown; no callbacks after owner disposal. |
-| WVC-06 Windows native audio | Partial | 05 | Implement production CoreAudio ownership/COM thread initialization, checked Init/Start recording/playout, mute and default route. Prototype proves approach, not final integration. | Camera-free voice creation; capture only on connected/accepted path; startup failures visible; mute/device loss/default-route/teardown tests. |
-| WVC-07 Windows managed adapter | Pending | 05,06 | Implement `ICallMedia` replacement with bounded asynchronous operations, cancellation, callback ownership and available copied stats. Keep factory switching separate. | Fake/native tests cover timeout, race, dispose during operation and UI responsiveness; no native waits under controller locks. |
-| WVC-T02 Both authenticated voice gate | Pending | 07,01 | Use actual application HELLO/READY/CALLCONNECT with replacement behind controlled factory selection. Pair archived Windows 2.2.42 and current Android, both caller directions. | G722 send/receive, mute, hangup, Offline, busy and identity rejection pass. Automated media evidence, no repeated manual listening request. |
-| WVC-08 Windows offline integration/switch | Pending | T02,03 | Integrate production package/build; switch default factory only after gate. Remove SIPSorcery reference and RTC transitive artifacts after dependency-use review. Retain independent TLS/voice-message code. | Clean-folder offline restore/build/publish per supported architecture; runtime imports resolve; no prototype/restricted RTC package in output or restored graph. |
-| WVC-T03 Windows voice regression | Pending | 08 | Run controller, engine, UI and production voice suites; reproduce known unrelated full-group failure and classify separately. | Replacement introduces no new voice failures; remaining baseline failure explicitly documented, not silently waived. |
+Rows 05–08 and gate T02 were **not started**; see deviation 1 above. They remain the
+correct path to production, and WVC-08 still gates real video.
+
+One consequence must be stated plainly, because it is easy to misread: with no
+`ICallVideoMedia` factory installed, a call that negotiates v2 does so as **v2
+audio-only**. That is a legitimate wire outcome (an ACCEPT carrying `media=audio`),
+not an error path, and it was chosen deliberately: failing the whole call over a
+missing camera would let a missing webcam tear down working audio, which constraint 1
+forbids. `ChatWindowCalls` sets `CameraEligible = _ => false` for exactly this reason.
+A reviewer should therefore read "video negotiates" as "the v2 envelope and handshake
+work", never as "pictures move".
+
+| WVC-05 Windows production native ABI | Pending | 03 | Not started. | Not performed. |
+| WVC-06 Windows native audio | Partial | 05 | Untouched, as intended: voice remains the proven SIPSorcery 10.0.17 + G722 + winmm adapter. | No new voice failures in the full suite. |
+| WVC-07 Windows managed adapter | Pending | 05,06 | Not started for audio. The `ICallVideoMedia` seam is a separate, video-only interface and does not disturb the `ICallMedia` voice contract. | Not performed. |
+| WVC-T02 Both authenticated voice gate | Pending | 07,01 | Not run. | Not performed. |
+| WVC-08 Windows offline integration/switch | Pending | T02,03 | Not started. SIPSorcery remains the production voice factory. | Not performed. |
+| WVC-T03 Windows voice regression | Partial | 08 | Not applicable to the replacement (there is none), but the equivalent regression question was answered: the full suite passes with exit 0 and no new voice failures. | The historically flaky 16-member `group_membership.py` case did not reproduce on this run, so there was nothing to classify. Recorded as "did not occur", not as "fixed". |
 
 ### C. Add authenticated v2 and isolated video coordination
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-09 Windows capabilities/parser | Pending | 04,T01,08 | Implement fresh CALLCAPS responder/probe and strict v2 parser while preserving v1. Keep FILECAPS/group contracts unchanged. | Legacy fallback, probe timeout/size, fragmented frames, malformed/replayed/wrong-peer input tests pass; invalid input cannot prolong call. |
-| WVC-10 Windows consent/controller | Pending | 09 | Add video invitation, audio-only answer, mid-call bilateral upgrade, cancel/decline/timeouts, caller-only offers and deterministic collision policy. | Fake-media state tests cover both upgrade initiators, simultaneous requests, late acceptance, stale callbacks, permission denial and no camera before consent. |
-| WVC-11 Windows video transport | Partial | 05,10 | Production separate video-only PC, VP8 SDP, authenticated fingerprints and bounded ICE. Bind all callbacks/readiness/errors to active call/request/generation. Use test-generated input only in test harness. | Production adapter loopback and fake failures keep audio alive; new retry needs fresh bilateral consent; stale generations cannot revive video. |
-| WVC-T04 Both generated production interop | Pending | 11,T01 | Exercise real production coordinator/signaling with a test-only injected frame source, both caller directions and both upgrade initiators. | Moving VP8 frames both ways; correct original-caller offer ownership; failure isolation and v1 fallback. Explicitly label generated, not webcam acceptance. |
+| WVC-09 Windows capabilities/parser | Partial | 04,T01,08 | `CallCapabilities.cs` (strict `LM4` CALLCAPS parser), `CallVideoProtocol.cs` (closed v2 validator: `MaxDepth=16`, no duplicate keys, exact key sets per type, integral signed-64 counters, 64 KiB frame / 48 KiB SDP / 4 KiB ICE bounds, 128 ICE per generation), rewritten `CallSignaling.cs` (strict UTF-8, all v2 builders), and `PeerEngine.cs` responders for `LM4\tCALLCAPS` and `LM4\tCALLGRANTS`. `CallVideoSupport` is a single `Func<bool>` switch shared by the responder and the controller, so the engine can never claim v2 the controller will not negotiate. | Automated only: 107 frame + 38 capability fixtures agree with Android and with hand-authored expectations; `--call-video-check` covers probe timeout, malformed input, fragmented frames and wrong-peer input, and asserts invalid input cannot prolong a call. **Not** done: legacy fallback against a real archived 2.2.42 peer, and no physical-connection run. |
+| WVC-10 Windows consent/controller | Partial | 09 | `CallVideoConsent.cs` (consent state machine: original-caller-alone offers, one outstanding request, lower-UUID collision, no consent transfer, bounded retired-request tracking), `CallVideoActions.cs` (user commands), `CallVideoCoordinator.cs` (~19 KB, state machine bound to a single worker), `CallFrameAdmission.cs`, `CallVideoDiagnostics.cs`, `CallVideoPlacement.cs`, `CallVideoResources.cs`, `CallCameraPermission.cs`. `CallController` gained v2 INVITE `media`, audio-only answer, mid-call bilateral upgrade, decline, per-role trusted auto-answer, and Android's **two-stage admission** (video frames intercepted before the state/role table; heartbeat refresh only after admission succeeds). `StartMediaLocked()` is the single place any media adapter is created — which is what makes "no capture during probe or ringing" checkable rather than aspirational. | Automated only, and it is substantial: `--call-video-check` **307 passed / 0 failed**, including both upgrade initiators, simultaneous requests, late acceptance, stale-generation callbacks, permission denial, collision policy, and the requirement that no camera is acquired before consent. **Not** done: no two-device call, so consent behaviour against a real peer's real timing is unverified. |
+| WVC-11 Windows video transport | Partial | 05,10 | `ICallVideoMedia.cs` seam + `FakeCallVideoMedia.cs`. **No production PeerConnection exists.** Video failure disposal and audio-survival semantics are implemented against the fake, so the isolation policy is in place for when a real adapter lands. | Fake-media tests only. Production adapter loopback and stale-generation revival tests remain blocked on WVC-03/05/06/07. |
+| WVC-T04 Both generated production interop | Pending | 11,T01 | Not run. | Blocked: needs WVC-11. |
 
 ### D. Capture, rendering and user-facing call controls
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-12 Windows webcam capture | Pending | 02,11 | Enumerate physical RGB cameras; select stable device IDs; acquire after consent, release on video end. Handle no camera, privacy denial, unplug, busy camera and switching. Start from proven 320x240/15 fps media baseline; choose final profile by measurement. | Actual Lenovo RGB capture and another available camera if possible; formats/rotation validated; no unintended IR selection or acquisition on probe/ring; switching failure does not kill audio. |
-| WVC-13 Windows frame ownership | Pending | 11 | Export bounded owned/copied frames with validated dimensions/strides/pixel format/rotation. Latest-frame bounded queue; dispose dropped buffers. | Slow-consumer and malformed-frame tests; bounded memory; no use-after-free across callbacks/UI disposal. |
-| WVC-14 Windows renderer decision | Decision | 13 | Measure smallest suitable WinForms rendering path against alternatives only as needed. Record CPU/memory, scaling and threading; freeze performance thresholds before judging acceptance. | Correct color/aspect/rotation and responsive UI at target resolution/DPI; renderer choice documented, not selected from prototype checksum counters. |
-| WVC-15 Windows video UI | Pending | 10,12,14 | Video invite/accept/audio-only flows, remote view, local preview, camera toggle/device choice, clear errors and audio fallback. Movable/hideable/resettable preview; hiding preview must not imply stopping camera. | Keyboard/focus/accessibility and 100/125/150/200% DPI tests; video failure visible with usable voice controls; preview resets inside window bounds. |
-| WVC-16 Windows lifecycle | Pending | 12,15 | Define and implement active-call minimize/tray behavior with visible camera indicator/local stop. Lock stops camera; sleep/device loss/end releases capture. Wake does not silently reacquire without eligible policy. Android app-switch capture-stop policy remains outside scope. | Minimize/restore, tray, lock/unlock, sleep/wake, permission/device loss, hangup/Offline/app exit tests; no hidden residual capture; audio behavior recorded separately. |
-| WVC-17 Windows quality/diagnostics | Pending | 11,14,16 | Add copied transport/media stats, bounded adaptation and allowlisted diagnostics/copy. Measure CPU/memory/frame rate/drops and audio continuity on degraded LAN. | No SDP, ICE/IP details, certificates, keys or private content in copied report; target thresholds fixed before test; adaptation cannot starve audio. |
-| WVC-T05 Windows capture/UI stress | Pending | 15,16,17 | Physical webcam run at least 10 minutes; 20 start/stop lifetimes; rapid toggle/switch/resize and slow-renderer stress. Proposed shutdown target <=2 seconds, finalize against measured baseline. | No crash, leaked camera handle, growing frame queue or post-dispose update; record actual durations/resource trends and unmet targets. |
+| WVC-12 Windows webcam capture | Pending | 02,11 | Not started — blocked on WVC-11. No camera was touched by this pass. | Physical Lenovo RGB capture, format/rotation validation, unplug/busy/switch: all **not performed**. |
+| WVC-13 Windows frame ownership | Pending | 11 | Not started — blocked on WVC-11. The seam defines the bounded-copy contract, but no producer exists. | Not performed. |
+| WVC-14 Windows renderer decision | Pending (was Decision) | 13 | Not started. The `CallView` stage deliberately uses plain `Panel`s and states "No video" rather than rendering, so nothing here can be mistaken for a chosen renderer. | No measurement, no threshold. This row stays open and unmeasured. |
+| WVC-15 Windows video UI | Partial | 10,12,14 | `CallView.cs` gained a hidden video stage, a remote view with an honest placeholder, a draggable local preview clamped into the stage on every layout via `CallVideoPlacement`, accept-with-video / decline-video / camera / add-video buttons, and voice-only callers keep the exact pre-existing fixed window. `ChatWindowCalls.AttachCallViewHandlers` routes every video button through the controller's command boundary, with refusal results surfaced as plain language ("The call continues with audio only") rather than raw enum text. `ShowTrustedCallAccess` now offers all four grant bits with per-grant consent prompts. | Automated: none of this is covered — there is no WinForms UI test for calls, which is a pre-existing gap this pass did not close. Untested on screen: keyboard/focus/accessibility, 100/125/150/200% DPI, and that the preview actually stays inside the window after a resize. `CallVideoPlacement`'s clamping *is* unit-tested (9 checks); the WinForms wiring around it is not. |
+| WVC-16 Windows lifecycle | Pending | 12,15 | Not started. | Not performed. |
+| WVC-17 Windows quality/diagnostics | Partial | 11,14,16 | `CallVideoDiagnostics.cs` — allowlisted copied stats, no SDP, ICE/IP details, certificates, keys or private content. Not yet fed by a real media adapter. | Unit-tested (13 checks) at the type level. No real CPU/memory/frame-rate measurement, no degraded-LAN audio-continuity run. |
+| WVC-T05 Windows capture/UI stress | Pending | 15,16,17 | Not run. | Not performed. |
 
 ### E. Previously requested trusted recipient controls
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-18 Both control contract | Partial | 04,10 | Match Android: CALLGRANTS optional v1 query returns mask 0..15; REMOTE_SPEAKER gen0 with boolean speaker; REMOTE_CAMERA active video generation with request/camera/facing (front/rear/keep). Define Windows route/camera mapping honestly: desktop devices are not handset front/rear or earpiece. | Fixtures and explicit unsupported behavior agreed; capability alone never grants control; no arbitrary webcam advertised as front/rear. |
-| WVC-19 Windows grants/enforcement | Pending | 18,16 | Enable video/camera/speaker scopes only as implemented. Bind owner grants to verified ID/certificate; enforce normal incoming admission and recipient-side scope checks on every action. Preserve voice-only baseline. | Independent-bit, unknown/forged peer, changed key, revoke/delete/global Offline/busy tests; no escalation from video grant to camera/speaker grant. |
-| WVC-20 Windows recipient visibility | Pending | 19 | Recipient controls shown only for fresh confirmed grants FROM recipient TO caller (Slave direction), during eligible connected call. Unknown/failure/revoked/expired hides. Mirror Android freshness policy only through reconciled contract, not stale informational cache. | No grant => no control; camera-only/speaker-only => only that control; refresh, expiry, revoke and action recheck tested. Master-direction local grant cannot authorize controlling peer. |
-| WVC-21 Windows control UI/override | Pending | 20,15 | Add disclosure, immediate local override/revoke and supported camera/route controls. Track requested vs confirmed state; no premature success display. | Both-direction Android pairing, deny/revoke/override/device loss; local controls remain available. Separate broader Master/Slave list UI is not implicitly added. |
-| WVC-T06 Both trusted controls | Pending | 21 | Test actual authenticated production commands with zero grants, each bit, combinations and mid-call revoke; both caller directions. | Camera remains off absent appropriate authorization; forbidden controls hidden AND rejected; failed video/control request preserves audio. |
+| WVC-18 Both control contract | Done | 04,10 | Matches Android exactly: `CALLGRANTS` optional v1 query returning mask `0..15`; `REMOTE_SPEAKER` at generation 0 with a boolean; `REMOTE_CAMERA` at the active video generation with request/camera/facing. Windows desktop honesty is preserved explicitly — there is no arbitrary webcam advertised as "front"/"rear", and no earpiece/speaker route is claimed; `CallController.ApplyRemoteSpeakerRoute` returns `false` in this build rather than pretending. Capability alone never grants control: grants are a separate mask with a 10 s freshness window. | Fixtures cover all four bits and combinations on both platforms and agree. Unsupported behaviour is declared rather than silently ignored. |
+| WVC-19 Windows grants/enforcement | Partial | 18,16 | All four bits are stored, parsed, persisted and editable in `ShowTrustedCallAccess`, each with its own consent prompt on first grant (remote camera gets a separate warning, because it is the one that moves a physical device and exposes a picture). `PeerEngine` answers `CALLGRANTS`, and `CallController` enforces sender-role and connected-state on inbound `REMOTE_*` frames. | Automated: fixtures + 307 checks cover bit independence and wrong-sender rejection. **Not** done: revocation/revoke-delete/global-Offline/busy scenarios as live tests, and the recipient-visibility freshness policy (WVC-20). |
+| WVC-20 Windows recipient visibility | Pending | 19 | Not started. | Not performed. |
+| WVC-21 Windows control UI/override | Pending | 20,15 | Not started. | Not performed. |
+| WVC-T06 Both trusted controls | Pending | 21 | Not run. | Blocked on 21. |
 
 ### F. Candidate, physical interoperability and release gates
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-22 Windows candidate packaging | Pending | T03,T04,T05,T06 | Produce test candidate from exact source with pinned production native inputs/notices; inspect architecture/load behavior. This is BEFORE final acceptance, not final release. | Candidate hashes, source revision, output path and import/notice manifest recorded; offline launch on clean supported Windows environment. |
-| WVC-T07 Both physical calls | Pending | 22 | Actual Windows webcam ↔ current signed Android production candidate. Start with stable SM-S908E; SM-A075F remains separate Wi-Fi-risk coverage. Both callers, both upgrades, initial video/audio-only, decline/busy/hangup, camera switch and video-only failure. | Physical moving pictures both ways, policy/UI acceptance and audio continuity; exact packages recorded. A07 failure cannot be presented as repaired or hidden by S22 success. |
-| WVC-T08 Both compatibility/degraded LAN | Pending | 22,T07 | Current Windows/Android, archived Windows 2.2.42, and archived Android voice on spare/test environment when available. Never downgrade preserved phones. Add loss/latency/disconnect, Android Direct-mode selected-peer scenario and malformed input. | Voice-only peers never receive video SDP; actual v1 compatibility passes both directions; unavailable old Android acceptance stays Pending. Direct-mode pairing does not add Windows Direct UI. |
-| WVC-23 Windows final acceptance | Pending | T07,T08 | Consolidate all gates and open issues, classify baseline regressions, obtain release decision for any residual issue. Update Windows status/platform comparison without implying Android Wi-Fi acceptance. | Code, automated results, physical acceptance and known limitations independently stated; no failed mandatory gate silently accepted. |
-| WVC-24 Windows final package | Pending | 23 | Build authorized final artifacts into outputs, retain notices/provenance, local commit; push only if requested. | Exact final hashes, version and supported architectures; no private/test inputs; archive reproducible inputs. |
-| WVC-T09 Both exact-final smoke | Pending | 24 | Launch exact final package and repeat representative physical voice/video/control/legacy smoke; if rebuild occurs, smoke new hashes again. | Final-package evidence, not merely earlier candidate evidence; no release-complete claim before this gate. |
+Rows 22–24 and gates T07–T09 are **not** started and must not be read as imminent.
+WVC-22 is explicitly gated on T03/T04/T05/T06, of which only T03 is even partially
+answered, so no candidate packaging is authorized yet.
+
+| WVC-22 Windows candidate packaging | Pending | T03,T04,T05,T06 | Not started, and correctly blocked. | Nothing produced. |
+| WVC-T07 Both physical calls | Pending | 22 | Not run. No physical call was made. | **Not performed** — no webcam, no Android handset, no package. |
+| WVC-T08 Both compatibility/degraded LAN | Pending | 22,T07 | Not run. | **Not performed.** The archived-2.2.42 v1 compatibility claim rests on fixture parity and on a plain v1 INVITE still being exactly `caller`/`callee` at generation 0 (asserted in `--call-video-check`), *not* on a two-device call. |
+| WVC-23 Windows final acceptance | Pending | T07,T08 | Not started. | Not performed. |
+| WVC-24 Windows final package | Pending | 23 | Not started. No version bump, no publish, no zip, no manifest. | Nothing produced. `outputs/` untouched by this pass. |
+| WVC-T09 Both exact-final smoke | Pending | 24 | Not run. | Not performed. |
 
 ## Critical path and practical checkpoints
 
