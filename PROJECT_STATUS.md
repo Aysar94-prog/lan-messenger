@@ -1,5 +1,13 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-04 Windows planning review: rebuilt the
+[Windows video-call continuation plan](windows/video-calling/PLAN-WINDOWS-VIDEO-CALLING.md)
+against current source and retained evidence. Native separate-PC VP8/G722
+feasibility passed; Windows production is still voice-only 2.2.42. Production
+integration, real webcam/UI/lifecycle, grant-gated recipient controls and packaged
+interoperability are pending. Android production video exists in current candidates;
+no parity, Wi-Fi repair or new physical acceptance is claimed. Documentation only.
+
 2026-10-04 Android recipient-control visibility checkpoint: recipient camera and
 speaker controls appear only with the respective fresh grant from that device
 to the caller (Slave direction). Unknown, failed, revoked and expired confirmation

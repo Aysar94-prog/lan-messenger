@@ -1,5 +1,11 @@
 # R05 production migration execution plan — 2026-10-03
 
+2026-10-04 continuation: use
+[the audited Windows video-call plan](PLAN-WINDOWS-VIDEO-CALLING.md) for current
+statuses/dependencies and testing gates. The table below is historical. A02b core
+is confirmed, Android production video now exists, and the user accepted audio
+testing without repeated listening. Windows production migration remains pending.
+
 Platform: Windows / Both legacy compatibility. User explicitly approved replacing
 the Windows production calling library in this chat after paired feasibility.
 This extends the previously approved R01–R04 boundary; it does not waive R03,

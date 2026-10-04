@@ -1,5 +1,13 @@
 # Windows status
 
+2026-10-04 planning-only review: current continuation checklist is
+[Windows video calling plan](video-calling/PLAN-WINDOWS-VIDEO-CALLING.md).
+Native generated-video/G722 feasibility is complete; production Windows remains
+voice-only SIPSorcery 2.2.42. Production bridge, authenticated v2 coordination,
+physical webcam/rendering, trusted controls and packaged acceptance remain pending.
+The new plan separates evidence levels and removes stale Android/audio-listening
+gates. No application changes, build or new acceptance in this review.
+
 2026-10-03 trusted-call/icon source checkpoint: the supplied logo is embedded as a
 multi-resolution executable icon and used by the main window and tray. Verified
 contacts now have a certificate-bound **Trusted call access** setting for automatic
@@ -18,7 +26,7 @@ shared video choice: VP8/separate secured video PC (Android A02b-CONTRACT.md).
 R05 production migration is authorized but not implemented; production dependency
 and Windows video acceptance remain separate. Older listening entries are historical.
 
-Latest human listening correction: no sound heard, overriding earlier selected
+Historical human listening correction (superseded by user acceptance above): no sound heard, overriding earlier selected
 both-audible response. Replacement audible acceptance remains OPEN; no factory
 switch or release accepted from packet counters alone.
 
@@ -31,7 +39,8 @@ paragraphs below are historical checkpoints, not the latest paired result.
 R05 production migration explicitly authorized, execution plan in
 [R05 migration](video-calling/R05-MIGRATION.md). Native ↔ unchanged production
 2.2.42 voice media passed both offer directions, G722 packets and legacy mute
-state; authenticated call-path and human audible checks remain separate.
+state; authenticated production call-path checks remain pending. Listening was
+subsequently accepted by the user and is not a renewed gate.
 Native cap/fifth rejection and 20 teardown lifetimes passed. Windows Release
 build passed. Latest full suite passed hardware audio 20/0, then failed the
 16-member group reinvite capability; isolated retry failed full-group pairing.
