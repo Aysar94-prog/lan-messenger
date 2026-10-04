@@ -105,6 +105,7 @@ final class CallView {
     if (ui == null) { hide(activity); return; }
 
     CallSession call = ui.getCurrent();
+    activity.refreshRecipientControls(call);
     if(call==null||call.state.terminal()||!call.callId.equals(placementCallId)){
       videoPlacement=new CallVideoPlacement();placementCallId=call==null?null:call.callId;
       dismissDiagnostics();
@@ -169,7 +170,7 @@ final class CallView {
     // state-specific, so keeping the old ones would leave dead buttons on screen. Compared as one
     // key string rather than a chain of clauses -- see boundKey for why.
     if (overlay == null || boundTerminal || stateText == null
-        || !CallUi.overlayKey(call, peerNameOf(activity, call)).equals(boundKey)) {
+        || !recipientOverlayKey(activity,call,peerNameOf(activity,call)).equals(boundKey)) {
       build(activity, ui, call);
       return;
     }
@@ -223,7 +224,7 @@ final class CallView {
 
     String peerName = peerNameOf(activity, call);
     // Bound last, after the name is resolved, so the key and the views agree on this build.
-    boundKey = CallUi.overlayKey(call, peerName);
+    boundKey = recipientOverlayKey(activity,call,peerName);
 
     // Root is a FrameLayout so the end-call disc can float over the picture while the header and
     // the control bar stay pinned to the edges, which a single LinearLayout cannot do.
@@ -807,7 +808,11 @@ final class CallView {
   private static void dismissDiagnostics(){
     if(diagnosticDialog!=null)diagnosticDialog.dismiss();diagnosticDialog=null;diagnosticText=null;diagnosticCallId=null;
   }
+  private static String recipientOverlayKey(MainActivity activity,CallSession call,String name){
+    return CallUi.overlayKey(call,name)+"|recipientScopes="+activity.recipientControlMask(call);
+  }
   private static View videoControls(MainActivity activity,CallUi ui,CallSession call){
+    int recipientMask=activity.recipientControlMask(call);
     LinearLayout rows=new LinearLayout(activity);rows.setOrientation(LinearLayout.VERTICAL);rows.setBackgroundColor(BAR);
     LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
     CallVideoCoordinator.Snapshot s=call.video;
@@ -847,22 +852,22 @@ final class CallView {
     extras.addView(reset,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     Button diagnostics=activity.button("Diagnostics");diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
     extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    if(call.isCaller){
+    if((recipientMask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0){
     Button remoteSpeaker=activity.button("Recipient speaker on");remoteSpeaker.setTag(Boolean.FALSE);
-    remoteSpeaker.setOnClickListener(v->{boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());activity.runCallAction(()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"Recipient speaker off":"Recipient speaker on");});
+    remoteSpeaker.setOnClickListener(v->{boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_SPEAKER,()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"Recipient speaker off":"Recipient speaker on");});
     extras.addView(remoteSpeaker,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     }
     rows.addView(extras);
-    if(call.isCaller){
+    if((recipientMask&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0){
     LinearLayout recipient=new LinearLayout(activity);
     boolean activeVideo=s!=null&&s.phase==CallVideoConsent.Phase.Video;
     Button remoteCamera=activity.button(s!=null&&s.remoteCamera?"Recipient camera off":"Recipient camera on");
     remoteCamera.setEnabled(activeVideo);
-    remoteCamera.setOnClickListener(v->activity.runCallAction(()->ui.setRemoteCamera(call.callId,!s.remoteCamera,"keep"),"Could not change recipient camera."));
+    remoteCamera.setOnClickListener(v->activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,!s.remoteCamera,"keep"),"Could not change recipient camera."));
     recipient.addView(remoteCamera,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     for(String facing:new String[]{"front","rear"}){
       Button select=activity.button("Recipient "+facing);select.setEnabled(activeVideo);
-      select.setOnClickListener(v->activity.runCallAction(()->ui.setRemoteCamera(call.callId,true,facing),"Could not switch recipient camera."));
+      select.setOnClickListener(v->activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,true,facing),"Could not switch recipient camera."));
       recipient.addView(select,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     }
     rows.addView(recipient);

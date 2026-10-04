@@ -1,5 +1,20 @@
 # Android status
 
+2026-10-04 recipient-control visibility: implemented after explicit user "start".
+Caller-side recipient controls now require fresh call-scoped confirmation of the
+recipient's grant to this caller (Slave direction): camera scope4 shows camera
+on/off/front/rear; speaker scope8 shows speaker only. Unknown/non-Slave/expired or
+failed refresh hides controls. Active-call query refreshes every5s, confirmation
+expires at10s; overlay rebuilds on scope changes and buttons recheck before send.
+Last-known Slave list remains informational; recipient authorization unchanged.
+Permission TLS40/0, presentation28/0, CallCheck422/0 and DirectConnections34/0.
+Original-key ARM64 2.2.67/code94 test candidate built and upgraded on SM-A075F
+USB R8YY80A8VLB and SM-S908E. APK `LanMessenger-2.2.67-slave-controls.apk`,
+SHA-256 dec9705555ef96ee7ce741e6e322a1aa5ec550d64a2b47d171be74d214e07816.
+Physical call-screen grant/revoke acceptance remains pending; known Wi-Fi fault
+is unresolved. Windows and LM4 wire unchanged. See
+[recipient-control plan](../PLAN-ANDROID-RECIPIENT-CONTROL-VISIBILITY.md).
+
 2026-10-04: optional Direct connections implemented after explicit user execution
 approval. Menu selects verified devices with editable IPv4:port. Engine disables
 discovery, restricts TLS/fast sockets and incoming authenticated identities to

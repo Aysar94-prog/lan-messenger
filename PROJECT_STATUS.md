@@ -1,5 +1,14 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-04 Android recipient-control visibility checkpoint: recipient camera and
+speaker controls appear only with the respective fresh grant from that device
+to the caller (Slave direction). Unknown, failed, revoked and expired confirmation
+hides controls; recipient-side enforcement unchanged. Signed ARM64 Android
+2.2.67/code94 test candidate upgraded on both phones, including USB SM-A075F.
+Permission40/0, visibility28/0, call422/0 and direct34/0 checks pass. Physical
+call-screen acceptance pending; Wi-Fi fault unresolved. Windows/wire unchanged.
+See [recipient-control plan](PLAN-ANDROID-RECIPIENT-CONTROL-VISIBILITY.md).
+
 2026-10-04 Android feature checkpoint: optional Direct connections now restricts
 application networking to selected verified identities and explicit IPv4 addresses,
 with discovery disabled, encrypted saved selection, socket/call-candidate guards

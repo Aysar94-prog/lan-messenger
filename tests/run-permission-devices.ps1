@@ -6,7 +6,9 @@ if(!$Classes){$Classes=(Get-ChildItem 'D:\LAN-Messenger\outputs\.build\android-v
 if(!$Classes){throw 'Build the current Android source first or pass -Classes.'}
 $taskOutput=Join-Path 'D:\LAN-Messenger\outputs\.build' ('permission-check-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $taskOutput | Out-Null
-& "$JdkRoot\bin\javac.exe" -encoding UTF-8 -cp "$Classes;$AndroidJar" -d $taskOutput "$PSScriptRoot\TestProtector.java" "$PSScriptRoot\PermissionDevicesCheck.java"
+& "$JdkRoot\bin\javac.exe" -encoding UTF-8 -cp "$Classes;$AndroidJar" -d $taskOutput "$PSScriptRoot\TestProtector.java" "$PSScriptRoot\PermissionDevicesCheck.java" "$PSScriptRoot\RecipientControlsCheck.java"
 if($LASTEXITCODE -ne 0){throw 'Permission test compile failed'}
 & "$JdkRoot\bin\java.exe" -cp "$taskOutput;$Classes" net.lanmsg.chat.PermissionDevicesCheck "$taskOutput\state"
 if($LASTEXITCODE -ne 0){throw 'Permission tests failed'}
+& "$JdkRoot\bin\java.exe" -cp "$taskOutput;$Classes" net.lanmsg.chat.RecipientControlsCheck
+if($LASTEXITCODE -ne 0){throw 'Recipient control visibility tests failed'}

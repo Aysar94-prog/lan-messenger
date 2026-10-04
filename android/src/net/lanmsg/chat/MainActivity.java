@@ -97,6 +97,30 @@ public class MainActivity extends Activity {
     public void onServiceDisconnected(ComponentName name){unbindCalls();host=null;bound=false;render();}
   };
   PeerEngine engine(){return host==null?null:host.engine;}
+  final RecipientControlVisibility recipientControls=new RecipientControlVisibility();
+  void refreshRecipientControls(CallSession call){
+    PeerEngine e=engine();
+    String active=e!=null&&e.running&&call!=null&&call.isCaller&&call.videoCapable&&call.state==CallProtocol.State.Connected?call.callId:null;
+    long token=recipientControls.begin(active,android.os.SystemClock.elapsedRealtime());
+    if(token<0)return;String peerId=call.peerId;
+    new Thread(()->{
+      boolean success=e.refreshRemoteCallGrant(peerId);int mask=success?e.remoteControlDisplayMask(peerId):0;
+      recipientControls.finish(active,token,mask,success,android.os.SystemClock.elapsedRealtime());
+      ui.post(()->{if(!isDestroyed())render();});
+    },"lan-recipient-permissions").start();
+  }
+  int recipientControlMask(CallSession call){
+    PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)||call==null||!call.isCaller||call.state!=CallProtocol.State.Connected)return 0;
+    return recipientControls.visible(call.callId,android.os.SystemClock.elapsedRealtime())&e.remoteControlDisplayMask(call.peerId);
+  }
+  void runRecipientControl(CallSession expected,int scope,CallAction action,String failure){
+    runCallAction(()->{
+      CallUi calls=host==null?null:host.calls();CallSession current=calls==null?null:calls.getCurrent();
+      if(current==null||!expected.callId.equals(current.callId)||(recipientControlMask(current)&scope)==0)
+        throw new java.io.IOException("The recipient has not confirmed this control permission.");
+      action.run();
+    },failure);
+  }
   ViewTreeObserver.OnGlobalLayoutListener keyboardListener;
   final Runnable tick=new Runnable(){public void run(){VoiceUi.tickVoiceRecording(MainActivity.this);if(activePlayerUiRefresh!=null)activePlayerUiRefresh.run();render();if(active)ui.postDelayed(this,1000);}};
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}

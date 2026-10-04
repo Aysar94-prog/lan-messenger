@@ -114,6 +114,11 @@ public final class PeerEngine implements Closeable {
     Peer p=peers.get(peerId);RemoteCallGrant g=remoteCallGrants.get(peerId);
     if(p==null||!p.trusted()||g==null||!p.verified.equals(g.fingerprint)){remoteCallGrants.remove(peerId);return null;}return g;
   }
+  /** Presentation only. A last-known Slave entry never enables recipient controls. */
+  public synchronized int remoteControlDisplayMask(String peerId){
+    RemoteCallGrant g=remoteCallGrant(peerId);Peer p=peers.get(peerId);long now=System.currentTimeMillis();
+    return running&&p!=null&&directPeerAllowed(peerId,p.host)&&g!=null&&now>=g.checkedAt&&now-g.checkedAt<10000?g.mask&12:0;
+  }
   static int parseCallGrant(String reply){
     if(reply==null||!reply.matches("LM4\\tCALLGRANTS\\t1\\t(?:[0-9]|1[0-5])"))return -1;
     return Integer.parseInt(reply.substring(reply.lastIndexOf('\t')+1));
