@@ -181,11 +181,20 @@ public sealed partial class PeerEngine : IDisposable
     // A peer's last-answered grant mask. Never persisted and never authoritative: it is bound to the
     // certificate it was answered over and is re-queried rather than remembered across restarts.
     readonly Dictionary<string,(string Fingerprint,int Mask,long CheckedAt)> remoteCallGrants=[];
-    // Whether this build answers CALLCAPS at all. The default is true: a shipped build must answer,
-    // or every call against it silently degrades to voice-only. A staged rollout sets it false while
-    // its responder is not yet ready, because claiming v2 and then failing to parse a v2 frame is
-    // strictly worse than never claiming it.
-    public Func<bool> CallVideoSupport {get;set;}=()=>true;
+    // Whether this build answers CALLCAPS with VP8. The default is FALSE.
+    //
+    // The previous default of true was wrong on its own terms, and the reason it was tempting is
+    // worth keeping in mind: a build with no CALLCAPS responder at all degrades every call against it
+    // to voice-only, so "always answer" looks safer than "never answer". But answering *with VP8*
+    // when no video backend exists is strictly worse than not answering, because the peer then
+    // commits to media=video and waits for a picture that can never arrive -- whereas declining to
+    // claim video lets it offer voice from the start, which is a clean v1 call rather than a broken
+    // v2 one. This build has no production video adapter, so it must not claim VP8.
+    //
+    // The app shell overrides this with the controller's own flag, so there is one switch rather than
+    // two that can disagree; that switch in turn refuses to report true without an installed media
+    // backend. The default only has to be safe for a caller who never wires it up.
+    public Func<bool> CallVideoSupport {get;set;}=()=>false;
     // A last-answered grant is presented for at most this long before it counts as unknown, so a
     // stale answer can never keep offering controls the peer has since withdrawn.
     public const long RemoteGrantFreshMs=10_000;

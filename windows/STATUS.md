@@ -29,7 +29,9 @@ the architecture.
 **Automated verification actually run.** `dotnet build windows\LanMessenger.csproj -c
 Release` succeeds with 0 errors and only the one pre-existing `ChatWindowVoice.cs(19,16)
 CS1998` warning. Full `tests/run.ps1` exits **0**. `CsharpHarness --call-video-check`
-reports **307 passed, 0 failed**. `tests/video-contract/run.ps1` reports
+reports **317 passed, 0 failed** (up from 307; the harness now links `CallController`
+and its collaborators, so controller-level behaviour is testable at all — it was not
+before). `tests/video-contract/run.ps1` reports
 `107 records agree between Android and Windows` (shared frame corpus) and
 `38 records agree between Android and Windows` (shared capability corpus), with 0
 failures against a hand-authored expectation on both platforms, plus 432 Android-side
@@ -40,11 +42,27 @@ about moving pictures.
 
 **Not done, and not implied.** No native video adapter: only the *test-only* M155
 package exists locally and the plan forbids shipping it, so `ICallVideoMedia` has no
-production implementation. Consequently a v2 call currently negotiates as **v2
-audio-only** — a legitimate wire outcome (ACCEPT carrying `media=audio`), chosen so
-that a missing camera cannot tear down working audio. Section B (the native voice
-replacement, WVC-05–08) was deliberately not started; voice stays on the proven
-SIPSorcery 10.0.17 + G722 + winmm adapter, untouched. Also not done: webcam capture,
+production implementation. **Consequently this build advertises voice only.**
+`CallVideoSupport` defaults to false, and `CallController.VideoEnabled`'s getter is
+`videoEnabled && VideoMediaFactory != null`, so no assignment can produce a build that
+claims VP8 with nothing to serve it. A peer that probes this build gets no CALLCAPS
+reply and offers voice, producing a clean v1 call; inbound v2 INVITEs are refused by
+closing the transport; and the camera/video controls never appear, because
+`VideoCapable` is false for every call. The v2 machinery is therefore exercised by the
+fixtures and coordinator tests but is **not** on any path a real call currently takes.
+Installing the adapter later means setting `VideoEnabled = true` *and* assigning the
+factory — neither alone is enough, and the wiring site says so.
+
+That gating corrects a defect in this same pass, recorded here because it is exactly
+what the gating exists to prevent: both flags had defaulted to `true`, and the app shell
+seeded the controller from the engine's default and then made the engine read the
+result back — a self-referential pin to `true` with no path to `false`. Ten
+`capability-honesty` checks now pin the rule, and three of them were confirmed to fail
+against the old behaviour before being kept.
+
+Section B (the native voice replacement, WVC-05–08) was deliberately not started;
+voice stays on the proven SIPSorcery 10.0.17 + G722 + winmm adapter, untouched. Also
+not done: webcam capture,
 frame ownership, renderer selection and measurement, call lifecycle/tray/lock/sleep,
 recipient-side grant visibility, candidate packaging, and every physical gate
 (T05/T07/T08/T09). There is no WinForms UI test for calls — a pre-existing gap this

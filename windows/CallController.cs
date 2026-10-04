@@ -21,7 +21,20 @@ public sealed class CallController
     public Func<ICallVideoMedia?>? VideoMediaFactory;
     // Whether this build will answer a peer's capability probe. Mirrors PeerEngine.CallVideoSupport so
     // there is one switch, not two that can disagree.
-    public bool VideoEnabled { get; set; }
+    //
+    // The getter is deliberately not the backing field: it refuses to report video unless a media
+    // backend is actually installed. That turns "don't advertise a capability you cannot deliver"
+    // from a convention someone has to remember into a property of the type -- there is no assignment
+    // that produces a build claiming VP8 with nothing to serve it, which is the exact failure this
+    // replaced (a plain auto-property defaulting to true, reachable before any factory existed).
+    // Wiring the adapter therefore means installing the factory *and* setting this true; neither alone
+    // is enough, and no ordering mistake can leave it half-enabled.
+    public bool VideoEnabled
+    {
+        get => videoEnabled && VideoMediaFactory != null;
+        set => videoEnabled = value;
+    }
+    bool videoEnabled;
 
     readonly object gate = new();
     CallSession.Builder? session;
@@ -51,7 +64,8 @@ public sealed class CallController
     public CallController(PeerEngine engine, CallSettings settings)
     {
         this.engine = engine; this.settings = settings;
-        VideoEnabled = true;
+        // Off by default. With no VideoMediaFactory installed the getter reports false whatever is
+        // stored here, so this line documents intent rather than enabling anything on its own.
     }
 
     public void SetCallback(Callback cb) => callback = cb ?? (_ => { });

@@ -15,14 +15,19 @@ sealed partial class ChatWindow
     {
         callSettings = new CallSettings(dataDirectory);
         callController = new CallController(engine, callSettings) { MediaFactory = new WebRtcCallMedia.Factory() };
-        // The capability responder is one switch shared with the engine, so a staged build can never
-        // answer "I speak v2" from the engine while the controller refuses to negotiate v2.
-        callController.VideoEnabled = engine.CallVideoSupport();
+        // One switch, read by both the CALLCAPS responder and the negotiator, so the engine can never
+        // claim VP8 to a peer that the controller would then refuse to negotiate. The controller's
+        // getter also requires an installed VideoMediaFactory, and none is installed yet, so this
+        // reads false and this build advertises voice only -- the honest answer, and a clean v1 call
+        // for the peer rather than a v2 call stuck waiting for a picture.
+        //
+        // An earlier version of these two lines seeded the flag from the engine's old `()=>true`
+        // default and then made the engine read it back, which pinned it to true with no path to
+        // false. Installing the adapter means setting VideoEnabled = true as well as assigning the
+        // factory; do not add a read-back here.
         engine.CallVideoSupport = () => callController.VideoEnabled;
-        // No ICallVideoMedia factory is installed. The seam exists and the whole negotiation is wired,
-        // but until a native video adapter is built there is nothing to create, so a video-capable
-        // call negotiates as v2 audio-only. That is a legitimate outcome on the wire (ACCEPT carrying
-        // media=audio) rather than a failure path.
+        // No camera and no route to switch, so the two effects that would touch a device decline.
+        // The controls that would have used them never appear, because VideoCapable is false.
         callController.CameraEligible = _ => false;
         callController.ApplyRemoteSpeakerRoute = () => false;
         callController.SetCallback(snap => { if (IsDisposed || !IsHandleCreated) return; try { BeginInvoke(new Action(() => OnCallStateChanged(snap))); } catch { } });

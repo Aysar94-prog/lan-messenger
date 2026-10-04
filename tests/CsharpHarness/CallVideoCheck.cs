@@ -50,6 +50,7 @@ static class CallVideoCheck
     public static int Run()
     {
         OutboundFrameChecks();
+        CapabilityHonestyChecks();
         ConsentChecks();
         AdmissionChecks();
         CapabilitiesChecks();
@@ -162,6 +163,72 @@ static class CallVideoCheck
         var acceptAudioBack = CallSignaling.Parse(CallSignaling.Serialize(acceptAudio));
         Check(acceptAudioBack != null && CallVideoProtocol.Valid(acceptAudioBack),
             "a v2 ACCEPT answering with audio is valid");
+    }
+
+    // A build must never advertise a capability it cannot deliver.
+    //
+    // This exists because of a real defect, not a hypothetical one: CallVideoSupport and
+    // CallController.VideoEnabled both used to default to true, and the app shell then read the
+    // engine's default and made the engine read the result back -- a self-referential pin to true
+    // with no path to false. With no production video adapter installed, Windows would have answered
+    // CALLCAPS with VP8, invited peers into media=video, and then been unable to send a picture, which
+    // is a worse outcome for the caller than never having claimed video. The fix is structural (the
+    // getter requires a backend), and these checks exist to stop it regressing back into a default.
+    static void CapabilityHonestyChecks()
+    {
+        Section("capability-honesty");
+
+        // The wire level: a build without video writes no CALLCAPS reply at all, which is how a peer
+        // learns to offer voice instead. Silence is the honest answer; a reply claiming VP8 is not.
+        Check(CallCapabilities.ResponseFor(false, legacy: false) == null,
+            "a build without video advertises no call capability");
+        Check(CallCapabilities.ResponseFor(false, legacy: true) == null,
+            "a simulated legacy build advertises no call capability either");
+        var claimed = CallCapabilities.ResponseFor(true, legacy: false);
+        Check(claimed != null && claimed.Contains("VP8"),
+            "a build that does have video claims VP8");
+
+        var root = Path.Combine(Path.GetTempPath(), "call-video-honesty-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var engine = new PeerEngine(root, "VideoHonesty", new TestProtector(root));
+            var controller = new CallController(engine, new CallSettings(root));
+
+            // The default must be "no video", and must stay that way through assignment, because
+            // nothing has installed a backend yet.
+            Check(!controller.VideoEnabled, "a controller with no media backend reports no video");
+            controller.VideoEnabled = true;
+            Check(!controller.VideoEnabled,
+                "setting the flag without a media backend still reports no video");
+
+            // The engine default matters on its own for any caller that never wires the shell up.
+            Check(!new PeerEngine(root, "VideoHonesty2", new TestProtector(root)).CallVideoSupport(),
+                "the engine does not claim call video by default");
+
+            // A backend alone is not enough either -- the flag has to be set as well, so installing an
+            // adapter in one place cannot silently start answering probes.
+            controller.VideoMediaFactory = () => new FakeCallVideoMedia();
+            Check(controller.VideoEnabled,
+                "video is claimed once both a media backend and the flag are present");
+
+            // And the app shell's wiring, which reads the controller so there is one switch: with the
+            // factory removed again the answer must go back to false rather than stick.
+            engine.CallVideoSupport = () => controller.VideoEnabled;
+            Check(engine.CallVideoSupport(), "the engine and controller agree when video is available");
+            controller.VideoMediaFactory = null;
+            Check(!engine.CallVideoSupport(),
+                "removing the backend withdraws the claim from the engine too");
+
+            // A v2 INVITE must be refused while video is unavailable, rather than accepted into a call
+            // that can never carry a picture. The transport is closed with no reply, which is the same
+            // silence an unsupported peer gets.
+            Check(!controller.VideoEnabled, "video is unavailable again after teardown");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
     }
 
     static void ConsentChecks()

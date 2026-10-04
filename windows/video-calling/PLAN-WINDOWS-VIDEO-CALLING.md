@@ -52,6 +52,10 @@ later row is allowed to assume.
    preview surface, draggable/clamped preview placement and button flows exist, but
    nothing paints into them: the renderer (WVC-14) and camera (WVC-12) are both absent,
    so the surfaces say so plainly rather than showing a blank "connected" picture.
+4. **Video is gated off in this build rather than advertised and left unserved.** The
+   user's explicit direction was that VP8 support and camera controls must not be
+   advertised without a real backend. This is a behavioural change from the first pass,
+   where both flags defaulted to true; see "This build advertises voice only" below.
 
 ## Evidence discipline for this pass
 
@@ -67,12 +71,33 @@ physical call, no webcam, no DPI measurement, no renderer benchmark, no Android
 handset. `windows/LanMessenger.csproj` still reads `<Version>2.2.42</Version>`, and
 the current shipped Windows release remains 2.2.42 with none of this in it.
 
+**This build advertises voice only, and that is deliberate.** `CallVideoSupport`
+defaults to false and `CallController.VideoEnabled` *cannot report true unless a
+`VideoMediaFactory` is installed*, because the getter is `videoEnabled &&
+VideoMediaFactory != null`. There is no assignment that produces a build claiming VP8
+with nothing to serve it. So a peer probing this build gets no CALLCAPS reply, offers
+voice from the start, and gets a clean v1 call — instead of being invited into
+`media=video` and then waiting forever for a picture. The camera and video controls
+never appear, because `VideoCapable` is false for every call.
+
+This corrects a defect in the first pass, which is worth recording because it was
+exactly the failure the gating was supposed to prevent: both flags defaulted to `true`,
+and the app shell seeded the controller from the engine's default and then made the
+engine read the result back — a self-referential pin to `true` with no path to `false`.
+Installing the adapter means setting `VideoEnabled = true` **and** assigning the
+factory; neither alone is enough, and the comment at the wiring site says so. Ten
+`capability-honesty` checks now pin this, and they were confirmed to fail (3 of them)
+against the old behaviour before being kept.
+
 Automated verification actually run for this pass, from local commit `f27f05b`:
 
 - `dotnet build windows\LanMessenger.csproj -c Release` — succeeded, 0 errors, and only
   the one pre-existing `ChatWindowVoice.cs(19,16) CS1998` warning.
 - `tests/run.ps1` — full suite, exit code **0**.
-- `CsharpHarness --call-video-check` — **307 passed, 0 failed**.
+- `CsharpHarness --call-video-check` — **317 passed, 0 failed**. The harness now also
+  links `CallController`/`CallSession`/`CallChannel`/`CallSettings`/`ICallMedia`/
+  `PeerEngine.Calls`/`CallLogMarker`, so controller-level behaviour is testable at all
+  — it was not before this pass.
 - `tests/video-contract/run.ps1` — `107 records agree between Android and Windows`
   (shared frame corpus) and `38 records agree between Android and Windows` (shared
   capability corpus), with 0 failures against the hand-authored expectation on both
@@ -163,13 +188,18 @@ Rows 05–08 and gate T02 were **not started**; see deviation 1 above. They rema
 correct path to production, and WVC-08 still gates real video.
 
 One consequence must be stated plainly, because it is easy to misread: with no
-`ICallVideoMedia` factory installed, a call that negotiates v2 does so as **v2
-audio-only**. That is a legitimate wire outcome (an ACCEPT carrying `media=audio`),
-not an error path, and it was chosen deliberately: failing the whole call over a
-missing camera would let a missing webcam tear down working audio, which constraint 1
-forbids. `ChatWindowCalls` sets `CameraEligible = _ => false` for exactly this reason.
-A reviewer should therefore read "video negotiates" as "the v2 envelope and handshake
-work", never as "pictures move".
+`ICallVideoMedia` factory installed, `VideoEnabled` is false, so this build never
+negotiates v2 at all. It sends v1 INVITEs, refuses inbound v2 INVITEs by closing the
+transport, and advertises no VP8. The v2 machinery is therefore exercised by the
+fixture corpora and the coordinator tests but is **not** on any path a real call
+currently takes. A reviewer should read "v2 implemented" as "the envelope, grammar and
+state machine are correct", never as "a peer has ever carried video with this build".
+
+Note that the earlier alternative — advertise VP8, then answer `media=audio` — was
+rejected on purpose. It keeps the call alive, but it makes the caller commit to a video
+call that can never produce a picture, which is a worse experience than offering voice
+from the start. The v2 *audio-only* fallback remains implemented and tested for the
+adapter-integration stage, where a backend exists but a particular camera may not.
 
 | WVC-05 Windows production native ABI | Pending | 03 | Not started. | Not performed. |
 | WVC-06 Windows native audio | Partial | 05 | Untouched, as intended: voice remains the proven SIPSorcery 10.0.17 + G722 + winmm adapter. | No new voice failures in the full suite. |
@@ -182,7 +212,7 @@ work", never as "pictures move".
 
 | ID / platform | Status | Depends on | Work and notes | Acceptance / testing |
 |---|---|---|---|---|
-| WVC-09 Windows capabilities/parser | Partial | 04,T01,08 | `CallCapabilities.cs` (strict `LM4` CALLCAPS parser), `CallVideoProtocol.cs` (closed v2 validator: `MaxDepth=16`, no duplicate keys, exact key sets per type, integral signed-64 counters, 64 KiB frame / 48 KiB SDP / 4 KiB ICE bounds, 128 ICE per generation), rewritten `CallSignaling.cs` (strict UTF-8, all v2 builders), and `PeerEngine.cs` responders for `LM4\tCALLCAPS` and `LM4\tCALLGRANTS`. `CallVideoSupport` is a single `Func<bool>` switch shared by the responder and the controller, so the engine can never claim v2 the controller will not negotiate. | Automated only: 107 frame + 38 capability fixtures agree with Android and with hand-authored expectations; `--call-video-check` covers probe timeout, malformed input, fragmented frames and wrong-peer input, and asserts invalid input cannot prolong a call. **Not** done: legacy fallback against a real archived 2.2.42 peer, and no physical-connection run. |
+| WVC-09 Windows capabilities/parser | Partial | 04,T01,08 | `CallCapabilities.cs` (strict `LM4` CALLCAPS parser), `CallVideoProtocol.cs` (closed v2 validator: `MaxDepth=16`, no duplicate keys, exact key sets per type, integral signed-64 counters, 64 KiB frame / 48 KiB SDP / 4 KiB ICE bounds, 128 ICE per generation), rewritten `CallSignaling.cs` (strict UTF-8, all v2 builders), and `PeerEngine.cs` responders for `LM4\tCALLCAPS` and `LM4\tCALLGRANTS`. One switch, read by both the responder and the negotiator, so the engine cannot claim v2 the controller would refuse. The switch **defaults to false** and is gated on an installed media backend, so this build advertises voice only — see deviation 4. | Automated only: 107 frame + 38 capability fixtures agree with Android and with hand-authored expectations; `--call-video-check` covers probe timeout, malformed input, fragmented frames and wrong-peer input, and asserts invalid input cannot prolong a call. Ten `capability-honesty` checks pin the no-false-advertisement rule and were verified to fail against the old default. **Not** done: legacy fallback against a real archived 2.2.42 peer, and no physical-connection run. |
 | WVC-10 Windows consent/controller | Partial | 09 | `CallVideoConsent.cs` (consent state machine: original-caller-alone offers, one outstanding request, lower-UUID collision, no consent transfer, bounded retired-request tracking), `CallVideoActions.cs` (user commands), `CallVideoCoordinator.cs` (~19 KB, state machine bound to a single worker), `CallFrameAdmission.cs`, `CallVideoDiagnostics.cs`, `CallVideoPlacement.cs`, `CallVideoResources.cs`, `CallCameraPermission.cs`. `CallController` gained v2 INVITE `media`, audio-only answer, mid-call bilateral upgrade, decline, per-role trusted auto-answer, and Android's **two-stage admission** (video frames intercepted before the state/role table; heartbeat refresh only after admission succeeds). `StartMediaLocked()` is the single place any media adapter is created — which is what makes "no capture during probe or ringing" checkable rather than aspirational. | Automated only, and it is substantial: `--call-video-check` **307 passed / 0 failed**, including both upgrade initiators, simultaneous requests, late acceptance, stale-generation callbacks, permission denial, collision policy, and the requirement that no camera is acquired before consent. **Not** done: no two-device call, so consent behaviour against a real peer's real timing is unverified. |
 | WVC-11 Windows video transport | Partial | 05,10 | `ICallVideoMedia.cs` seam + `FakeCallVideoMedia.cs`. **No production PeerConnection exists.** Video failure disposal and audio-survival semantics are implemented against the fake, so the isolation policy is in place for when a real adapter lands. | Fake-media tests only. Production adapter loopback and stale-generation revival tests remain blocked on WVC-03/05/06/07. |
 | WVC-T04 Both generated production interop | Pending | 11,T01 | Not run. | Blocked: needs WVC-11. |
