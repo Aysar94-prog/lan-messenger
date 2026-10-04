@@ -204,7 +204,7 @@ call that can never produce a picture, which is a worse experience than offering
 from the start. The v2 *audio-only* fallback remains implemented and tested for the
 adapter-integration stage, where a backend exists but a particular camera may not.
 
-| WVC-05 Windows production native ABI | Pending | 03 | Not started. | Not performed. |
+| WVC-05 Windows production native ABI | Done | 03 | Production C ABI bridge (`windows/native/lm-webrtc-bridge.cpp`) links pinned libwebrtc M155 (no device modules); exposes `lm_wr_abi_version`, `lm_wr_create`, `lm_wr_command`, `lm_wr_destroy`. Structural invariants: EnableMedia only, no ADM; `start-video` accepts only `synthetic` (rejects named devices); video-only disposal. Socket server not driven for ICE polling (by design). | Automated ABI-contract suite: 21/21 checks pass (`NativeBridge` harness), no camera/network. Bound handles, teardown-once, buffer-bounded, invalid-arg rejection, monotonic handles, 8-bridge cap. |
 | WVC-06 Windows native audio | Partial | 05 | Untouched, as intended: voice remains the proven SIPSorcery 10.0.17 + G722 + winmm adapter. | No new voice failures in the full suite. |
 | WVC-07 Windows managed adapter | Pending | 05,06 | Not started for audio. The `ICallVideoMedia` seam is a separate, video-only interface and does not disturb the `ICallMedia` voice contract. | Not performed. |
 | WVC-T02 Both authenticated voice gate | Pending | 07,01 | Not run. | Not performed. |
