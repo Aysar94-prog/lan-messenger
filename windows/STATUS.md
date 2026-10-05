@@ -1,5 +1,14 @@
 # Windows status
 
+## 2026-10-05 native bridge crash/empty-offer repair
+
+Captured original AV without WER registry changes. Missing codec factory dependencies
+corrected; hardware-free dummy ADM and bounded async SDP completion now pass NativeBridge
+39/39, readiness 24/24 and 20 audio offer/answer/teardown cycles. Release build: 0 errors.
+[Evidence and limitations](video-calling/BRIDGE-CRASH-REPAIR.md).
+WVC-06/T02 remain Partial: no physical CoreAudio/authenticated replacement-audio acceptance.
+WVC-08 blocked, production video disabled. No release/push.
+
 ## 2026-10-04 WVC-03 advisory review: corrected, gate PASS, input selected for Section B
 
 Reviewed current Chromium advisories against the exact pinned M155 input. An earlier pass of

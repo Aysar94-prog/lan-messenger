@@ -1,5 +1,11 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-05 Windows-only native bridge repair: missing codec dependencies causing startup
+AV and asynchronous empty audio SDP corrected. Native ABI 39/39, hardware-free readiness
+24/24, audio offer/answer/teardown cycles 20/20; Release build 0 errors. No Android/protocol
+change or parity claim. WVC-06/T02 Partial, WVC-08 blocked, production video disabled.
+[Evidence and remaining gates](windows/video-calling/BRIDGE-CRASH-REPAIR.md).
+
 2026-10-04 Windows video-call implementation pass (source only, **not a release**): the
 managed v2 coordination layer is now implemented in Windows source and is
 wire-compatible with Android's existing production video implementation — strict v2

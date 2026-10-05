@@ -75,14 +75,28 @@ $systemLibraries = @('ws2_32.lib', 'secur32.lib', 'crypt32.lib', 'iphlpapi.lib',
   'dxgi.lib', 'mf.lib', 'mfplat.lib', 'mfuuid.lib', 'bcrypt.lib', 'avrt.lib', 'ntdll.lib',
   'userenv.lib', 'powrprof.lib', 'propsys.lib', 'psapi.lib', 'dxva2.lib', 'ksuser.lib', 'mfreadwrite.lib')
 
-$arguments = @('/nologo', '/LD', '/std:c++20', '/EHsc', '/O2', '/MT', '/DNDEBUG') + $defines + $includes +
+$arguments = @('/nologo', '/LD', '/std:c++20', '/EHsc', '/O2', '/MT', '/Zi', '/DNDEBUG') + $defines + $includes +
   @("/Fo$out/bridge.obj", "/Fe$out/LanMessenger.WebRtc.Native.dll",
+    "/Fd$out/bridge-compile.pdb",
     (Join-Path $PSScriptRoot 'lm-webrtc-bridge.cpp'), (Join-Path $sdk 'lib/webrtc.lib'),
-    '/link', '/MACHINE:X64') + $systemLibraries
+    '/link', '/MACHINE:X64', '/DEBUG:FULL', '/OPT:REF', '/OPT:ICF',
+    "/PDB:$out/LanMessenger.WebRtc.Native.pdb", "/MAP:$out/bridge.map") + $systemLibraries
 # cl.exe writes to the inherited console handle rather than through the PowerShell pipeline, so
 # its output is redirected explicitly. Without this a compile failure loses its diagnostics.
 $buildLog = Join-Path $out 'build.log'
 $errorLog = Join-Path $out 'build.err.log'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'lm-webrtc-bridge.cpp') -Destination (Join-Path $out 'source-snapshot.cpp')
+Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $out 'build-script-snapshot.ps1')
+$manifest = [ordered]@{
+  createdUtc = [DateTime]::UtcNow.ToString('o')
+  compiler = (Get-Command cl.exe).Source
+  compilerVersion = (Get-Item (Get-Command cl.exe).Source).VersionInfo.FileVersion
+  arguments = $arguments
+  sourceSha256 = (Get-FileHash (Join-Path $out 'source-snapshot.cpp') -Algorithm SHA256).Hash
+  librarySha256 = (Get-FileHash (Join-Path $sdk 'lib/webrtc.lib') -Algorithm SHA256).Hash
+  sdkVersion = $env:WindowsSDKVersion
+}
+$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $out 'build-inputs.json') -Encoding UTF8
 $process = Start-Process -FilePath 'cl.exe' -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $buildLog -RedirectStandardError $errorLog
 if ($process.ExitCode -ne 0) {
   Get-Content -LiteralPath $buildLog -ErrorAction SilentlyContinue | Select-Object -Last 40

@@ -10,10 +10,10 @@
 //
 //   No camera and no audio device is ever opened on any path that is not an explicit,
 //   separately-invoked media start. Create, probe, offer and answer all run against a modular
-//   PeerConnectionFactory built with EnableMedia(), which supplies codec factories and no device
-//   modules at all. There is deliberately no code path from `probe`, `create` or any signalling
-//   command to a VideoCaptureDevice or an AudioDeviceModule; `dependencies.adm` is never
-//   assigned. Real capture is only reachable through `start-video` with an explicitly named
+//   PeerConnectionFactory with explicit codec factories and a dummy (hardware-free) audio module.
+//   EnableMedia() alone does not supply codecs; leaving those null crashes M155's voice engine.
+//   Probe/create/signalling never construct a physical camera or CoreAudio module.
+//   Real capture is only reachable through `start-video` with an explicitly named
 //   device, and is not implemented in this revision -- `start-video` accepts only the synthetic
 //   source, so the whole media path is exercisable with no hardware attached.
 //
@@ -24,6 +24,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -34,7 +35,11 @@
 #include <vector>
 
 #include "api/create_modular_peer_connection_factory.h"
+#include "api/audio/create_audio_device_module.h"
+#include "api/audio_codecs/builtin_audio_encoder_factory.h"
+#include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/environment/environment.h"
+#include "api/environment/environment_factory.h"
 #include "api/enable_media.h"
 #include "api/jsep.h"
 #include "api/make_ref_counted.h"
@@ -52,11 +57,30 @@
 #include "api/video/video_frame.h"
 #include "api/video/i420_buffer.h"
 #include "api/video/video_frame_buffer.h"
+#include "api/video_codecs/builtin_video_encoder_factory.h"
+#include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "p2p/base/basic_packet_socket_factory.h"
 #include "rtc_base/physical_socket_server.h"
 #include "rtc_base/thread.h"
+#include "rtc_base/ssl_adapter.h"
 
 namespace {
+
+std::mutex runtime_mutex;
+size_t runtime_users = 0;
+void AcquireRuntime() {
+  std::lock_guard<std::mutex> lock(runtime_mutex);
+  if (runtime_users == 0) {
+    WSADATA data;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) throw std::runtime_error("Winsock startup failed");
+    if (!webrtc::InitializeSSL()) { WSACleanup(); throw std::runtime_error("SSL startup failed"); }
+  }
+  ++runtime_users;
+}
+void ReleaseRuntime() {
+  std::lock_guard<std::mutex> lock(runtime_mutex);
+  if (--runtime_users == 0) { webrtc::CleanupSSL(); WSACleanup(); }
+}
 
 // Bumped whenever the exported surface changes shape. The managed side refuses to bind a
 // mismatched DLL rather than calling into an ABI it was not written against.
@@ -145,18 +169,28 @@ class SyntheticVideoSource : public webrtc::AdaptedVideoTrackSource {
 class DescriptionObserver : public webrtc::CreateSessionDescriptionObserver {
  public:
   void OnSuccess(webrtc::SessionDescriptionInterface* description) override {
+    std::unique_ptr<webrtc::SessionDescriptionInterface> owned(description);
     std::lock_guard<std::mutex> lock(mutex_);
     if (description == nullptr) {
       error_ = "no session description was produced";
-      return;
+    } else {
+      sdp_ = description->ToString();
+      type_ = description->type();
     }
-    sdp_ = description->ToString();
-    type_ = description->type();
+    done_ = true;
+    changed_.notify_all();
   }
   void OnFailure(webrtc::RTCError error) override {
     std::lock_guard<std::mutex> lock(mutex_);
     error_ = error.ok() ? std::string("session description failed without an error")
                         : error.message();
+    done_ = true;
+    changed_.notify_all();
+  }
+
+  bool WaitFor(int milliseconds) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return changed_.wait_for(lock, std::chrono::milliseconds(milliseconds), [&] { return done_; });
   }
 
   std::string Take(std::string* type, std::string* error) {
@@ -171,6 +205,8 @@ class DescriptionObserver : public webrtc::CreateSessionDescriptionObserver {
 
  private:
   std::mutex mutex_;
+  std::condition_variable changed_;
+  bool done_ = false;
   std::string sdp_;
   std::string type_;
   std::string error_;
@@ -275,11 +311,12 @@ class Bridge {
   Bridge() = default;
   ~Bridge() { Stop(); }
 
-  // Builds the signalling stack. Deliberately no AudioDeviceModule and no VideoCaptureDevice:
-  // EnableMedia fills codec factories only, so this cannot open a device even accidentally.
+  // Builds a signalling/media stack with dummy audio, never physical capture.
   bool Start() {
     try {
-      network_ = webrtc::Thread::Create();
+      AcquireRuntime();
+      runtime_acquired_ = true;
+      network_ = webrtc::Thread::CreateWithSocketServer();
       signaling_ = webrtc::Thread::Create();
       if (network_ == nullptr || signaling_ == nullptr) {
         error_ = "could not create the libwebrtc threads";
@@ -289,19 +326,23 @@ class Bridge {
         error_ = "could not start the libwebrtc threads";
         return false;
       }
-      // The socket server is kept alive for the whole bridge lifetime because
-      // BasicPacketSocketFactory holds a raw pointer to it. It is deliberately NOT started:
-      // SocketServer is no longer a Thread in M155 and the shipped headers expose no driver for
-      // its poll loop (see the ICE note in RunProbeLocked). Consequence: SDP works, but no ICE
-      // candidate is gathered yet. Recorded as the identified next step rather than papered over.
-      socket_server_ = std::make_unique<webrtc::PhysicalSocketServer>();
       webrtc::PeerConnectionFactoryDependencies dependencies;
       dependencies.network_thread = network_.get();
+      dependencies.worker_thread = network_.get();
       dependencies.signaling_thread = signaling_.get();
       dependencies.packet_socket_factory =
-          std::make_unique<webrtc::BasicPacketSocketFactory>(socket_server_.get());
+          std::make_unique<webrtc::BasicPacketSocketFactory>(network_->socketserver());
+      auto environment = webrtc::CreateEnvironment();
+      dependencies.env = environment;
+      dependencies.adm = webrtc::CreateAudioDeviceModule(environment, webrtc::AudioDeviceModule::kDummyAudio);
+      dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
+      dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
+      dependencies.video_encoder_factory = webrtc::CreateBuiltinVideoEncoderFactory();
+      dependencies.video_decoder_factory = webrtc::CreateBuiltinVideoDecoderFactory();
+      if (!dependencies.adm || !dependencies.audio_encoder_factory || !dependencies.audio_decoder_factory
+          || !dependencies.video_encoder_factory || !dependencies.video_decoder_factory)
+        throw std::runtime_error("Required hardware-free media dependencies unavailable");
       webrtc::EnableMedia(dependencies);
-      // dependencies.adm is never assigned: this bridge opens no microphone and no speaker.
       factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
       if (factory_ == nullptr) {
         error_ = "could not create the peer connection factory";
@@ -325,6 +366,17 @@ class Bridge {
         error_ = "the factory returned no peer connection";
         return false;
       }
+      peer_->SetAudioRecording(false);
+      peer_->SetAudioPlayout(false);
+      // Advertise an actual audio media section without opening a capture device.
+      auto audio = peer_->AddTransceiver(webrtc::MediaType::AUDIO);
+      if (!audio.ok()) throw std::runtime_error(audio.error().message());
+      std::vector<webrtc::RtpCodecCapability> codecs;
+      for (const auto& codec : factory_->GetRtpSenderCapabilities(webrtc::MediaType::AUDIO).codecs)
+        if (codec.name == "G722") codecs.push_back(codec);
+      if (codecs.empty()) throw std::runtime_error("G722 codec unavailable");
+      auto codec_result = audio.value()->SetCodecPreferences(codecs);
+      if (!codec_result.ok()) throw std::runtime_error(codec_result.message());
       return true;
     } catch (const std::exception& failure) {
       error_ = failure.what();
@@ -356,7 +408,7 @@ class Bridge {
       network_->Stop();
       network_ = nullptr;
     }
-    socket_server_ = nullptr;
+    if (runtime_acquired_) { ReleaseRuntime(); runtime_acquired_ = false; }
   }
 
   std::string Run(const std::string& command, const std::string& payload) {
@@ -412,7 +464,7 @@ class Bridge {
   std::string RunProbeLocked() {
     return std::string("{\"videoCodecs\":[\"VP8\",\"VP9\"],") +
            "\"audioCodecs\":[\"opus\",\"G722\",\"PCMU\",\"PCMA\"]," +
-           "\"cameraEnumerated\":false,\"audioDeviceOpened\":false," +
+           "\"cameraEnumerated\":false,\"audioDeviceOpened\":false,\"audioBackend\":\"dummy\"," +
            "\"factoryReady\":" + (factory_ != nullptr ? "true" : "false") +
            ",\"peerReady\":" + (peer_ != nullptr ? "true" : "false") + "}";
   }
@@ -422,6 +474,7 @@ class Bridge {
     webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
     auto observer = webrtc::make_ref_counted<DescriptionObserver>();
     peer_->CreateOffer(observer.get(), options);
+    if (!observer->WaitFor(3000)) return Error("timed out creating the offer");
     std::string type;
     std::string error;
     const std::string sdp = observer->Take(&type, &error);
@@ -454,6 +507,7 @@ class Bridge {
     webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
     auto observer = webrtc::make_ref_counted<DescriptionObserver>();
     peer_->CreateAnswer(observer.get(), options);
+    if (!observer->WaitFor(3000)) return Error("timed out creating the answer");
     std::string type;
     std::string error;
     const std::string sdp = observer->Take(&type, &error);
@@ -558,7 +612,7 @@ class Bridge {
   }
 
   std::mutex mutex_;
-  std::unique_ptr<webrtc::PhysicalSocketServer> socket_server_;
+  bool runtime_acquired_ = false;
   std::unique_ptr<webrtc::Thread> network_;
   std::unique_ptr<webrtc::Thread> signaling_;
   webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
