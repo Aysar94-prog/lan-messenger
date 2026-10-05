@@ -5,6 +5,8 @@
 Captured original AV without WER registry changes. Missing codec factory dependencies
 corrected; hardware-free dummy ADM and bounded async SDP completion now pass NativeBridge
 39/39, readiness 24/24 and 20 audio offer/answer/teardown cycles. Release build: 0 errors.
+Full tests/run.ps1 exit 0 (including Windows UI); call-video 317/0. Historical group-membership
+flake remains unresolved, although this run passed. Code committed locally as 3943a59.
 [Evidence and limitations](video-calling/BRIDGE-CRASH-REPAIR.md).
 WVC-06/T02 remain Partial: no physical CoreAudio/authenticated replacement-audio acceptance.
 WVC-08 blocked, production video disabled. No release/push.

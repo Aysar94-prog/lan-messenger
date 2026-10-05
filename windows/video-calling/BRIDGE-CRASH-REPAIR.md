@@ -31,6 +31,9 @@ DLL SHA256: `28923321244DD8398A57C5049B67BDAC0702D8A660995BF43042610429F78AD7`.
   G722, and no video section.
 - Windows Release build: 0 errors, existing CS1998 warning.
 - Managed call-video checks: 317 PASS / 0 FAIL; shared frame/capability corpora unchanged.
+- Full `tests/run.ps1`: exit 0, including group membership/migration/ownership, offline
+  lifecycle and Windows UI tests. Log: `outputs/.build/bridge-repair-regressions.log`.
+  The historical intermittent group-membership failure is not claimed fixed; this run passed.
 
 WVC-06/T02 remain Partial: actual CoreAudio initialization/start, COM/thread ownership,
 mute/route, physical startup-failure/repeated teardown and authenticated replacement-audio
