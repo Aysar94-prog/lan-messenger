@@ -30,6 +30,14 @@ class Check
             {
                 Render(null);
                 Assert(((Button)Field("requestVideo")).Visible, "connected voice call offers Add video");
+                bool? requestedCamera = null;
+                type.GetEvent("CameraClicked")!.AddEventHandler(form, new Action<bool>(on => requestedCamera = on));
+                var cameraButton = (Button)Field("camera");
+                cameraButton.Visible = true; cameraButton.Enabled = true; cameraButton.Text = "Camera off"; cameraButton.PerformClick();
+                Assert(requestedCamera == false, "Camera off requests capture stop, not an already-on refusal");
+                cameraButton.Text = "Camera on"; cameraButton.PerformClick();
+                Assert(requestedCamera == true, "Camera on requests capture start");
+                Render(null);
                 coordinator.ReceiveAdmitted(CallSignaling.VideoRequest(cid, 1, 0, rid), _ => true);
                 coordinator.AwaitIdle(5000); Render(coordinator.Published);
                 Assert(((Button)Field("acceptVideo")).Visible && ((Button)Field("declineVideo")).Visible,

@@ -1,5 +1,10 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-06 paired video evidence: phone image visibly reaches Windows in Connected/Video;
+Windows camera preview/phone remote image black, cause unresolved. Camera off button inversion
+found and fixed, WindowsCallUi 11/11. Bidirectional usable video, audio listening and stress
+acceptance still pending; all earlier full-readiness claims remain excluded.
+
 2026-10-06 paired continuation supersedes the selection blocker below: phone Direct connections
 now selects Lap and ultra with explicit user approval. Both devices Online; Android-originated
 voice-only call accepted on Windows reached Connected and cleanly ended after about 39 seconds.

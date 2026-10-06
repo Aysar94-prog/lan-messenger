@@ -94,6 +94,19 @@ another already-permitted Windows↔Android test pair).
 
 ### Paired-device continuation, 2026-10-06
 
+Follow-up video test explicitly authorized both cameras between Lap and SM-A075F.
+Android-originated video call a8decab9-0308-42a9-a348-af57dca12251 reached Connected/Video
+at 10:41:40 UTC. Windows visibly rendered changing physical phone-camera content;
+Windows local preview and phone remote view were black. This does not prove a useful
+Windows-originated image; physical shutter/lighting and capture content require investigation.
+The call ended cleanly at 10:43:11 UTC, LocalHangup/cause=none, Android REMOTE_HANGUP.
+No ten-minute stress or final acceptance is claimed. Android Diagnostics showed Unavailable.
+
+Physical testing exposed a reversed CameraClicked boolean: Camera off requested true,
+causing the already-on consent Busy result to be mislabeled as camera-in-use. Corrected
+the event mapping; WindowsCallUi now includes both directions and passes 11/11. This
+fix is source/automated-verified; paired physical toggle retest remains pending.
+
 User explicitly authorized adding Lap while retaining ultra. USB authorization was restored.
 Observed and saved Direct connections enabled with both verified ultra and Lap selected;
 phone then showed Lap Online and Windows showed SM-A075F Online. No other contact selected.

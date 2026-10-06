@@ -123,7 +123,7 @@ sealed class CallView : Form
         declineVideo.Click += (_, _) => DeclineVideoClicked?.Invoke();
         hangup.Click += (_, _) => HangupClicked?.Invoke();
         mute.Click += (_, _) => { muted = !muted; mute.Text = muted ? "Unmute" : "Mute"; MuteClicked?.Invoke(muted); };
-        camera.Click += (_, _) => CameraClicked?.Invoke(camera.Text.StartsWith("Camera off", StringComparison.Ordinal));
+        camera.Click += (_, _) => CameraClicked?.Invoke(camera.Text.StartsWith("Camera on", StringComparison.Ordinal));
         requestVideo.Click += (_, _) => RequestVideoClicked?.Invoke();
         remoteSpeaker.Click += (_, _) => { remoteSpeakerOn = !remoteSpeakerOn; remoteSpeaker.Text = remoteSpeakerOn ? "Speaker off" : "Speaker on"; RemoteSpeakerClicked?.Invoke(remoteSpeakerOn); };
         remoteCamera.Click += (_, _) => RemoteCameraClicked?.Invoke(!remoteCameraOn, "keep");

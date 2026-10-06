@@ -1,5 +1,11 @@
 # Windows status
 
+2026-10-06 authorized paired video test: Connected/Video and changing phone-camera image
+rendered on Windows; Windows local preview and phone remote view black, cause undetermined.
+Clean hangup after about 92 seconds. Physical test exposed reversed Camera off/on command;
+fixed and WindowsCallUi 11/11. Paired toggle retest, Windows-originated usable image,
+listening quality and full stress gate remain pending; no final video release claim.
+
 2026-10-06 paired continuation: user-authorized phone selection now includes Lap and ultra;
 both devices Online. Android-originated voice-only call answered through Windows UI reached
 Connected/Voice, then clean Windows hangup after about 39 seconds (cause=none). No camera

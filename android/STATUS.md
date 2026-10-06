@@ -1,5 +1,10 @@
 # Android status
 
+2026-10-06 paired video test: phone-originated call negotiated video and its physical image
+was rendered on Windows. Phone remote view was black, matching Windows local preview;
+Windows camera content unresolved. Android Diagnostics displayed Unavailable. Clean remote
+hangup; no Android source change, bidirectional image acceptance or release claim.
+
 2026-10-06 paired continuation: with explicit user approval, Direct connections remains enabled
 and now selects both ultra and Lap. Lap became Online. Android-originated voice call reached
 Connected after Windows UI acceptance; OFFER/ANSWER and MEDIA_READY completed, then Windows
