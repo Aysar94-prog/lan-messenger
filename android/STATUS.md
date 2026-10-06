@@ -1,5 +1,18 @@
 # Android status
 
+2026-10-06 call-controls follow-up (source only, not packaged yet): `CallView.java`'s
+`videoControls()` was rewritten after real-use feedback that the control row's long text buttons
+("Recipient speaker on", "Recipient front", etc.) were wrapping onto two lines. Replaced with
+compact circular emoji icon buttons (reusing the existing `dotButton` helper, 48dp), organized
+under two small section captions, "Your camera" and "Recipient controls": your camera on/off,
+switch camera, show/hide preview, reset preview, diagnostics and fullscreen in the first row;
+recipient speaker (🔊/🔈, one tap) and recipient camera (🎥/📷, one tap) plus a single
+front/rear flip button (🔄, one tap, replacing the previous two separate always-visible
+front/rear buttons) in the second, when the respective trusted grant is present. Every recipient
+action is now a single tap, matching the request that no control need a second screen or a second
+button to reach. Compiled clean (javac over `android/src/net/lanmsg/chat`, 0 errors). Not yet
+built into a signed candidate or device-tested.
+
 2026-10-06 user-requested test-candidate package 3.0.1/code100, packaging the UI/feature pass
 below (fullscreen call video, Direct connections refresh, navy/blue restyle): `android/build.ps1
 -VersionName 3.0.1 -VersionCode 100`, all four ABIs. Original signer confirmed byte-identical to

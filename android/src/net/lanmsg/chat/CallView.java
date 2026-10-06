@@ -839,17 +839,32 @@ final class CallView {
   private static String recipientOverlayKey(MainActivity activity,CallSession call,String name){
     return CallUi.overlayKey(call,name)+"|recipientScopes="+activity.recipientControlMask(call);
   }
+  /** A fixed-size slot for a round icon control, so a row of several never wraps its button text
+   *  onto a second line the way the old full-width text buttons did -- a single glyph has nothing
+   *  left to wrap. */
+  private static LinearLayout.LayoutParams iconSlot(MainActivity activity){
+    LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(activity.dp(48),activity.dp(48));
+    p.setMargins(activity.dp(6),activity.dp(4),activity.dp(6),activity.dp(4));
+    return p;
+  }
+  /** A small caption above a row of icon controls, naming what the row is for. */
+  private static View sectionLabel(MainActivity activity,String text){
+    TextView t=activity.label(text,11);t.setTextColor(BAR_DIM);t.setGravity(Gravity.CENTER);t.setPadding(0,activity.dp(4),0,0);
+    return t;
+  }
   private static View videoControls(MainActivity activity,CallUi ui,CallSession call,boolean canFullscreen){
     int recipientMask=activity.recipientControlMask(call);
     LinearLayout rows=new LinearLayout(activity);rows.setOrientation(LinearLayout.VERTICAL);rows.setBackgroundColor(BAR);
-    LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
     CallVideoCoordinator.Snapshot s=call.video;
     boolean voice=s==null||s.phase==CallVideoConsent.Phase.Voice||s.phase==CallVideoConsent.Phase.Ended;
     if(voice){
+      LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
       Button add=activity.button("Start video");add.setContentDescription("Request a video upgrade. The other person must accept.");
       add.setOnClickListener(v->cameraAction(activity,call.callId,()->ui.requestVideo(call.callId)));
       main.addView(add,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+      rows.addView(main);
     }else if(s.phase==CallVideoConsent.Phase.Waiting){
+      LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
       Button accept=activity.button("Accept video");
       if(!s.remoteRequest){accept.setText("Waiting for video consent…");accept.setEnabled(false);}
       accept.setOnClickListener(v->cameraAction(activity,call.callId,()->ui.acceptVideoUpgrade(call.callId,s.request)));
@@ -858,53 +873,82 @@ final class CallView {
       if(!s.remoteRequest)decline.setText("Cancel video request");
       decline.setOnClickListener(v->activity.runCallAction(()->ui.declineVideoUpgrade(call.callId,s.request),"Could not decline video."));
       main.addView(decline,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+      rows.addView(main);
     }else{
-      Button camera=activity.button(s.localCamera?"Camera off":"Camera on");
-      camera.setContentDescription(s.localCamera?"Stop your camera without muting audio":"Turn your camera on");
+      rows.addView(sectionLabel(activity,"Your camera"));
+      LinearLayout mine=new LinearLayout(activity);mine.setGravity(Gravity.CENTER);
+      Button camera=activity.dotButton(s.localCamera?"🎥":"📷",
+        s.localCamera?"Your camera is on. Tap to stop it without muting audio":"Your camera is off. Tap to turn it on",
+        s.localCamera,48);
       camera.setEnabled(s.phase==CallVideoConsent.Phase.Video);
       camera.setOnClickListener(v->{if(s.localCamera)activity.runCallAction(()->ui.turnCameraOff(call.callId),"Could not stop camera.");
         else cameraAction(activity,call.callId,()->ui.turnCameraOn(call.callId));});
-      main.addView(camera,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-      Button swap=activity.button("Switch camera");swap.setEnabled(s.localCamera);
+      mine.addView(camera,iconSlot(activity));
+      Button swap=activity.dotButton("🔄","Switch between your front and rear camera",false,48);
+      swap.setEnabled(s.localCamera);
       swap.setOnClickListener(v->{CallVideoCoordinator c=activity.host.callController.video(call.callId);if(c!=null)c.switchCamera();});
-      main.addView(swap,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+      mine.addView(swap,iconSlot(activity));
+      Button preview=activity.dotButton(videoPlacement.hidden()?"🙈":"🖼",
+        videoPlacement.hidden()?"Your camera preview is hidden. Tap to show it":"Your camera preview is shown. Tap to hide it",
+        !videoPlacement.hidden(),48);
+      preview.setEnabled(videoView!=null);
+      preview.setOnClickListener(v->{if(videoView==null)return;boolean nextHidden=!videoPlacement.hidden();videoView.hidePreview(nextHidden);
+        preview.setText(nextHidden?"🙈":"🖼");
+        preview.setContentDescription(nextHidden?"Your camera preview is hidden. Tap to show it":"Your camera preview is shown. Tap to hide it");});
+      mine.addView(preview,iconSlot(activity));
+      Button reset=activity.dotButton("↺","Reset your camera preview position",false,48);
+      reset.setEnabled(videoView!=null);
+      reset.setOnClickListener(v->{if(videoView!=null){videoView.resetPreview();preview.setText("🖼");}});
+      mine.addView(reset,iconSlot(activity));
+      Button diagnostics=activity.dotButton("📊","Video diagnostics",false,48);
+      diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
+      mine.addView(diagnostics,iconSlot(activity));
+      if(canFullscreen){
+        Button fullscreenButton=activity.dotButton("⛶","Watch the call video fullscreen",false,48);
+        fullscreenButton.setOnClickListener(v->{fullscreenVideo=true;build(activity,ui,call);});
+        mine.addView(fullscreenButton,iconSlot(activity));
+      }
+      rows.addView(mine);
     }
-    rows.addView(main);
-    LinearLayout extras=new LinearLayout(activity);
-    Button preview=activity.button(videoPlacement.hidden()?"Show preview":"Hide preview");
-    preview.setEnabled(videoView!=null);
-    preview.setOnClickListener(v->{if(videoView!=null){videoView.hidePreview(!videoPlacement.hidden());preview.setText(videoPlacement.hidden()?"Show preview":"Hide preview");}});
-    extras.addView(preview,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    Button reset=activity.button("Reset preview");reset.setEnabled(videoView!=null);
-    reset.setOnClickListener(v->{if(videoView!=null){videoView.resetPreview();preview.setText("Hide preview");}});
-    extras.addView(reset,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    Button diagnostics=activity.button("Diagnostics");diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
-    extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    if(canFullscreen){
-      Button fullscreenButton=activity.button("Fullscreen");
-      fullscreenButton.setContentDescription("Watch the call video fullscreen");
-      fullscreenButton.setOnClickListener(v->{fullscreenVideo=true;build(activity,ui,call);});
-      extras.addView(fullscreenButton,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    }
-    if((recipientMask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0){
-    Button remoteSpeaker=activity.button("Recipient speaker on");remoteSpeaker.setTag(Boolean.FALSE);
-    remoteSpeaker.setOnClickListener(v->{boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_SPEAKER,()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"Recipient speaker off":"Recipient speaker on");});
-    extras.addView(remoteSpeaker,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    }
-    rows.addView(extras);
-    if((recipientMask&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0){
-    LinearLayout recipient=new LinearLayout(activity);
-    boolean activeVideo=s!=null&&s.phase==CallVideoConsent.Phase.Video;
-    Button remoteCamera=activity.button(s!=null&&s.remoteCamera?"Recipient camera off":"Recipient camera on");
-    remoteCamera.setEnabled(activeVideo);
-    remoteCamera.setOnClickListener(v->activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,!s.remoteCamera,"keep"),"Could not change recipient camera."));
-    recipient.addView(remoteCamera,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    for(String facing:new String[]{"front","rear"}){
-      Button select=activity.button("Recipient "+facing);select.setEnabled(activeVideo);
-      select.setOnClickListener(v->activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,true,facing),"Could not switch recipient camera."));
-      recipient.addView(select,new LinearLayout.LayoutParams(0,activity.dp(52),1));
-    }
-    rows.addView(recipient);
+    int recipientBits=recipientMask&(PeerEngine.TRUSTED_REMOTE_SPEAKER|PeerEngine.TRUSTED_REMOTE_CAMERA);
+    if(recipientBits!=0){
+      rows.addView(sectionLabel(activity,"Recipient controls"));
+      LinearLayout recipient=new LinearLayout(activity);recipient.setGravity(Gravity.CENTER);
+      boolean activeVideo=s!=null&&s.phase==CallVideoConsent.Phase.Video;
+      if((recipientMask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0){
+        // There is no confirmed snapshot of the recipient's speaker route, so the glyph tracks the
+        // last command this side sent -- same optimistic-toggle shape the original text button used.
+        Button remoteSpeaker=activity.dotButton("🔈","Turn the recipient's speaker on",false,48);
+        remoteSpeaker.setTag(Boolean.FALSE);
+        remoteSpeaker.setOnClickListener(v->{
+          boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());
+          activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_SPEAKER,()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");
+          remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"🔊":"🔈");
+          remoteSpeaker.setContentDescription(next?"Recipient speaker is on. Tap to turn it off":"Recipient speaker is off. Tap to turn it on");
+        });
+        recipient.addView(remoteSpeaker,iconSlot(activity));
+      }
+      if((recipientMask&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0){
+        boolean remoteCameraOn=s!=null&&s.remoteCamera;
+        Button remoteCamera=activity.dotButton(remoteCameraOn?"🎥":"📷",
+          remoteCameraOn?"Recipient camera is on. Tap to turn it off":"Recipient camera is off. Tap to turn it on",
+          remoteCameraOn,48);
+        remoteCamera.setEnabled(activeVideo);
+        remoteCamera.setOnClickListener(v->activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,!s.remoteCamera,"keep"),"Could not change recipient camera."));
+        recipient.addView(remoteCamera,iconSlot(activity));
+        // One button, not two: each tap flips which side of the recipient's phone is facing them,
+        // instead of separate always-visible "front" and "rear" buttons for a choice with only two
+        // states.
+        Button remoteFlip=activity.dotButton("🔄","Switch the recipient's camera between front and rear",false,48);
+        remoteFlip.setEnabled(activeVideo&&remoteCameraOn);remoteFlip.setTag("front");
+        remoteFlip.setOnClickListener(v->{
+          String next="front".equals(remoteFlip.getTag())?"rear":"front";
+          activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_CAMERA,()->ui.setRemoteCamera(call.callId,true,next),"Could not switch recipient camera.");
+          remoteFlip.setTag(next);
+        });
+        recipient.addView(remoteFlip,iconSlot(activity));
+      }
+      rows.addView(recipient);
     }
     return rows;
   }
