@@ -1,5 +1,15 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-06 UI/polish pass across both platforms (source only, not released/packaged — see
+`android/STATUS.md` and `windows/STATUS.md` for full per-platform detail): Android gained
+call-screen fullscreen video and a Direct connections IP refresh (manual button + optional
+3-minute auto-refresh, re-probing the stored address and, on failure, sweeping the local subnet
+for the same verified certificate — no wire/frame change). Windows gained selection-gated
+conversation action buttons (hidden, not just disabled, until a conversation is selected). Both
+platforms moved from the WhatsApp-green palette to a shared navy-header/blue-accent palette with
+flat, pill-shaped buttons. Each change compiled/built clean on its own platform; none of this was
+packaged, released, or device-accepted.
+
 2026-10-06 user-requested LAN Messenger3.0.0 packages produced: Windows self-contained
 x64 Portable (.NET9.0.9 included, app-local native video DLL), Android multi-ABI code99 with
 original signer. Remaining audio work saved in local8506520. Packaged native138/138,

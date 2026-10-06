@@ -261,6 +261,23 @@ public class MessengerService extends Service {
     1,1,0L,java.util.concurrent.TimeUnit.MILLISECONDS,new java.util.concurrent.ArrayBlockingQueue<Runnable>(16),
     task->new Thread(task,"lan-notification-call"));
   final Runnable update=new Runnable(){public void run(){if(foreground){if(foregroundCallNotification==null)getSystemService(NotificationManager.class).notify(1,notification());handler.postDelayed(this,5000);}}};
+
+  static final String PREFS_CONNECTION="lan_messenger_connection", PREF_DIRECT_AUTO_REFRESH="direct_auto_refresh";
+  static final long DIRECT_AUTO_REFRESH_INTERVAL_MS=180000;
+  /** While Direct connections is on and the user has turned this on, periodically re-confirms (and
+   *  if needed re-resolves) every selected device's address -- the phone moving to a different
+   *  Wi-Fi network otherwise leaves a stale IP with no automatic way to notice. Reschedules itself
+   *  regardless of outcome, so one failed probe cannot stop future checks; onDestroy's
+   *  handler.removeCallbacksAndMessages(null) is what actually stops it. */
+  private final Runnable directAutoRefresh=new Runnable(){public void run(){
+    try{
+      PeerEngine peer=engine;
+      if(peer!=null&&peer.directOnly()&&getSharedPreferences(PREFS_CONNECTION,MODE_PRIVATE).getBoolean(PREF_DIRECT_AUTO_REFRESH,false)){
+        for(String peerId:new java.util.ArrayList<>(peer.directTargets.keySet()))
+          new Thread(()->{try{peer.refreshDirectTarget(peerId);}catch(Exception ignored){}},"lan-direct-refresh").start();
+      }
+    }finally{handler.postDelayed(this,DIRECT_AUTO_REFRESH_INTERVAL_MS);}
+  }};
   Notification notification(){
     Intent open=new Intent(this,MainActivity.class);
     PendingIntent content=PendingIntent.getActivity(this,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
@@ -279,6 +296,7 @@ public class MessengerService extends Service {
     return new Notification.Builder(this,"connection").setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle("LAN Messenger").setContentText(text).setContentIntent(content).setOngoing(true).addAction(new Notification.Action.Builder(null,"Go offline",stop).build()).build();
   }
   @Override public void onCreate(){super.onCreate();
+    handler.postDelayed(directAutoRefresh,DIRECT_AUTO_REFRESH_INTERVAL_MS);
     NotificationManager manager=getSystemService(NotificationManager.class);
     manager.createNotificationChannel(new NotificationChannel("connection","Local connection",NotificationManager.IMPORTANCE_LOW));
     manager.createNotificationChannel(new NotificationChannel("messages","Messages",NotificationManager.IMPORTANCE_DEFAULT));
@@ -429,6 +447,22 @@ public class MessengerService extends Service {
       final String result=failure;
       handler.post(()->{synchronized(this){if(stopping)return;state="Offline";transition(requestedOnline);}done.accept(result);});
     },"lan-direct-settings").start();
+  }
+  /** Re-resolve one selected device's IP right now, for the dialog's per-row Refresh button.
+   *  Runs off the main thread since it may probe up to a few hundred local addresses; done is
+   *  called on the main thread with "" on success or a message to show on failure. Unlike
+   *  configureDirect, this does not require networking to be stopped -- it only widens which
+   *  address a peer already selected may be reached at, not the policy itself. */
+  void refreshDirectTarget(String peerId,java.util.function.Consumer<String> done){
+    PeerEngine peer=engine;
+    if(peer==null){done.accept("Go online first.");return;}
+    new Thread(()->{
+      String failure="";
+      try{if(!peer.refreshDirectTarget(peerId))failure="Device not found on the current network.";}
+      catch(Exception e){failure=e.getMessage()==null?"Could not refresh this device.":e.getMessage();}
+      final String result=failure;
+      handler.post(()->done.accept(result));
+    },"lan-direct-refresh-manual").start();
   }
   synchronized void transition(boolean online){
     requestedOnline=online;

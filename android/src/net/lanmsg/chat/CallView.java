@@ -30,11 +30,11 @@ final class CallView {
 
   /** The caller's teal, used for the header and the bottom bar alike, so the screen reads as one
    *  surface with the peer's picture sitting in a window cut out of it. */
-  private static final int BAR = Color.rgb(14, 82, 76);
+  private static final int BAR = Color.rgb(26, 43, 74);
   /** Muted teal for the status and timer lines, so the name stays the loudest thing on screen. */
-  private static final int BAR_DIM = Color.rgb(163, 199, 193);
+  private static final int BAR_DIM = Color.rgb(159, 179, 217);
   /** The wall the peer's picture is mounted on. */
-  private static final int STAGE_COLOR = Color.rgb(126, 148, 151);
+  private static final int STAGE_COLOR = Color.rgb(36, 50, 74);
   /** Diameter of the peer's picture, and of the floating end-call disc. */
   private static final int AVATAR_DP = 168;
   private static final int HANGUP_DP = 84;
@@ -89,6 +89,13 @@ final class CallView {
    *  leak into the next call. */
   private static boolean collapsed;
 
+  /** When true, the active video call fills the whole stage: header and the control bar are
+   *  hidden so the picture gets the entire screen instead of sharing it with chrome that is
+   *  only useful while not watching. A small "Exit fullscreen" button and the hang-up circle
+   *  stay on screen so the call is never a one-way trap. Reset by hide(), same as collapsed,
+   *  so it never carries over into the next call. */
+  private static boolean fullscreenVideo;
+
   /** The call whose screen the user asked to leave, for the 💬 control, or null.
    *
    *  <p>Held as a call ID rather than a boolean so it expires on its own: a new call, or this one
@@ -131,6 +138,7 @@ final class CallView {
         // boundCallId is cleared as well, because the bar is still bound to this call ID and would
         // otherwise satisfy the identity test below and leave the bar standing.
         if (collapsed) { collapsed = false; boundCallId = null; }
+        fullscreenVideo = false;
         if (overlay == null || !boundTerminal || !ended.callId.equals(boundCallId)) {
           buildTerminal(activity, ended, ui);
         }
@@ -243,7 +251,13 @@ final class CallView {
     LinearLayout panel = new LinearLayout(activity);
     panel.setOrientation(LinearLayout.VERTICAL);
 
-    panel.addView(header(activity, ui, call, peerName), new LinearLayout.LayoutParams(-1, -2));
+    boolean canFullscreen = call.videoCapable && call.video != null
+      && call.video.phase == CallVideoConsent.Phase.Video && call.state == CallProtocol.State.Connected;
+    if (!canFullscreen) fullscreenVideo = false;
+
+    View headerView = header(activity, ui, call, peerName);
+    if (fullscreenVideo) headerView.setVisibility(View.GONE);
+    panel.addView(headerView, new LinearLayout.LayoutParams(-1, -2));
 
     // The picture takes all the space that is left, so the screen stays balanced on a short
     // device and on a tall one without the controls drifting away from the bottom edge.
@@ -270,11 +284,24 @@ final class CallView {
     } else if (call.state == CallProtocol.State.OutgoingRinging) {
       actionZone.addView(decision(activity, ui, call, peerName, false));
     } else {
-      if(call.videoCapable&&call.state==CallProtocol.State.Connected)actionZone.addView(videoControls(activity,ui,call));
+      if(call.videoCapable&&call.state==CallProtocol.State.Connected)actionZone.addView(videoControls(activity,ui,call,canFullscreen));
       actionZone.addView(controlBar(activity, ui, call, peerName));
     }
+    if (fullscreenVideo) actionZone.setVisibility(View.GONE);
     panel.addView(actionZone, new LinearLayout.LayoutParams(-1, -2));
     holder.addView(panel, new FrameLayout.LayoutParams(-1, -1));
+
+    // Fullscreen hides the header and the whole control stack to give the picture the entire
+    // screen; this is the only way back, and it has to float over the picture rather than live in
+    // either hidden row.
+    if (fullscreenVideo) {
+      Button exitFullscreen = activity.dotButton("⛶", "Exit fullscreen video", false, 44);
+      exitFullscreen.setOnClickListener(v -> { fullscreenVideo = false; build(activity, ui, call); });
+      FrameLayout.LayoutParams topRight = new FrameLayout.LayoutParams(activity.dp(44), activity.dp(44),
+        Gravity.TOP | Gravity.END);
+      topRight.topMargin = activity.dp(12); topRight.rightMargin = activity.dp(12);
+      holder.addView(exitFullscreen, topRight);
+    }
 
     // The end-call disc belongs to the answered call only.  While the call is still ringing the
     // action zone holds Accept/Decline, and the disc was floated over the top of it at the same
@@ -293,7 +320,7 @@ final class CallView {
       FrameLayout.LayoutParams overStage =
         new FrameLayout.LayoutParams(activity.dp(HANGUP_DP), activity.dp(HANGUP_DP),
           Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-      overStage.bottomMargin = activity.dp(BAR_HEIGHT_DP + 28+(call.videoCapable?112:0));
+      overStage.bottomMargin = fullscreenVideo ? activity.dp(28) : activity.dp(BAR_HEIGHT_DP + 28+(call.videoCapable?112:0));
       holder.addView(hangup, overStage);
     }
 
@@ -772,6 +799,7 @@ final class CallView {
     boundKey = null;
     boundTerminal = false;
     collapsed = false;
+    fullscreenVideo = false;
     dismissedCallId = null;
     announcedState = null;
   }
@@ -811,7 +839,7 @@ final class CallView {
   private static String recipientOverlayKey(MainActivity activity,CallSession call,String name){
     return CallUi.overlayKey(call,name)+"|recipientScopes="+activity.recipientControlMask(call);
   }
-  private static View videoControls(MainActivity activity,CallUi ui,CallSession call){
+  private static View videoControls(MainActivity activity,CallUi ui,CallSession call,boolean canFullscreen){
     int recipientMask=activity.recipientControlMask(call);
     LinearLayout rows=new LinearLayout(activity);rows.setOrientation(LinearLayout.VERTICAL);rows.setBackgroundColor(BAR);
     LinearLayout main=new LinearLayout(activity);main.setGravity(Gravity.CENTER);
@@ -852,6 +880,12 @@ final class CallView {
     extras.addView(reset,new LinearLayout.LayoutParams(0,activity.dp(52),1));
     Button diagnostics=activity.button("Diagnostics");diagnostics.setOnClickListener(v->showDiagnostics(activity,call.callId));
     extras.addView(diagnostics,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    if(canFullscreen){
+      Button fullscreenButton=activity.button("Fullscreen");
+      fullscreenButton.setContentDescription("Watch the call video fullscreen");
+      fullscreenButton.setOnClickListener(v->{fullscreenVideo=true;build(activity,ui,call);});
+      extras.addView(fullscreenButton,new LinearLayout.LayoutParams(0,activity.dp(52),1));
+    }
     if((recipientMask&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0){
     Button remoteSpeaker=activity.button("Recipient speaker on");remoteSpeaker.setTag(Boolean.FALSE);
     remoteSpeaker.setOnClickListener(v->{boolean next=!Boolean.TRUE.equals(remoteSpeaker.getTag());activity.runRecipientControl(call,PeerEngine.TRUSTED_REMOTE_SPEAKER,()->ui.setRemoteSpeaker(call.callId,next),"Could not change the recipient speaker.");remoteSpeaker.setTag(next);remoteSpeaker.setText(next?"Recipient speaker off":"Recipient speaker on");});

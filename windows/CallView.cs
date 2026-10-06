@@ -50,30 +50,30 @@ sealed class CallView : Form
     readonly Label nameLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 16, FontStyle.Bold) };
     readonly Label stateLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 30, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11) };
     readonly Label hintLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.DimGray, Font = new Font("Segoe UI", 9) };
-    readonly Label avatar = new() { AutoSize = false, Size = new Size(96, 96), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 30, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.FromArgb(31, 121, 112) };
-    readonly Panel voiceStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(14, 82, 76) };
+    readonly Label avatar = new() { AutoSize = false, Size = new Size(96, 96), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 30, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.FromArgb(61, 90, 153) };
+    readonly Panel voiceStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(26, 43, 74) };
 
     // The stage is a plain Panel rather than a PictureBox: a stage with nothing to show must still
     // exist and must still own the preview's layout, so the preview cannot end up floating over the
     // controls. Hidden entirely for a voice-only call.
-    readonly Panel stage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(8, 32, 30), Visible = false };
-    readonly Panel remoteStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(8, 32, 30) };
-    readonly Label remotePlaceholder = new() { Dock = DockStyle.Fill, Text = "No video", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(120, 150, 148), Font = new Font("Segoe UI", 11) };
+    readonly Panel stage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(18, 28, 48), Visible = false };
+    readonly Panel remoteStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(18, 28, 48) };
+    readonly Label remotePlaceholder = new() { Dock = DockStyle.Fill, Text = "No video", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(140, 160, 200), Font = new Font("Segoe UI", 11) };
     readonly PictureBox remotePicture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Visible = false };
     // The local preview is draggable and its remembered position is clamped into the stage on every
     // layout. CallVideoPlacement exists precisely because a remembered drag position would otherwise
     // survive a window resize and leave the preview sitting over the controls.
-    readonly Panel preview = new() { Size = new Size(160, 120), BackColor = Color.FromArgb(20, 60, 58), Visible = false, Cursor = Cursors.SizeAll };
-    readonly Label previewPlaceholder = new() { Dock = DockStyle.Fill, Text = "Your camera", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(150, 180, 178), Font = new Font("Segoe UI", 8) };
+    readonly Panel preview = new() { Size = new Size(160, 120), BackColor = Color.FromArgb(36, 50, 74), Visible = false, Cursor = Cursors.SizeAll };
+    readonly Label previewPlaceholder = new() { Dock = DockStyle.Fill, Text = "Your camera", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(160, 180, 215), Font = new Font("Segoe UI", 8) };
     readonly PictureBox localPicture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Visible = false };
     readonly CallVideoPlacement placement = new();
     // WinForms has no SizableDialog: a resizable dialog IS a Sizable ToolWindow. The fixed small form
     // is kept for a voice-only call and swapped for the resizable one the moment video is possible.
     const FormBorderStyle videoCapableStyle = FormBorderStyle.SizableToolWindow;
 
-    readonly FlowLayoutPanel buttons = new() { Dock = DockStyle.Bottom, Height = 76, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(18, 14, 10, 10), BackColor = Color.FromArgb(10, 67, 63) };
-    readonly FlowLayoutPanel recipientControls = new() { Dock = DockStyle.Bottom, Height = 68, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(10, 8, 10, 6), BackColor = Color.FromArgb(235, 242, 241), Visible = false };
-    readonly Label recipientLabel = new() { Text = "Control recipient", AutoSize = true, ForeColor = Color.FromArgb(14, 82, 76), Font = new Font("Segoe UI", 9, FontStyle.Bold), Margin = new Padding(0, 9, 10, 0) };
+    readonly FlowLayoutPanel buttons = new() { Dock = DockStyle.Bottom, Height = 76, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(18, 14, 10, 10), BackColor = Color.FromArgb(20, 34, 61) };
+    readonly FlowLayoutPanel recipientControls = new() { Dock = DockStyle.Bottom, Height = 68, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(10, 8, 10, 6), BackColor = Color.FromArgb(238, 241, 246), Visible = false };
+    readonly Label recipientLabel = new() { Text = "Control recipient", AutoSize = true, ForeColor = Color.FromArgb(26, 43, 74), Font = new Font("Segoe UI", 9, FontStyle.Bold), Margin = new Padding(0, 9, 10, 0) };
     readonly Button remoteSpeaker = new() { Text = "Speaker on", AutoSize = true };
     readonly Button remoteCamera = new() { Text = "Camera on", AutoSize = true };
     readonly Button remoteFront = new() { Text = "Front", AutoSize = true };
@@ -99,7 +99,7 @@ sealed class CallView : Form
     {
         Text = "Call"; Size = new Size(460, 390); MinimumSize = new Size(420, 360); StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = true;
-        BackColor = Color.FromArgb(14, 82, 76); nameLabel.ForeColor = Color.White; stateLabel.ForeColor = Color.White;
+        BackColor = Color.FromArgb(26, 43, 74); nameLabel.ForeColor = Color.White; stateLabel.ForeColor = Color.White;
         nameLabel.Text = peerName;
         avatar.Text = string.IsNullOrWhiteSpace(peerName) ? "?" : peerName.Trim()[0].ToString().ToUpperInvariant();
         voiceStage.Controls.Add(avatar);
@@ -286,7 +286,7 @@ sealed class CallView : Form
         // both peers are known to speak v2, so the stage appears before any video exists.
         SetVideoCapable(snap.VideoCapable, snap.InvitedVideo);
         var videoLive = snap.Video != null && snap.Video.Phase == CallVideoConsent.Phase.Video;
-        hintLabel.ForeColor = Color.FromArgb(190, 220, 216);
+        hintLabel.ForeColor = Color.FromArgb(190, 205, 230);
         hintLabel.Text = snap.VideoCapable ? (videoLive ? "Video connected" : "Video available")
             : "Voice call · " + (string.IsNullOrWhiteSpace(capabilityStatus) ? "video unavailable" : capabilityStatus);
         if (!string.IsNullOrEmpty(snap.Video?.FailureReason))

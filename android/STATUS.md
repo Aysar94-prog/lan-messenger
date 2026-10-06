@@ -1,5 +1,33 @@
 # Android status
 
+2026-10-06 UI/feature pass (source only, not a release, not device-installed):
+(1) Call screen fullscreen video: `CallView.java` gained a `fullscreenVideo` toggle, reachable
+from a new "Fullscreen" button in `videoControls()` when a video call is Connected. Fullscreen
+hides the header and the whole control stack so the remote picture fills the stage, leaving only
+a small floating "Exit fullscreen" button and the hang-up disc on screen. Resets on call end,
+same as the existing `collapsed` flag. No orientation-specific layout was added — only the
+existing activity-level `configChanges` rotation handling applies.
+(2) Direct connections IP refresh: the feature previously saved a peer's IP once and never
+revisited it. `PeerEngine.java` gained `refreshDirectTarget(peerId)`, which re-probes the stored
+address first, then (only on failure) sweeps the phone's current local /24 subnet(s) for a TLS
+certificate matching the one already on file for that peer — never a different, unverified
+device — and persists the new address on an exact match. No wire/frame change: reuses the
+existing HELLO handshake and TLS fingerprint check. `DirectConnectionUi.java` gained a per-peer
+"Refresh" button and an "Automatically refresh every 3 minutes" switch (persisted in the
+`lan_messenger_connection` SharedPreferences); `MessengerService.java` runs the periodic sweep via
+a self-rescheduling `Handler` loop (`directAutoRefresh`), gated on that switch and on Direct
+connections being enabled.
+(3) Classic/elegant restyle: `MainActivity.java`'s central `ink`/`accent`/`headerDark`/`chatBg`/
+`bubbleMine`/`seenBlue`/`panelBg` constants and `CallView.java`'s `BAR`/`BAR_DIM`/`STAGE_COLOR`
+moved from the WhatsApp-green palette to a navy-header/blue-accent palette (matching the Windows
+restyle in the same pass). `button()` now builds a pill-shaped light-accent-tinted background
+instead of plain platform button chrome; contexts that already override the background (menu
+rows, inline voice-card buttons) are unaffected.
+All three: compiled clean (javac over `android/src/net/lanmsg/chat`, bootclasspath/classpath
+matching `build-voice.ps1`'s own invocation, 0 errors). Not run against a signed build, not
+installed on a device, no physical acceptance — this is a source-only checkpoint per the
+project's planning-first/execution-only-on-request split; packaging was not requested.
+
 2026-10-06 user-authorized3.0.0/code99 release APK built with arm64-v8a, armeabi-v7a,
 x86 and x86_64. Signature verified using original7f4a07943d01da1266e4f2d3ce757165c9619c9a4ef74e741c58f8eee08d4161;
 manifest3.0.0/code99 confirmed, upgrade-safe over98. Output LanMessenger-3.0.0.apk;

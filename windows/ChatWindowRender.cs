@@ -31,8 +31,11 @@ sealed partial class ChatWindow
         var peer=peers.FirstOrDefault(p=>p.Id==selected);var group=groups.FirstOrDefault(g=>g.Id==selected);
         var leavingPending=group!=null&&engine.PendingOwnershipHandoff(group.Id);
         verify.Enabled=peer!=null&&engine.Running;members.Enabled=group!=null;leaveGroup.Enabled=group!=null&&!leavingPending;clear.Enabled=selected!=null;send.Enabled=!sendBusy&&!leavingPending&&(group!=null||peer?.Trusted==true);fastTransfer.Enabled=attach.Enabled=send.Enabled;composer.Enabled=selected!=null&&!sendBusy&&!leavingPending;send.Text=sendBusy?"Preparing…":"Send";groupNotice.Visible=group!=null;groupNoticeRow.Height=group!=null?34:0;
+        // These are conversation actions, not app-wide controls -- showing them with nothing
+        // selected invited clicks that could only ever answer "choose a contact first".
+        verify.Visible=peer!=null;members.Visible=leaveGroup.Visible=group!=null;clear.Visible=callButton.Visible=fastTransfer.Visible=attach.Visible=selected!=null;
         var recordingHere=recordingConversation!=null&&recordingConversation==selected;
-        stopRecording.Visible=recordingHere;recordVoice.Visible=!recordingHere;recordVoice.Enabled=send.Enabled&&recordingDraftId==null;
+        stopRecording.Visible=recordingHere;recordVoice.Visible=!recordingHere&&selected!=null;recordVoice.Enabled=send.Enabled&&recordingDraftId==null;
         RenderVoicePanel();
         if(peer==null&&group==null){heading.Text="Your conversations, together";return;}
         heading.Text=group!=null?$"{group.Name} · {group.Members.Length} members"+(leavingPending?" · Leaving — waiting for members to catch up":""):$"{peer!.Name} · {(engine.Running&&peer.Online?"Online":"Offline")}";

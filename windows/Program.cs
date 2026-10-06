@@ -36,9 +36,20 @@ sealed partial class ChatWindow : Form
     readonly Button saveFile=new(){Text="Open / Download",AutoSize=true};
     readonly Button preview=new(){Text="Preview image",AutoSize=true};
     public const string AppVersion="2.2.42";
-    static readonly Color Accent=Color.FromArgb(37,211,102),HeaderDark=Color.FromArgb(7,94,84),Ink=Color.FromArgb(17,27,33),BubbleMine=Color.FromArgb(220,248,198),BubbleOther=Color.White,ChatBg=Color.FromArgb(236,229,221),SeenBlue=Color.FromArgb(83,169,239),PanelBg=Color.FromArgb(240,242,245);
+    static readonly Color Accent=Color.FromArgb(47,111,237),HeaderDark=Color.FromArgb(26,43,74),Ink=Color.FromArgb(26,27,31),BubbleMine=Color.FromArgb(214,231,255),BubbleOther=Color.White,ChatBg=Color.FromArgb(238,241,246),SeenBlue=Color.FromArgb(94,150,245),PanelBg=Color.FromArgb(240,242,246);
     static readonly Color[] NamePalette=[Color.FromArgb(233,30,99),Color.FromArgb(156,39,176),Color.FromArgb(63,81,181),Color.FromArgb(230,126,0),Color.FromArgb(0,137,123),Color.FromArgb(121,85,72),Color.FromArgb(216,67,21)];
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
+    // Flat, pill-shaped chrome instead of the stock Windows button — a light accent-tinted fill
+    // for ordinary actions, a solid accent fill for the one primary action per row (Send, Call).
+    static void StyleButton(Button b,bool primary=false)
+    {
+        b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderSize=0;
+        b.BackColor=primary?Accent:Color.FromArgb(224,233,250);
+        b.ForeColor=primary?Color.White:HeaderDark;
+        b.Font=new Font("Segoe UI",9.5f,FontStyle.Bold);
+        b.Padding=new Padding(12,4,12,4);
+        RoundCorners(b,14);
+    }
     static void RoundCorners(Control c,int radius)
     {
         void Apply(object? s,EventArgs e){if(c.Width<=0||c.Height<=0)return;int d=Math.Min(radius*2,Math.Min(c.Width,c.Height));using var path=new System.Drawing.Drawing2D.GraphicsPath();path.AddArc(0,0,d,d,180,90);path.AddArc(c.Width-d,0,d,d,270,90);path.AddArc(c.Width-d,c.Height-d,d,d,0,90);path.AddArc(0,c.Height-d,d,d,90,90);path.CloseFigure();var old=c.Region;c.Region=new Region(path);old?.Dispose();}
@@ -99,15 +110,19 @@ sealed partial class ChatWindow : Form
         headerBar.Controls.Add(new Label{Text="LAN Messenger",Font=new Font("Segoe UI",18,FontStyle.Bold),AutoSize=true,ForeColor=Color.White,Location=new Point(20,14)});
         root.Controls.Add(headerBar,0,0);
         var toolbar=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,Padding=new Padding(20,4,0,0),BackColor=PanelBg};var save=new Button{Text="Save name",AutoSize=true};scan=new Button{Text="Refresh",AutoSize=true};add=new Button{Text="Add by IP",AutoSize=true};
-        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,connection,permissions,about,deleteData]);createGroup.Click+=(_,_)=>CreateGroup();permissions.Click+=(_,_)=>ShowPermissionsMenu();about.Click+=(_,_)=>ShowAbout();deleteData.Click+=(_,_)=>DeleteAllDataConfirm();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
+        var createGroup=new Button{Text="New group",AutoSize=true};toolbar.Controls.AddRange([avatarBox,profile,save,scan,add,createGroup,connection,permissions,about,deleteData]);createGroup.Click+=(_,_)=>CreateGroup();permissions.Click+=(_,_)=>ShowPermissionsMenu();about.Click+=(_,_)=>ShowAbout();deleteData.Click+=(_,_)=>DeleteAllDataConfirm();avatarBox.Click+=async(_,_)=>await ChangeAvatar();RoundCorners(avatarBox,20);
+        foreach(var b in new[]{save,scan,add,createGroup,connection,permissions,about,deleteData})StyleButton(b);
+        root.Controls.Add(toolbar,0,1);var statusPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,0,20,0),BackColor=PanelBg};statusPanel.Controls.Add(status);root.Controls.Add(statusPanel,0,2);
         var split=new SplitContainer{Size=new Size(950,460),Dock=DockStyle.Fill,SplitterDistance=300,FixedPanel=FixedPanel.Panel1,Panel1MinSize=220,Panel2MinSize=280};
         var people=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=2,ColumnCount=1};people.ColumnStyles.Add(new(SizeType.Percent,100));people.RowStyles.Add(new(SizeType.Absolute,35));people.RowStyles.Add(new(SizeType.Percent,100));people.Controls.Add(new Label{Text="CONVERSATIONS",AutoSize=true},0,0);people.Controls.Add(contacts,0,1);split.Panel1.Controls.Add(people);
-        var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=6};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));groupNoticeRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(groupNoticeRow);chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,leaveGroup,clear,fastTransfer,recordVoice,stopRecording,callButton]);chat.Controls.Add(actions,0,1);groupNotice.AutoSize=false;groupNotice.Dock=DockStyle.Fill;groupNotice.Margin=new Padding(0,2,0,0);chat.Controls.Add(groupNotice,0,2);chat.Controls.Add(feed,0,3);chat.Controls.Add(attachmentDraft,0,4);
+        var chat=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(15,0,0,0),ColumnCount=1,RowCount=6};chat.ColumnStyles.Add(new(SizeType.Percent,100));chat.RowStyles.Add(new(SizeType.Absolute,48));chat.RowStyles.Add(new(SizeType.Absolute,44));groupNoticeRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(groupNoticeRow);chat.RowStyles.Add(new(SizeType.Percent,100));pendingAttachmentRow=new RowStyle(SizeType.Absolute,0);chat.RowStyles.Add(pendingAttachmentRow);chat.RowStyles.Add(new(SizeType.Absolute,88));chat.Controls.Add(heading,0,0);var actions=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};actions.Controls.AddRange([verify,members,leaveGroup,clear,fastTransfer,recordVoice,stopRecording,callButton]);chat.Controls.Add(actions,0,1);
+        foreach(var b in new[]{verify,members,leaveGroup,clear,fastTransfer,recordVoice,stopRecording})StyleButton(b);StyleButton(callButton,true);groupNotice.AutoSize=false;groupNotice.Dock=DockStyle.Fill;groupNotice.Margin=new Padding(0,2,0,0);chat.Controls.Add(groupNotice,0,2);chat.Controls.Add(feed,0,3);chat.Controls.Add(attachmentDraft,0,4);
         var input=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,Padding=new Padding(0,10,0,0)};input.ColumnStyles.Add(new(SizeType.Percent,100));input.ColumnStyles.Add(new(SizeType.Absolute,95));input.Controls.Add(composer,0,0);input.Controls.Add(send,1,0);input.ColumnStyles.Add(new(SizeType.Absolute,85));input.Controls.Add(attach,2,0);chat.Controls.Add(input,0,5);split.Panel2.Controls.Add(chat);
+        StyleButton(attach);StyleButton(send,true);
         var splitPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};splitPanel.Controls.Add(split);root.Controls.Add(splitPanel,0,3);
         var footerPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(20,4,20,4),BackColor=PanelBg};footerPanel.Controls.Add(new Label{Text="Encrypted connection and local history • Verify the safety code on both devices before chatting",AutoSize=true,ForeColor=Color.DimGray,Dock=DockStyle.Left});root.Controls.Add(footerPanel,0,4);Controls.Add(root);
         contacts.DrawMode=DrawMode.OwnerDrawFixed;contacts.ItemHeight=64;contacts.BackColor=Color.White;
-        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(230,247,234):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);
+        contacts.DrawItem+=(_,e)=>{if(e.Index<0)return;var item=(ContactItem)contacts.Items[e.Index];bool active=(e.State&DrawItemState.Selected)!=0;using var bg=new SolidBrush(active?Color.FromArgb(227,234,250):Color.White);e.Graphics.FillRectangle(bg,e.Bounds);
             var avatarRect=new Rectangle(e.Bounds.X+10,e.Bounds.Y+13,36,36);
             if(!item.Group&&avatarCache.TryGetValue(item.Id,out var photo)){
                 var oldClip=e.Graphics.Clip;using var clipPath=new System.Drawing.Drawing2D.GraphicsPath();clipPath.AddEllipse(avatarRect);e.Graphics.SetClip(clipPath,System.Drawing.Drawing2D.CombineMode.Intersect);

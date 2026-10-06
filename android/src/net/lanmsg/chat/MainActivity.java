@@ -24,7 +24,7 @@ import android.text.TextUtils;
 
 public class MainActivity extends Activity {
   final Handler ui=new Handler(Looper.getMainLooper());
-  final int ink=Color.rgb(17,27,33),accent=Color.rgb(37,211,102),headerDark=Color.rgb(7,94,84),chatBg=Color.rgb(236,229,221),bubbleMine=Color.rgb(220,248,198),seenBlue=Color.rgb(83,169,239),panelBg=Color.rgb(240,242,245);
+  final int ink=Color.rgb(26,27,31),accent=Color.rgb(47,111,237),headerDark=Color.rgb(26,43,74),chatBg=Color.rgb(238,241,246),bubbleMine=Color.rgb(214,231,255),seenBlue=Color.rgb(154,190,250),panelBg=Color.rgb(240,242,246);
   // ── Voice calls (A08-A10) ──
   // The Activity holds no call state of its own: it binds to the service-owned CallUi, reads
   // immutable snapshots, and issues commands. The call overlay lives on the stage, so it covers
@@ -126,7 +126,12 @@ public class MainActivity extends Activity {
   int dp(int x){return (int)(x*getResources().getDisplayMetrics().density);}
   TextView label(String text,int size){TextView t=new TextView(this);t.setText(text);t.setTextColor(ink);t.setTextSize(size);t.setPadding(0,dp(6),0,dp(6));return t;}
   LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
-  Button button(String text){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextSize(14);b.setTextColor(accent);return b;}
+  // Pill-shaped: a light accent-tinted fill with bold accent text, matching the compose row's
+  // rounded icon buttons instead of the platform's default rectangular button chrome. Contexts
+  // that need a different look (menu rows, voice-card inline text buttons) already override the
+  // background afterward, so this only changes the ones that did not ask for anything else.
+  Button button(String text){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setTextColor(accent);b.setPadding(dp(16),dp(8),dp(16),dp(8));b.setBackground(pillBg(Color.rgb(224,233,250)));return b;}
+  GradientDrawable pillBg(int c){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(20));return d;}
   GradientDrawable circleBg(int c,int diameterDp){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(diameterDp)/2f);return d;}
   /** A round control carrying one glyph, used for the in-call toggles and for the list's call
    *  control.

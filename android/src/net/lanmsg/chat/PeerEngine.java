@@ -80,6 +80,12 @@ public final class PeerEngine implements Closeable {
   synchronized void pruneDirectTargets()throws IOException {
     directTargets.keySet().retainAll(peers.keySet());
     File settings=new File(file.getParentFile(),"direct-connections.sec");if(!settings.exists())return;
+    writeDirectFile(settings);
+  }
+  /** Rewrites the encrypted direct-connections file from the in-memory {@link #directTargets}.
+   *  Shared by pruneDirectTargets and refreshDirectTarget so a re-resolved IP is persisted the
+   *  same way a manually-entered one is. */
+  private void writeDirectFile(File settings)throws IOException {
     StringBuilder data=new StringBuilder(directOnly?"1\n":"0\n");
     for(Map.Entry<String,String[]> entry:directTargets.entrySet()){String[] t=entry.getValue();data.append(entry.getKey()).append('\t').append(t[0]).append('\t').append(t[1]).append('\t').append(t[2]).append('\n');}
     File tmp=new File(settings+".tmp");try(FileOutputStream out=new FileOutputStream(tmp)){out.write(protector.protect(data.toString().getBytes(StandardCharsets.UTF_8)));out.getFD().sync();}catch(Exception e){throw new IOException("Could not update direct settings.",e);}atomicReplace(tmp,settings);
@@ -348,6 +354,74 @@ public final class PeerEngine implements Closeable {
     try(Socket s=connect(a[0],targetPort)){write(s,hello());String[] h=read(s).split("\t",-1);if(!validHello(h)||h[2].equals(id))throw new IOException("No other LAN Messenger device at this address.");remember(h[2],dec(h[3]),a[0],Integer.parseInt(h[4]));try{recordCertificate(h[2],SecureIdentity.remote((SSLSocket)s),SecureIdentity.remotePublicKey((SSLSocket)s));}catch(Exception e){throw new IOException(e);}}
   }
   Socket connect(String host,int targetPort)throws IOException {checkDirectHost(host);SSLSocket s=(SSLSocket)identity.context.getSocketFactory().createSocket();s.setEnabledProtocols(new String[]{"TLSv1.2"});s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});try{track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),1800);s.setSoTimeout(6000);s.setTcpNoDelay(true);s.startHandshake();if(directOnly)checkDirectCertificate(host,targetPort,SecureIdentity.remote(s));if(!running)throw new IOException("Network is offline.");return s;}catch(Exception e){activeSockets.remove(s);s.close();throw e instanceof IOException?(IOException)e:new IOException(e);}}
+
+  /** Re-resolve a Direct connections target whose IP address may have changed, for example because
+   *  the phone moved to a different Wi-Fi network. The stored address is never trusted on its own
+   *  -- {@link #directPeerAllowed} already requires it to match the verified certificate too -- so
+   *  widening *which* address may present that certificate does not widen who the app will talk to.
+   *  Tries the last-known address first (fast path: same network, device just has a new lease),
+   *  then sweeps the phone's current local /24 subnet(s) for the same certificate. Blocking; callers
+   *  run it off the main thread. Returns true if the stored address was confirmed or updated. */
+  public boolean refreshDirectTarget(String peerId)throws IOException {
+    String[] target;synchronized(this){target=directTargets.get(peerId);}
+    if(target==null)throw new IOException("Not a selected direct device.");
+    int port=Integer.parseInt(target[1]);
+    if(probeDirectCandidate(peerId,target[0],port))return true;
+    List<String> subnet=localSubnetCandidates();
+    if(subnet.isEmpty())return false;
+    ExecutorService scan=Executors.newFixedThreadPool(Math.min(32,subnet.size()));
+    try{
+      List<Future<Boolean>> futures=new ArrayList<>();
+      for(String host:subnet){if(host.equals(target[0]))continue;futures.add(scan.submit(()->probeDirectCandidate(peerId,host,port)));}
+      for(Future<Boolean> f:futures)try{if(Boolean.TRUE.equals(f.get(2,TimeUnit.SECONDS)))return true;}catch(Exception ignored){}
+    }finally{scan.shutdownNow();}
+    return false;
+  }
+  /** Probes one candidate address for the exact certificate already on file for this peer.
+   *  Deliberately does not go through {@link #connect} / {@link #checkDirectHost}: this is the one
+   *  path allowed to look at an address {@link #directTargets} does not yet list, because the
+   *  certificate check right after is exactly what authorizes it, same as the original selection did. */
+  private boolean probeDirectCandidate(String peerId,String host,int targetPort){
+    SSLSocket s=null;
+    try{
+      s=(SSLSocket)identity.context.getSocketFactory().createSocket();
+      s.setEnabledProtocols(new String[]{"TLSv1.2"});
+      s.setEnabledCipherSuites(new String[]{"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384","TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"});
+      track(s);s.bind(new InetSocketAddress(bind,0));s.connect(new InetSocketAddress(host,targetPort),300);
+      s.setSoTimeout(1500);s.setTcpNoDelay(true);s.startHandshake();
+      String fingerprint=SecureIdentity.remote(s);
+      String expected;synchronized(this){String[] t=directTargets.get(peerId);if(t==null)return false;expected=t[2];}
+      if(!fingerprint.equals(expected))return false;
+      write(s,hello());
+      String[] h=read(s).split("\t",-1);
+      if(!validHello(h)||!h[2].equals(peerId))return false;
+      synchronized(this){
+        String[] current=directTargets.get(peerId);if(current==null)return false;
+        directTargets.put(peerId,new String[]{host,String.valueOf(targetPort),current[2]});
+        File settings=new File(file.getParentFile(),"direct-connections.sec");
+        try{writeDirectFile(settings);}catch(IOException e){directTargets.put(peerId,current);return false;}
+        Peer p=peers.get(peerId);if(p!=null){p.host=host;p.port=targetPort;p.seen=System.currentTimeMillis();}
+      }
+      notifyChanged();
+      return true;
+    }catch(Exception e){return false;}
+    finally{if(s!=null){activeSockets.remove(s);try{s.close();}catch(IOException ignored){}}}
+  }
+  /** Every address on the device's current local /24-or-smaller subnet(s), for the refresh sweep.
+   *  Bounded to /24+ prefixes so the scan stays a few hundred probes, not an unbounded range. */
+  private List<String> localSubnetCandidates()throws IOException {
+    List<String> hosts=new ArrayList<>();
+    Enumeration<NetworkInterface> interfaces=NetworkInterface.getNetworkInterfaces();
+    if(interfaces==null)return hosts;
+    while(interfaces.hasMoreElements())for(InterfaceAddress a:interfaces.nextElement().getInterfaceAddresses()){
+      InetAddress addr=a.getAddress();
+      if(!(addr instanceof Inet4Address)||!addr.isSiteLocalAddress())continue;
+      if(a.getNetworkPrefixLength()<24)continue;
+      String ip=addr.getHostAddress();String base=ip.substring(0,ip.lastIndexOf('.'));
+      for(int last=1;last<255;last++)hosts.add(base+"."+last);
+    }
+    return hosts;
+  }
 
   /** Open an authenticated call channel to a verified peer.
    *  Sends HELLO, receives READY, sends CALLCONNECT, and returns the

@@ -1,5 +1,21 @@
 # Windows status
 
+2026-10-06 UI pass (source only, not a release, not re-packaged): (1) conversation action
+buttons (`verify`, `members`, `leaveGroup`, `clear`, `callButton`, `fastTransfer`, `attach`,
+`recordVoice`) are now hidden (`.Visible`), not just disabled, until a conversation is selected
+— gated in `ChatWindowRender.cs`'s single `RenderCore()` alongside the existing `.Enabled`
+assignments. (2) Classic/elegant restyle to match the same-pass Android restyle: `Program.cs`'s
+`Accent`/`HeaderDark`/`Ink`/`BubbleMine`/`SeenBlue`/`PanelBg` constants and the matching teal
+`Color.FromArgb(...)` literals in `CallView.cs` moved from the WhatsApp-green palette to a
+navy-header/blue-accent palette; a new `StyleButton(Button,bool primary=false)` helper (reusing
+the existing `RoundCorners` region-clip trick) gives the toolbar/action-row/Send/Attach buttons a
+flat, pill-shaped look — light accent tint for ordinary actions, solid accent fill for the one
+primary action per row. Accept/Decline/Hang-up on the call window keep their existing
+green/red semantic colors; two minor file-attachment buttons (`saveFile`, `preview`) were not
+restyled. `dotnet build -c Release`: 0 errors, one pre-existing unrelated warning
+(`ChatWindowVoice.cs` CS1998). Not published, packaged, or device-verified — a source-only
+checkpoint; packaging was not requested.
+
 2026-10-06 user-authorized3.0.0 Portable x64 package: self-contained .NET9.0.9, native
 video DLL and WebRTC notices bundled. Published0 errors, packaged native138/138,
 WindowsCallUi11/11, startup pass with isolated data. No installer/.NET install required;
