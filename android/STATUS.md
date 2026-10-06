@@ -1,5 +1,13 @@
 # Android status
 
+2026-10-06 user-requested test-candidate package 3.0.3/code102, packaging the per-call
+trusted/regular choice below: `android/build.ps1 -VersionName 3.0.3 -VersionCode 102`, all four
+ABIs. Original signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over
+3.0.2/3.0.1/3.0.0. Output `outputs/LanMessenger-3.0.3.apk`, SHA-256 `30c492be…4196190d` (manifest
+`outputs/SHA256SUMS-Android-3.0.3.txt`). Not installed on a device by this session; this is the
+feature that most needs a real paired call before acceptance (auto-answer suppression and
+recipient-control suppression are both local reasoning, unverified end to end).
+
 2026-10-06 per-call trusted/regular choice (source only, not packaged yet): a device holding a
 trusted call grant over a contact (auto-answer and/or recipient camera/speaker control) now gets
 asked, at call start only when such a grant actually applies, "Call as trusted" (pre-selected,

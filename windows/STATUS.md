@@ -1,5 +1,12 @@
 # Windows status
 
+2026-10-06 user-requested test-candidate package 3.0.3, packaging the per-call trusted/regular
+choice below: `<Version>` bumped to 3.0.3, published framework-dependent via `dotnet publish -c
+Release`. 0 errors, one pre-existing unrelated warning. Zipped as
+`outputs/LanMessenger-3.0.3-Windows.zip` (7,583,569 bytes; manifest
+`outputs/SHA256SUMS-Windows-3.0.3.txt`). Not device-tested; needs a real paired call against the
+matching Android 3.0.3 build before acceptance.
+
 2026-10-06 per-call trusted/regular choice (source only, not packaged yet): mirrors the same-day
 Android change. `StartCallToSelected()` now checks `engine.TrustedCallMask(peerId)` and, only
 when non-zero, shows a small custom dialog ("Call as trusted", pre-selected default button vs
