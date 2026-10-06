@@ -137,6 +137,13 @@ sealed class CallView : Form
         recipientControls.Controls.Add(recipientLabel);
         recipientControls.Controls.Add(remoteSpeaker); recipientControls.Controls.Add(remoteCamera);
         recipientControls.Controls.Add(remoteFront); recipientControls.Controls.Add(remoteRear);
+        // Flat pill chrome, matching the rest of the restyled app. Accept/decline/hang-up keep
+        // their semantic green/red fill -- only the stock 3D border goes; everything else gets
+        // the ordinary light accent-tinted pill.
+        ChatWindow.MakePill(accept); ChatWindow.MakePill(decline); ChatWindow.MakePill(hangup);
+        foreach (var b in new[] { acceptVideo, declineVideo, mute, camera, requestVideo,
+            remoteSpeaker, remoteCamera, remoteFront, remoteRear })
+            ChatWindow.StyleButton(b);
         ApplyButtonVisibility(isIncoming, active: false, videoLive: false);
 
         // Layout, not the constructor, positions the preview: the clamped position depends on the

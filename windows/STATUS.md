@@ -1,5 +1,14 @@
 # Windows status
 
+2026-10-06 call-window restyle follow-up (source only, not packaged yet): the earlier navy/blue
+pill-button restyle only reached `Program.cs`'s main toolbar; `CallView.cs`'s own buttons (Hang
+up, Mute, Add video, Accept/Decline, recipient speaker/camera/front/rear) still had the stock 3D
+WinForms look, as the user's screenshot showed. `StyleButton` in `Program.cs` was split: a new
+`MakePill` applies the flat/rounded shape without touching color (for Accept=green/Decline=red/
+Hang up=red, whose color is semantic and must survive), `StyleButton` builds on top of it for the
+rest. Both are now `internal` so `CallView.cs` can call them. `dotnet build -c Release`: 0
+errors. Not yet packaged.
+
 2026-10-06 user-requested test-candidate package 3.0.5, packaging the frame-validator fix below:
 `<Version>` bumped to 3.0.5, published framework-dependent via `dotnet publish -c Release`. 0
 errors. Zipped as `outputs/LanMessenger-3.0.5-Windows.zip` (7,583,866 bytes; manifest

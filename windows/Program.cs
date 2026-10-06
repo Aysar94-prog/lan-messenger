@@ -41,14 +41,21 @@ sealed partial class ChatWindow : Form
     static Color NameColor(string id){int h=0;foreach(var c in id)h=h*31+c;return NamePalette[Math.Abs(h)%NamePalette.Length];}
     // Flat, pill-shaped chrome instead of the stock Windows button — a light accent-tinted fill
     // for ordinary actions, a solid accent fill for the one primary action per row (Send, Call).
-    static void StyleButton(Button b,bool primary=false)
+    // The flat/rounded shape alone, with whatever BackColor/ForeColor the caller already set --
+    // for the few buttons (call accept/decline/hang-up) whose color is semantic (green/red) and
+    // must survive the restyle untouched; only the stock 3D border and system colors are removed.
+    internal static void MakePill(Button b)
     {
         b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderSize=0;
-        b.BackColor=primary?Accent:Color.FromArgb(224,233,250);
-        b.ForeColor=primary?Color.White:HeaderDark;
         b.Font=new Font("Segoe UI",9.5f,FontStyle.Bold);
         b.Padding=new Padding(12,4,12,4);
         RoundCorners(b,14);
+    }
+    internal static void StyleButton(Button b,bool primary=false)
+    {
+        MakePill(b);
+        b.BackColor=primary?Accent:Color.FromArgb(224,233,250);
+        b.ForeColor=primary?Color.White:HeaderDark;
     }
     static void RoundCorners(Control c,int radius)
     {
