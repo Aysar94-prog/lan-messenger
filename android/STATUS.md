@@ -1,5 +1,11 @@
 # Android status
 
+2026-10-06 user-requested test-candidate package 3.0.4/code103, packaging the trusted/regular
+prompt bugfix below: `android/build.ps1 -VersionName 3.0.4 -VersionCode 103`, all four ABIs.
+Original signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over
+3.0.3/3.0.2/3.0.1/3.0.0. Output `outputs/LanMessenger-3.0.4.apk`, SHA-256 `8b8e9456…271838fc55`
+(manifest `outputs/SHA256SUMS-Android-3.0.4.txt`). Not installed on a device by this session.
+
 2026-10-06 trusted/regular prompt bugfix (source only, not packaged yet): the 3.0.3 prompt never
 appeared because `startCallTo()` checked `PeerEngine.trustedCallMask(peerId)`, which records
 grants THIS device gave to OTHERS (the opposite direction) -- a device can never see its own

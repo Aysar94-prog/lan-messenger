@@ -1,5 +1,10 @@
 # Windows status
 
+2026-10-06 user-requested test-candidate package 3.0.4, packaging the trusted/regular prompt
+bugfix below: `<Version>` bumped to 3.0.4, published framework-dependent via `dotnet publish -c
+Release`. 0 errors. Zipped as `outputs/LanMessenger-3.0.4-Windows.zip` (7,583,799 bytes; manifest
+`outputs/SHA256SUMS-Windows-3.0.4.txt`). Not device-tested.
+
 2026-10-06 trusted/regular prompt bugfix (source only, not packaged yet): mirrors the same-day
 Android fix. `StartCallToSelected()` checked `engine.TrustedCallMask(peerId)` (grants this device
 gave to others, the wrong direction) instead of the grant the OTHER device reports holding over
