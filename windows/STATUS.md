@@ -1,5 +1,10 @@
 # Windows status
 
+2026-10-06 user-requested test-candidate package 3.0.5, packaging the frame-validator fix below:
+`<Version>` bumped to 3.0.5, published framework-dependent via `dotnet publish -c Release`. 0
+errors. Zipped as `outputs/LanMessenger-3.0.5-Windows.zip` (7,583,866 bytes; manifest
+`outputs/SHA256SUMS-Windows-3.0.5.txt`). Not device-tested.
+
 2026-10-06 trusted/regular call frame-validator fix: mirrors the same-day Android fix.
 `CallVideoProtocol.cs`'s v2 INVITE validator required an exact key set (`caller`,`callee`,`media`),
 rejecting the new optional `trust` key on both send (user-visible "Refusing to send an invalid

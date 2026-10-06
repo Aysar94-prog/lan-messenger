@@ -1,5 +1,11 @@
 # Android status
 
+2026-10-06 user-requested test-candidate package 3.0.5/code104, packaging the frame-validator fix
+below: `android/build.ps1 -VersionName 3.0.5 -VersionCode 104`, all four ABIs. Original signer
+confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over 3.0.4 and earlier. Output
+`outputs/LanMessenger-3.0.5.apk`, SHA-256 `d63460e9…a6ba6ad5f` (manifest
+`outputs/SHA256SUMS-Android-3.0.5.txt`). Not installed on a device by this session.
+
 2026-10-06 trusted/regular call frame-validator fix (source + shared test fixtures, not packaged
 yet): the user's "Call normally" choice failed with "Refusing to send an invalid call frame" —
 `CallVideoProtocol.java`'s/`CallVideoProtocol.cs`'s v2 INVITE validator checks the frame body's
