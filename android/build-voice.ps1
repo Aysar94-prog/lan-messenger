@@ -3,8 +3,8 @@ param(
   [string]$JdkRoot = 'C:\Program Files (x86)\Android\openjdk\jdk-17.0.14',
   [string]$OutputDir = (Join-Path $PSScriptRoot '..\..\outputs'),
   [string]$BuildRoot = (Join-Path $PSScriptRoot '..\..\outputs\.build\android-voice'),
-  [string]$VersionName = '2.2.6',
-  [int]$VersionCode = 33,
+  [string]$VersionName = '3.0.0',
+  [int]$VersionCode = 99,
   # Distinguishes a voice build from a release build of the same version, so a release artifact
   # can never be clobbered by a voice validation build.
   [string]$ApkSuffix = '-voice-dev',

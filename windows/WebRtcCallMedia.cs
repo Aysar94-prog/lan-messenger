@@ -31,6 +31,14 @@ public sealed class WebRtcCallMedia : ICallMedia
     volatile bool muted;
     volatile bool mediaReadyFired;
     volatile bool disposed;
+    readonly object diagnosticLock = new();
+    readonly System.Diagnostics.Stopwatch captureClock = System.Diagnostics.Stopwatch.StartNew();
+    long diagnosticFrames, diagnosticSamples, diagnosticSquareSum, diagnosticClipped;
+    long diagnosticLastTicks, diagnosticIntervalCount;
+    double diagnosticIntervalSumMs, diagnosticIntervalSquareSumMs;
+    double diagnosticIntervalMinMs = double.MaxValue, diagnosticIntervalMaxMs;
+    int diagnosticPeak;
+    double captureGain = 2.25;
 
     public WebRtcCallMedia()
     {
@@ -70,9 +78,11 @@ public sealed class WebRtcCallMedia : ICallMedia
             if (disposed || muted) return;
             try
             {
+                TrackCapture(pcm);
                 var samples = ToSamples(pcm);
+                ApplyCaptureAgc(samples);
                 var encoded = encoder.EncodeAudio(samples, negotiated);
-                pc.SendAudio((uint)samples.Length, encoded);
+                pc.SendAudio(RtpDurationFor(negotiated.FormatName, samples.Length), encoded);
             }
             catch { }
         };
@@ -120,6 +130,98 @@ public sealed class WebRtcCallMedia : ICallMedia
 
     public CallStats GetStats() => new() { Available = false }; // real-metric mapping deferred — see plan addendum
 
+    // G722 is sampled internally at 16 kHz but RFC 3551 fixes its RTP timestamp clock at 8 kHz.
+    // A 20 ms capture frame therefore contains 320 PCM samples but advances the RTP timestamp by
+    // only 160 units. Sending 320 made Android schedule every packet 40 ms apart even though a new
+    // packet arrived every 20 ms, producing regular gaps and the reported choppy Windows mic.
+    internal static uint RtpDurationFor(string formatName, int pcmSampleCount)
+    {
+        if (pcmSampleCount <= 0) return 0;
+        return (uint)(string.Equals(formatName, "G722", StringComparison.OrdinalIgnoreCase)
+            ? pcmSampleCount / 2
+            : pcmSampleCount);
+    }
+
+    // The legacy winmm capture path supplies raw PCM and has no WebRTC AGC. Update gain only on
+    // frames with meaningful speech energy so silence does not drive it to maximum and amplify the
+    // room noise. Gain rises gradually (no pumping) and falls quickly when the speaker gets louder.
+    // A hard ceiling plus signed-16-bit saturation prevents overflow distortion.
+    internal static double NextCaptureGain(double current, double rms)
+    {
+        if (rms < 100) return current;
+        double desired = Math.Clamp(5000.0 / rms, 1.0, 12.0);
+        double blend = desired < current ? 0.35 : 0.08;
+        return current + (desired - current) * blend;
+    }
+
+    internal static void ApplyGain(short[] samples, double gain)
+    {
+        for (int i = 0; i < samples.Length; i++)
+        {
+            int amplified = (int)Math.Round(samples[i] * gain);
+            samples[i] = (short)Math.Clamp(amplified, short.MinValue, short.MaxValue);
+        }
+    }
+
+    void ApplyCaptureAgc(short[] samples)
+    {
+        if (samples.Length == 0) return;
+        double squareSum = 0;
+        for (int i = 0; i < samples.Length; i++) squareSum += (double)samples[i] * samples[i];
+        double rms = Math.Sqrt(squareSum / samples.Length);
+        captureGain = NextCaptureGain(captureGain, rms);
+        ApplyGain(samples, captureGain);
+    }
+
+    void TrackCapture(byte[] pcm)
+    {
+        long now = captureClock.ElapsedTicks;
+        lock (diagnosticLock)
+        {
+            if (diagnosticLastTicks != 0)
+            {
+                double interval = (now - diagnosticLastTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                diagnosticIntervalCount++;
+                diagnosticIntervalSumMs += interval;
+                diagnosticIntervalSquareSumMs += interval * interval;
+                diagnosticIntervalMinMs = Math.Min(diagnosticIntervalMinMs, interval);
+                diagnosticIntervalMaxMs = Math.Max(diagnosticIntervalMaxMs, interval);
+            }
+            diagnosticLastTicks = now;
+            diagnosticFrames++;
+            for (int i = 0; i + 1 < pcm.Length; i += 2)
+            {
+                int sample = (short)(pcm[i] | pcm[i + 1] << 8);
+                int magnitude = Math.Abs(sample == short.MinValue ? short.MaxValue : sample);
+                diagnosticPeak = Math.Max(diagnosticPeak, magnitude);
+                diagnosticSquareSum += (long)sample * sample;
+                diagnosticSamples++;
+                if (magnitude >= 32760) diagnosticClipped++;
+            }
+        }
+    }
+
+    void WriteDiagnostics()
+    {
+        string? path = Environment.GetEnvironmentVariable("LANMESSENGER_AUDIO_DIAGNOSTICS");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        lock (diagnosticLock)
+        {
+            double mean = diagnosticIntervalCount == 0 ? 0 : diagnosticIntervalSumMs / diagnosticIntervalCount;
+            double variance = diagnosticIntervalCount == 0 ? 0
+                : Math.Max(0, diagnosticIntervalSquareSumMs / diagnosticIntervalCount - mean * mean);
+            double rms = diagnosticSamples == 0 ? 0 : Math.Sqrt((double)diagnosticSquareSum / diagnosticSamples);
+            string line = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{DateTime.UtcNow:O}\tframes={diagnosticFrames}\tsamples={diagnosticSamples}" +
+                $"\tintervalMeanMs={mean:F3}\tintervalStdMs={Math.Sqrt(variance):F3}" +
+                $"\tintervalMinMs={(diagnosticIntervalCount == 0 ? 0 : diagnosticIntervalMinMs):F3}" +
+                $"\tintervalMaxMs={diagnosticIntervalMaxMs:F3}\trms={rms:F1}" +
+                $"\tpeak={diagnosticPeak}\tclipped={diagnosticClipped}" +
+                $"\tfinalGain={captureGain:F3}{Environment.NewLine}");
+            try { File.AppendAllText(path, line); } catch { }
+        }
+    }
+
     static short[] ToSamples(byte[] pcm)
     {
         var samples = new short[pcm.Length / 2];
@@ -142,6 +244,7 @@ public sealed class WebRtcCallMedia : ICallMedia
         try { pc.close(); } catch { }
         try { pc.Dispose(); } catch { }
         try { encoder.Dispose(); } catch { }
+        WriteDiagnostics();
     }
 
     public sealed class Factory : ICallMedia.IFactory

@@ -2,8 +2,8 @@ param(
   [string]$SdkRoot = 'C:\Program Files (x86)\Android\android-sdk',
   [string]$JdkRoot = 'C:\Program Files (x86)\Android\openjdk\jdk-17.0.14',
   [string]$BuildRoot = (Join-Path $PSScriptRoot '..\..\outputs\.build\android'),
-  [string]$VersionName = '2.2.6',
-  [int]$VersionCode = 33,
+  [string]$VersionName = '3.0.0',
+  [int]$VersionCode = 99,
   [switch]$GenerateDevelopmentKey,
   [switch]$Arm64Only
 )
