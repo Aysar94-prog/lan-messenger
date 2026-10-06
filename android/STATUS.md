@@ -1,5 +1,14 @@
 # Android status
 
+2026-10-06 user-requested test-candidate package 3.0.1/code100, packaging the UI/feature pass
+below (fullscreen call video, Direct connections refresh, navy/blue restyle): `android/build.ps1
+-VersionName 3.0.1 -VersionCode 100`, all four ABIs. Original signer confirmed byte-identical to
+3.0.0 via `keytool -printcert` (SHA-256 `7f4a0794…8d4161`) and `apksigner verify` (v2/v3, one
+signer) — upgrade-safe over the installed 3.0.0. Output `outputs/LanMessenger-3.0.1.apk`,
+23,184,456 bytes, SHA-256 `9ffb1131…5fa0399` (manifest `outputs/SHA256SUMS-Android-3.0.1.txt`).
+Not installed on a device by this session; no physical acceptance claim for the new features —
+that's on the user to try.
+
 2026-10-06 UI/feature pass (source only, not a release, not device-installed):
 (1) Call screen fullscreen video: `CallView.java` gained a `fullscreenVideo` toggle, reachable
 from a new "Fullscreen" button in `videoControls()` when a video call is Connected. Fullscreen

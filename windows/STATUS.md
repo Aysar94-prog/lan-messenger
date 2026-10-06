@@ -1,5 +1,14 @@
 # Windows status
 
+2026-10-06 user-requested test-candidate package 3.0.1, packaging the UI pass below
+(selection-gated buttons, navy/blue restyle): `<Version>` bumped to 3.0.1, published
+framework-dependent via `dotnet publish -c Release` (requires .NET Desktop Runtime 9, same shape
+as every prior Windows release — not the one-off self-contained portable bundling 3.0.0 used).
+0 errors, one pre-existing unrelated warning. Zipped as
+`outputs/LanMessenger-3.0.1-Windows.zip` (7,582,902 bytes; manifest
+`outputs/SHA256SUMS-Windows-3.0.1.txt`). Not run on this machine beyond the build itself; no
+device acceptance claim.
+
 2026-10-06 UI pass (source only, not a release, not re-packaged): (1) conversation action
 buttons (`verify`, `members`, `leaveGroup`, `clear`, `callButton`, `fastTransfer`, `attach`,
 `recordVoice`) are now hidden (`.Visible`), not just disabled, until a conversation is selected
