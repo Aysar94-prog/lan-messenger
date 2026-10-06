@@ -1,5 +1,11 @@
 # Android status
 
+2026-10-06 user-requested test-candidate package 3.0.2/code101, packaging the call-controls
+redesign below: `android/build.ps1 -VersionName 3.0.2 -VersionCode 101`, all four ABIs. Original
+signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over 3.0.1/3.0.0. Output
+`outputs/LanMessenger-3.0.2.apk`, SHA-256 `e0359687…7c45f02` (manifest
+`outputs/SHA256SUMS-Android-3.0.2.txt`). Not installed on a device by this session.
+
 2026-10-06 call-controls follow-up (source only, not packaged yet): `CallView.java`'s
 `videoControls()` was rewritten after real-use feedback that the control row's long text buttons
 ("Recipient speaker on", "Recipient front", etc.) were wrapping onto two lines. Replaced with
