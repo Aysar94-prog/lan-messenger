@@ -1,5 +1,10 @@
 # Android status
 
+2026-10-06 user-authorized3.0.0/code99 release APK built with arm64-v8a, armeabi-v7a,
+x86 and x86_64. Signature verified using original7f4a07943d01da1266e4f2d3ce757165c9619c9a4ef74e741c58f8eee08d4161;
+manifest3.0.0/code99 confirmed, upgrade-safe over98. Output LanMessenger-3.0.0.apk;
+not auto-installed in this release turn. Paired physical acceptance still incomplete.
+
 2026-10-06 paired video test: phone-originated call negotiated video and its physical image
 was rendered on Windows. Phone remote view was black, matching Windows local preview;
 Windows camera content unresolved. Android Diagnostics displayed Unavailable. Clean remote

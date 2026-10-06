@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-06 user-requested LAN Messenger3.0.0 packages produced: Windows self-contained
+x64 Portable (.NET9.0.9 included, app-local native video DLL), Android multi-ABI code99 with
+original signer. Remaining audio work saved in local8506520. Packaged native138/138,
+WindowsCallUi11/11, isolated-data portable startup pass. User reports camera shutter was
+closed and now open; bidirectional image retest/listening/stress remain pending. Packaging
+does not waive these acceptance gates. No push. Outputs in D:/LAN-Messenger/outputs.
+
 2026-10-06 paired video evidence: phone image visibly reaches Windows in Connected/Video;
 Windows camera preview/phone remote image black, cause unresolved. Camera off button inversion
 found and fixed, WindowsCallUi 11/11. Bidirectional usable video, audio listening and stress

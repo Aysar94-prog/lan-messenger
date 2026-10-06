@@ -1,5 +1,11 @@
 # Windows status
 
+2026-10-06 user-authorized3.0.0 Portable x64 package: self-contained .NET9.0.9, native
+video DLL and WebRTC notices bundled. Published0 errors, packaged native138/138,
+WindowsCallUi11/11, startup pass with isolated data. No installer/.NET install required;
+user identity/history still use LocalAppData/LanMessenger (no data migration). User confirms
+closed camera cover, now open; image retest/listening/stress pending. No full acceptance claim.
+
 2026-10-06 authorized paired video test: Connected/Video and changing phone-camera image
 rendered on Windows; Windows local preview and phone remote view black, cause undetermined.
 Clean hangup after about 92 seconds. Physical test exposed reversed Camera off/on command;
