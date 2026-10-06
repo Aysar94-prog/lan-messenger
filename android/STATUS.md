@@ -1,5 +1,17 @@
 # Android status
 
+2026-10-06 trusted/regular call frame-validator fix (source + shared test fixtures, not packaged
+yet): the user's "Call normally" choice failed with "Refusing to send an invalid call frame" —
+`CallVideoProtocol.java`'s/`CallVideoProtocol.cs`'s v2 INVITE validator checks the frame body's
+key set for an EXACT match (`caller`,`callee`,`media`), so the new optional `trust` key made every
+INVITE with it invalid on both send and receive. Fixed identically on both platforms: the INVITE
+case now accepts the body with or without `trust` present, and when present requires it be
+exactly `"ignore"`. Three new rows added to the shared
+`tests/video-contract/fixtures/call-frames.txt` corpus (valid-with-trust, invalid-bad-value,
+invalid-extra-key). Full `tests/video-contract/run.ps1` passes clean: 116 frame records, 38
+capability records, zero Android/Windows diffs, including all three new rows behaving as
+expected on both sides. Not yet packaged.
+
 2026-10-06 user-requested test-candidate package 3.0.4/code103, packaging the trusted/regular
 prompt bugfix below: `android/build.ps1 -VersionName 3.0.4 -VersionCode 103`, all four ABIs.
 Original signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over

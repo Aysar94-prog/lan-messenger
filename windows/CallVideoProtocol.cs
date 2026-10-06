@@ -84,8 +84,18 @@ public static class CallVideoProtocol
         switch (f.T)
         {
             case CallProtocol.INVITE:
-                return gen == 0 && Keys(b, "caller", "callee", "media") && Media(b)
-                    && Request(b["caller"]) && Request(b["callee"]);
+            {
+                // "trust" is optional -- present only on a caller's "Call normally" choice, the one
+                // value "ignore" is the only one ever written, so it is checked exactly rather than
+                // just accepted as present.
+                bool hasTrust = b.ContainsKey("trust");
+                var inviteKeys = hasTrust
+                    ? new[] { "caller", "callee", "media", "trust" }
+                    : new[] { "caller", "callee", "media" };
+                return gen == 0 && Keys(b, inviteKeys) && Media(b)
+                    && Request(b["caller"]) && Request(b["callee"])
+                    && (!hasTrust || b["trust"] is "ignore");
+            }
             case CallProtocol.ACCEPT:
                 return gen == 0 && Keys(b, "media") && Media(b);
             case CallProtocol.VIDEO_REQUEST:

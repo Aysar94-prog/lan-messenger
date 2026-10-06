@@ -46,8 +46,16 @@ public final class CallVideoProtocol {
         || f.senderSequence<=0 || f.negotiationGeneration<0 || f.body==null || f.type==null) return false;
     Map<String,Object> b=f.body; long gen=f.negotiationGeneration;
     switch(f.type) {
-      case "INVITE": return gen==0 && keys(b,"caller","callee","media") && media(b)
-          && request(b.get("caller")) && request(b.get("callee"));
+      case "INVITE": {
+        // "trust" is optional -- present only on a caller's "Call normally" choice, the one value
+        // "ignore" is the only one ever written, so it is checked exactly rather than just
+        // accepted as present.
+        boolean hasTrust=b.containsKey("trust");
+        boolean inviteKeys=hasTrust?keys(b,"caller","callee","media","trust"):keys(b,"caller","callee","media");
+        return gen==0 && inviteKeys && media(b)
+          && request(b.get("caller")) && request(b.get("callee"))
+          && (!hasTrust || "ignore".equals(b.get("trust")));
+      }
       case "ACCEPT": return gen==0 && keys(b,"media") && media(b);
       case "VIDEO_REQUEST": case "VIDEO_ACCEPT": case "VIDEO_DECLINE":
         return gen==0 && keys(b,"request") && request(b.get("request"));

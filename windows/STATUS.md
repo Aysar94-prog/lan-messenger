@@ -1,5 +1,12 @@
 # Windows status
 
+2026-10-06 trusted/regular call frame-validator fix: mirrors the same-day Android fix.
+`CallVideoProtocol.cs`'s v2 INVITE validator required an exact key set (`caller`,`callee`,`media`),
+rejecting the new optional `trust` key on both send (user-visible "Refusing to send an invalid
+call frame") and receive. Now accepts the body with or without `trust`, requiring exactly
+`"ignore"` when present. Verified via the shared `tests/video-contract/run.ps1` corpus (116 frame
+records, 0 Android/Windows diffs, three new rows for this exact case). Not yet packaged.
+
 2026-10-06 user-requested test-candidate package 3.0.4, packaging the trusted/regular prompt
 bugfix below: `<Version>` bumped to 3.0.4, published framework-dependent via `dotnet publish -c
 Release`. 0 errors. Zipped as `outputs/LanMessenger-3.0.4-Windows.zip` (7,583,799 bytes; manifest
