@@ -64,6 +64,18 @@ public sealed class CallVideoActions
         }
     }
 
+    // The initial answer may fall back to voice only if video was refused before any answer was sent.
+    // An upgrade refusal never sends another ACCEPT into an already connected call.
+    public CallVideoConsent.Result AcceptVideoOrVoice(string callId)
+    {
+        lock (this)
+        {
+            var result = AcceptVideo(callId);
+            return result is CallVideoConsent.Result.Denied or CallVideoConsent.Result.Unsupported
+                ? AnswerWithVoice(callId) : result;
+        }
+    }
+
     public CallVideoConsent.Result RequestVideo(string callId)
     {
         lock (this)

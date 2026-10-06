@@ -1,5 +1,68 @@
 # Android status
 
+## 2026-10-06 Windows-interoperability dev candidate installed (not a release)
+
+Observed USB SM-A075F `R8YY80A8VLB` carried 2.2.69/code96. Built and installed original-key ARM64
+`D:/LAN-Messenger/outputs/LanMessenger-2.2.71-wvc-completion-dev.apk` with versionCode98 using
+`adb install -r`; installed version confirmed and firstInstallTime remained 2026-10-04 12:42:49.
+Signer SHA-256 remains `7f4a07943d01da1266e4f2d3ce757165c9619c9a4ef74e741c58f8eee08d4161`.
+This candidate includes the already-committed mirrored SAVP validator fix; no Android source was
+changed during this continuation. Existing data/identity and Direct connections policy were preserved.
+Physical Windows↔Android acceptance remains pending: the phone currently exposes ultra in Direct
+connections, while Windows Lap sees SM-A075F Offline. No release, Wi-Fi repair or parity claim.
+
+
+## 2026-10-06 mirrored SDP transport-profile relaxation (source only, not a release)
+
+Android changed in exactly two places, both forced by the Windows call v2 regression repair documented
+in `../windows/video-calling/TASK-CONTRACT-CALL-V2-FIX.md`, and neither is an Android behaviour change
+on its own.
+
+`CallVideoProtocol.validSdp` accepted only `UDP/TLS/RTP/SAVPF` as the m-line transport. libwebrtc
+writes `SAVPF`, so Android was never the side that failed — but the two ports are contractually
+required to reach the same verdict, and the shared corpus now proves it. `CallVideoProtocol.java` and
+`windows/CallVideoProtocol.cs` both accept exactly `UDP/TLS/RTP/SAVP` and `UDP/TLS/RTP/SAVPF`, and both
+still refuse `TCP/TLS/RTP/SAVP`, `TCP/TLS/RTP/SAVPF`, `UDP/TLS/RTP/SAVPX` and every other token. This
+is a relaxation of what is accepted, not a new frame type: no Android-originated frame changed, and
+`shared frame corpus : 113 records agree between Android and Windows` plus `38` capability records now
+hold three ways against the hand-authored expectation.
+
+`FakeCallMedia` emitted `SAVPF` in both its video and audio SDP. It now emits `SAVP`, matching what the
+Windows adapter actually produces. This is deliberate: while the fake agreed with the validator by
+construction, no test on either port ever fed the validator the SDP a real peer produces, which is
+precisely why the mismatch shipped unnoticed and killed real calls with `EndReason.MediaError`.
+
+All video-contract suites pass (DraftVideoContract 43/0, CallCameraPermission 18/0, CallVideoConsent
+74/0, ConfirmedVideoContract 115/0, CallVideoActions 27/0, CallVideoResources 19/0, FakeCallVideo 18/0,
+CallFrameAdmission 17/0, CallCapabilities 18/0, CallVideoCoordinator 39/0, CallVideoDiagnostics 13/0,
+CallVideoPlacement 9/0). No APK was built or installed, no release, no version bump, no commit, no
+push. Physical Windows↔Android call acceptance is still outstanding and nothing here claims it.
+
+## Final release 2.2.70 / code97 — 2026-10-05
+
+The user accepted the 2.2.69 installed candidate as stable and explicitly authorized final
+release packaging with one documented limitation, without a camera-behaviour change. Final
+all-ABI APK: `D:\LAN-Messenger\outputs\LanMessenger-2.2.70.apk`, 23,184,456 bytes, SHA-256
+`c405937d61d6a398492210b33d4774788777cfd43ce7d767841e3d7a32783a88`. Package metadata is
+`net.lanmsg.chat`, versionName `2.2.70`, versionCode `97`, minSdk 26, targetSdk 34. The APK
+contains arm64-v8a, armeabi-v7a, x86 and x86_64 WebRTC libraries. APK Signature Scheme v2/v3
+verification passes with one signer; signer SHA-256
+`7f4a07943d01da1266e4f2d3ce757165c9619c9a4ef74e741c58f8eee08d4161` is identical to
+2.2.69, preserving upgrade compatibility.
+
+**Known camera limitation:** a trusted Slave device cannot start a new camera capture if the
+Slave phone is already locked. If the call and camera are started while that phone is unlocked,
+camera capture continues normally after the phone is locked. This release does not claim locked
+new-camera startup and does not implement idle camera pre-arming.
+
+Release verification against the exact build's compiled classes: CallCheck 440/0; real-TLS
+permission list 40/0; recipient-control visibility 28/0; Direct connections 34/0; video consent
+74/0; confirmed contract 115/0; shared frame fixtures 107/0; capability fixtures 38/0; remaining
+focused video policy/resource/coordinator suites all pass. Production build, DEX, four-ABI
+packaging, zipalign, signing and signature verification pass. Physical behaviour is accepted from
+the installed 2.2.69 candidate; 2.2.70 changes version/package output only and was not reinstalled
+in this packaging pass. Windows and the wire protocol are unchanged. No push was performed.
+
 2026-10-04 background/locked calls checkpoint: authorized by "fix it all".
 Trusted video now auto-accepts receive-only if camera acquisition is unavailable;
 it no longer falls back to ringing solely because the Activity is backgrounded.

@@ -10,6 +10,30 @@ namespace LanMessenger;
 // peer that cannot do video.
 sealed class CallView : Form
 {
+    sealed class FrameSink(CallView owner, Action<CallVideoFrame> show) : ICallVideoFrameSink
+    {
+        readonly object gate = new();
+        CallVideoFrame? pending;
+        bool scheduled;
+        public void OnFrame(object frame)
+        {
+            if (frame is not CallVideoFrame video || owner.IsDisposed || !owner.IsHandleCreated) return;
+            lock (gate)
+            {
+                pending = video;
+                if (scheduled) return;
+                scheduled = true;
+            }
+            try { owner.BeginInvoke(new Action(Drain)); }
+            catch { lock (gate) { pending = null; scheduled = false; } }
+        }
+        void Drain()
+        {
+            CallVideoFrame? frame;
+            lock (gate) { frame = pending; pending = null; scheduled = false; }
+            if (!owner.IsDisposed && frame != null) show(frame);
+        }
+    }
     public event Action? AcceptClicked;
     public event Action? DeclineClicked;
     public event Action? HangupClicked;
@@ -20,10 +44,14 @@ sealed class CallView : Form
     public event Action? RequestVideoClicked;
     public event Action? DeclineVideoClicked;
     public event Action<bool>? CameraClicked;
+    public event Action<bool, string>? RemoteCameraClicked;
+    public event Action<bool>? RemoteSpeakerClicked;
 
     readonly Label nameLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 16, FontStyle.Bold) };
     readonly Label stateLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 30, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11) };
     readonly Label hintLabel = new() { AutoSize = false, Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.DimGray, Font = new Font("Segoe UI", 9) };
+    readonly Label avatar = new() { AutoSize = false, Size = new Size(96, 96), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 30, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.FromArgb(31, 121, 112) };
+    readonly Panel voiceStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(14, 82, 76) };
 
     // The stage is a plain Panel rather than a PictureBox: a stage with nothing to show must still
     // exist and must still own the preview's layout, so the preview cannot end up floating over the
@@ -31,17 +59,25 @@ sealed class CallView : Form
     readonly Panel stage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(8, 32, 30), Visible = false };
     readonly Panel remoteStage = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(8, 32, 30) };
     readonly Label remotePlaceholder = new() { Dock = DockStyle.Fill, Text = "No video", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(120, 150, 148), Font = new Font("Segoe UI", 11) };
+    readonly PictureBox remotePicture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Visible = false };
     // The local preview is draggable and its remembered position is clamped into the stage on every
     // layout. CallVideoPlacement exists precisely because a remembered drag position would otherwise
     // survive a window resize and leave the preview sitting over the controls.
     readonly Panel preview = new() { Size = new Size(160, 120), BackColor = Color.FromArgb(20, 60, 58), Visible = false, Cursor = Cursors.SizeAll };
     readonly Label previewPlaceholder = new() { Dock = DockStyle.Fill, Text = "Your camera", TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.FromArgb(150, 180, 178), Font = new Font("Segoe UI", 8) };
+    readonly PictureBox localPicture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Visible = false };
     readonly CallVideoPlacement placement = new();
     // WinForms has no SizableDialog: a resizable dialog IS a Sizable ToolWindow. The fixed small form
     // is kept for a voice-only call and swapped for the resizable one the moment video is possible.
     const FormBorderStyle videoCapableStyle = FormBorderStyle.SizableToolWindow;
 
-    readonly FlowLayoutPanel buttons = new() { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(10) };
+    readonly FlowLayoutPanel buttons = new() { Dock = DockStyle.Bottom, Height = 76, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(18, 14, 10, 10), BackColor = Color.FromArgb(10, 67, 63) };
+    readonly FlowLayoutPanel recipientControls = new() { Dock = DockStyle.Bottom, Height = 68, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(10, 8, 10, 6), BackColor = Color.FromArgb(235, 242, 241), Visible = false };
+    readonly Label recipientLabel = new() { Text = "Control recipient", AutoSize = true, ForeColor = Color.FromArgb(14, 82, 76), Font = new Font("Segoe UI", 9, FontStyle.Bold), Margin = new Padding(0, 9, 10, 0) };
+    readonly Button remoteSpeaker = new() { Text = "Speaker on", AutoSize = true };
+    readonly Button remoteCamera = new() { Text = "Camera on", AutoSize = true };
+    readonly Button remoteFront = new() { Text = "Front", AutoSize = true };
+    readonly Button remoteRear = new() { Text = "Rear", AutoSize = true };
     readonly Button accept = new() { Text = "Accept", AutoSize = true, BackColor = Color.FromArgb(37, 211, 102), ForeColor = Color.White };
     readonly Button acceptVideo = new() { Text = "Accept with video", AutoSize = true, Visible = false };
     readonly Button decline = new() { Text = "Decline", AutoSize = true, BackColor = Color.FromArgb(211, 47, 47), ForeColor = Color.White };
@@ -54,24 +90,32 @@ sealed class CallView : Form
     bool dragging;
     Point dragOrigin;
     bool videoCapable;
+    bool remoteSpeakerOn;
+    bool remoteCameraOn;
+    public ICallVideoFrameSink RemoteFrameSink { get; }
+    public ICallVideoFrameSink LocalFrameSink { get; }
 
     public CallView(string peerName, bool isIncoming)
     {
-        Text = "Call"; Size = new Size(360, 260); StartPosition = FormStartPosition.CenterScreen;
-        // Start as the small fixed voice window exactly as before. It is widened to a resizable form
-        // only once a call is known to be video-capable -- a voice-only call must be unchanged.
+        Text = "Call"; Size = new Size(460, 390); MinimumSize = new Size(420, 360); StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = true;
         BackColor = Color.FromArgb(14, 82, 76); nameLabel.ForeColor = Color.White; stateLabel.ForeColor = Color.White;
         nameLabel.Text = peerName;
+        avatar.Text = string.IsNullOrWhiteSpace(peerName) ? "?" : peerName.Trim()[0].ToString().ToUpperInvariant();
+        voiceStage.Controls.Add(avatar);
+        voiceStage.Resize += (_, _) => avatar.Location = new Point(Math.Max(0, (voiceStage.ClientSize.Width - avatar.Width) / 2), Math.Max(16, (voiceStage.ClientSize.Height - avatar.Height) / 2));
         stateLabel.Text = isIncoming ? "Incoming call…" : "Calling…";
 
-        remoteStage.Controls.Add(remotePlaceholder);
+        RemoteFrameSink = new FrameSink(this, frame => ShowFrame(remotePicture, frame));
+        LocalFrameSink = new FrameSink(this, frame => ShowFrame(localPicture, frame));
+        remoteStage.Controls.Add(remotePlaceholder); remoteStage.Controls.Add(remotePicture);
         preview.Controls.Add(previewPlaceholder);
+        preview.Controls.Add(localPicture);
         stage.Controls.Add(remoteStage);
         stage.Controls.Add(preview);
 
-        Controls.Add(stage);
-        Controls.Add(hintLabel); Controls.Add(stateLabel); Controls.Add(nameLabel); Controls.Add(buttons);
+        Controls.Add(stage); Controls.Add(voiceStage);
+        Controls.Add(hintLabel); Controls.Add(stateLabel); Controls.Add(nameLabel); Controls.Add(recipientControls); Controls.Add(buttons);
 
         accept.Click += (_, _) => AcceptClicked?.Invoke();
         acceptVideo.Click += (_, _) => AcceptVideoClicked?.Invoke(true);
@@ -81,11 +125,18 @@ sealed class CallView : Form
         mute.Click += (_, _) => { muted = !muted; mute.Text = muted ? "Unmute" : "Mute"; MuteClicked?.Invoke(muted); };
         camera.Click += (_, _) => CameraClicked?.Invoke(camera.Text.StartsWith("Camera off", StringComparison.Ordinal));
         requestVideo.Click += (_, _) => RequestVideoClicked?.Invoke();
+        remoteSpeaker.Click += (_, _) => { remoteSpeakerOn = !remoteSpeakerOn; remoteSpeaker.Text = remoteSpeakerOn ? "Speaker off" : "Speaker on"; RemoteSpeakerClicked?.Invoke(remoteSpeakerOn); };
+        remoteCamera.Click += (_, _) => RemoteCameraClicked?.Invoke(!remoteCameraOn, "keep");
+        remoteFront.Click += (_, _) => RemoteCameraClicked?.Invoke(true, "front");
+        remoteRear.Click += (_, _) => RemoteCameraClicked?.Invoke(true, "rear");
 
         buttons.Controls.Add(accept); buttons.Controls.Add(acceptVideo);
         buttons.Controls.Add(decline); buttons.Controls.Add(declineVideo);
         buttons.Controls.Add(hangup); buttons.Controls.Add(mute);
         buttons.Controls.Add(camera); buttons.Controls.Add(requestVideo);
+        recipientControls.Controls.Add(recipientLabel);
+        recipientControls.Controls.Add(remoteSpeaker); recipientControls.Controls.Add(remoteCamera);
+        recipientControls.Controls.Add(remoteFront); recipientControls.Controls.Add(remoteRear);
         ApplyButtonVisibility(isIncoming, active: false, videoLive: false);
 
         // Layout, not the constructor, positions the preview: the clamped position depends on the
@@ -94,6 +145,36 @@ sealed class CallView : Form
         preview.MouseDown += PreviewMouseDown;
         preview.MouseMove += PreviewMouseMove;
         preview.MouseUp += PreviewMouseUp;
+        Shown += (_, _) => avatar.Location = new Point((voiceStage.ClientSize.Width - avatar.Width) / 2, Math.Max(16, (voiceStage.ClientSize.Height - avatar.Height) / 2));
+    }
+
+    void ShowFrame(PictureBox target, CallVideoFrame frame)
+    {
+        if (IsDisposed) return;
+        if (frame.Width <= 0 || frame.Height <= 0 || frame.Width > 4096 || frame.Height > 4096 ||
+            frame.Stride < frame.Width * 4 || (long)frame.Stride * frame.Height > frame.Bgra.Length) return;
+        var bitmap = new Bitmap(frame.Width, frame.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var data = bitmap.LockBits(new Rectangle(0, 0, frame.Width, frame.Height),
+            System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+        try
+        {
+            int bytes = Math.Min(Math.Abs(data.Stride), frame.Stride);
+            for (int y = 0; y < frame.Height; y++)
+                System.Runtime.InteropServices.Marshal.Copy(frame.Bgra, y * frame.Stride,
+                    data.Scan0 + y * data.Stride, bytes);
+        }
+        finally { bitmap.UnlockBits(data); }
+        var old = target.Image; target.Image = bitmap; target.Visible = true; target.BringToFront(); old?.Dispose();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            remotePicture.Image?.Dispose(); remotePicture.Image = null;
+            localPicture.Image?.Dispose(); localPicture.Image = null;
+        }
+        base.Dispose(disposing);
     }
 
     void PreviewMouseDown(object? sender, MouseEventArgs e)
@@ -133,12 +214,13 @@ sealed class CallView : Form
         if (IsDisposed || videoCapable == capable) return;
         videoCapable = capable;
         stage.Visible = capable;
+        voiceStage.Visible = !capable;
         preview.Visible = capable;
         // WinForms has no resizable *dialog*; a resizable dialog is a sizeable tool window. The style
         // is live-settable, so the window can become resizable here rather than at construction.
         FormBorderStyle = capable ? videoCapableStyle : FormBorderStyle.FixedDialog;
         MaximizeBox = capable;
-        if (capable) { Size = new Size(720, 540); LayoutPreview(); }
+        if (capable) { Size = new Size(760, 600); LayoutPreview(); }
     }
 
     /// Reflect the live coordinator snapshot. The remote-video frame itself comes from the adapter
@@ -154,6 +236,8 @@ sealed class CallView : Form
         camera.Text = live && video!.LocalCamera ? "Camera off" : "Camera on";
         camera.Enabled = live;
         remotePlaceholder.Text = live && !video!.RemoteCamera ? "Their camera is off" : "No video";
+        if (!live || !video!.RemoteCamera) { remotePicture.Visible = false; remotePlaceholder.BringToFront(); }
+        if (!live || !video!.LocalCamera) { localPicture.Visible = false; previewPlaceholder.BringToFront(); }
     }
 
     void ApplyButtonVisibility(bool isIncoming, bool active, bool videoLive)
@@ -194,7 +278,7 @@ sealed class CallView : Form
         _ => "Call ended",
     };
 
-    public void Render(CallSession snap, string peerName)
+    public void Render(CallSession snap, string peerName, int recipientMask = 0, string? capabilityStatus = null)
     {
         if (IsDisposed) return;
         nameLabel.Text = peerName;
@@ -202,6 +286,11 @@ sealed class CallView : Form
         // both peers are known to speak v2, so the stage appears before any video exists.
         SetVideoCapable(snap.VideoCapable, snap.InvitedVideo);
         var videoLive = snap.Video != null && snap.Video.Phase == CallVideoConsent.Phase.Video;
+        hintLabel.ForeColor = Color.FromArgb(190, 220, 216);
+        hintLabel.Text = snap.VideoCapable ? (videoLive ? "Video connected" : "Video available")
+            : "Voice call · " + (string.IsNullOrWhiteSpace(capabilityStatus) ? "video unavailable" : capabilityStatus);
+        if (!string.IsNullOrEmpty(snap.Video?.FailureReason))
+            hintLabel.Text = "Camera/video: " + snap.Video.FailureReason;
         switch (snap.State)
         {
             case CallProtocol.State.OutgoingRinging: stateLabel.Text = "Ringing…"; break;
@@ -216,10 +305,25 @@ sealed class CallView : Form
         // finished -- so "who pressed Call" only decides the incoming/outgoing wording, not visibility.
         var active = !finished && snap.State is not (CallProtocol.State.OutgoingRinging or CallProtocol.State.IncomingRinging);
         ApplyButtonVisibility(snap.State == CallProtocol.State.IncomingRinging, active, videoLive);
+        bool upgradePrompt = snap.State == CallProtocol.State.Connected && snap.Video?.RemoteRequest == true
+            && snap.Video.Phase == CallVideoConsent.Phase.Waiting;
+        acceptVideo.Text = upgradePrompt ? "Accept video" : "Accept with video";
+        if (upgradePrompt) { acceptVideo.Visible = true; declineVideo.Visible = true; }
+        requestVideo.Visible = snap.State == CallProtocol.State.Connected && snap.VideoCapable && !videoLive
+            && snap.Video?.Phase != CallVideoConsent.Phase.Waiting && snap.Video?.Phase != CallVideoConsent.Phase.Negotiating;
+        remoteCameraOn = videoLive && snap.Video!.RemoteCamera;
+        remoteCamera.Text = remoteCameraOn ? "Camera off" : "Camera on";
+        int visibleRecipientMask = CallRecipientControls.VisibleMask(snap.IsCaller, snap.State, snap.VideoCapable, recipientMask, videoLive);
+        bool speakerVisible = (visibleRecipientMask & PeerEngine.TrustedRemoteSpeaker) != 0;
+        bool cameraVisible = (visibleRecipientMask & PeerEngine.TrustedRemoteCamera) != 0;
+        remoteSpeaker.Visible = speakerVisible;
+        remoteCamera.Visible = remoteFront.Visible = remoteRear.Visible = cameraVisible;
+        recipientControls.Visible = speakerVisible || cameraVisible;
         if (finished)
         {
             accept.Visible = acceptVideo.Visible = decline.Visible = declineVideo.Visible = false;
             hangup.Visible = mute.Visible = camera.Visible = requestVideo.Visible = false;
+            recipientControls.Visible = false;
         }
         RenderVideo(snap.Video);
     }

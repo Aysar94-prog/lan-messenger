@@ -42,6 +42,7 @@ public interface ICallVideoMedia : IDisposable
     CallVideoDiagnostics.Snapshot Diagnostics() => CallVideoDiagnostics.Snapshot.Unavailable();
 
     bool LocalMirror => true;
+    bool SupportsCameraFacing => true;
 
     /// Releases only video, never healthy audio. Stale generations are ignored.
     void Dispose(long generation);
@@ -49,9 +50,13 @@ public interface ICallVideoMedia : IDisposable
 
 public interface ICallVideoFrameSink
 {
-    /// A borrowed frame, valid only for the duration of this call. Never retain it.
+    /// Native-backed objects are borrowed and must be copied before returning. CallVideoFrame owns
+    /// a managed pixel copy which the receiver may retain for a bounded rendering queue.
     void OnFrame(object frame);
 }
+
+// Ownership transfers to the receiver; producers must not mutate Bgra after delivery.
+public sealed record CallVideoFrame(byte[] Bgra, int Width, int Height, int Stride);
 
 public interface ICallVideoMediaListener
 {

@@ -78,7 +78,7 @@ $systemLibraries = @('ws2_32.lib', 'secur32.lib', 'crypt32.lib', 'iphlpapi.lib',
 $arguments = @('/nologo', '/LD', '/std:c++20', '/EHsc', '/O2', '/MT', '/Zi', '/DNDEBUG') + $defines + $includes +
   @("/Fo$out/bridge.obj", "/Fe$out/LanMessenger.WebRtc.Native.dll",
     "/Fd$out/bridge-compile.pdb",
-    (Join-Path $PSScriptRoot 'lm-webrtc-bridge.cpp'), (Join-Path $sdk 'lib/webrtc.lib'),
+    (Join-Path $out 'source-snapshot.cpp'), (Join-Path $sdk 'lib/webrtc.lib'),
     '/link', '/MACHINE:X64', '/DEBUG:FULL', '/OPT:REF', '/OPT:ICF',
     "/PDB:$out/LanMessenger.WebRtc.Native.pdb", "/MAP:$out/bridge.map") + $systemLibraries
 # cl.exe writes to the inherited console handle rather than through the PowerShell pipeline, so
@@ -97,7 +97,10 @@ $manifest = [ordered]@{
   sdkVersion = $env:WindowsSDKVersion
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $out 'build-inputs.json') -Encoding UTF8
-$process = Start-Process -FilePath 'cl.exe' -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $buildLog -RedirectStandardError $errorLog
+$process = Start-Process -FilePath 'cl.exe' -ArgumentList $arguments -NoNewWindow -PassThru -RedirectStandardOutput $buildLog -RedirectStandardError $errorLog
+# Wait for the compiler itself. Start-Process -Wait can remain blocked on a console-host
+# descendant after cl/link have completed in the desktop tool's redirected terminal.
+$process.WaitForExit()
 if ($process.ExitCode -ne 0) {
   Get-Content -LiteralPath $buildLog -ErrorAction SilentlyContinue | Select-Object -Last 40
   Get-Content -LiteralPath $errorLog -ErrorAction SilentlyContinue | Select-Object -Last 40
@@ -122,4 +125,6 @@ $dll = Get-Item (Join-Path $out 'LanMessenger.WebRtc.Native.dll')
 # a bridge this project should be able to produce at all.
 & dotnet run --project (Join-Path $repo 'tests/video-feasibility/windows/NativeBridge/NativeBridge.csproj') -c Release -- $dll.FullName
 if ($LASTEXITCODE -ne 0) { throw "Native bridge ABI check failed; preserved output: $out" }
+& dotnet run --project (Join-Path $repo 'tests/native-video-media/NativeVideoMedia.csproj') -c Release -- $dll.FullName
+if ($LASTEXITCODE -ne 0) { throw "Native video wire/transport check failed; preserved output: $out" }
 "Native bridge built and ABI-checked: $($dll.FullName) ($([math]::Round($dll.Length / 1MB, 1)) MB); output: $out"

@@ -52,6 +52,7 @@ public sealed class CallController
     CallVideoConsent? videoConsent;
     CallVideoCoordinator? videoCoordinator;
     CallVideoActions? videoActions;
+    ICallVideoFrameSink? localVideoSink, remoteVideoSink;
     bool invitedVideo;
 
     System.Threading.Timer? ringTimeoutTimer, mediaTimeoutTimer, heartbeatTimer;
@@ -60,6 +61,17 @@ public sealed class CallController
 
     volatile Callback callback = _ => { };
     readonly List<Callback> listeners = new();
+
+    // Why the current call ended, or null if nothing has failed yet. Set only by the three media
+    // paths and by a failed answer. Reset when a new session starts, because a stale reason printed
+    // against a later call's hang-up would be a lie in the log -- EndReason is written by every
+    // session and this is not, so the two only mean the same thing within one call.
+    public string? LastFailureReason { get; private set; }
+
+    // Raised when a media-negotiation exception ends a call, with the cause. This exists because the
+    // session is torn down inside the same lock that records the reason, so a snapshot published by
+    // EndCallLocked cannot carry it: whoever needs the cause has to hear about the failure itself.
+    public event Action<string, string>? MediaFaulted;
 
     public CallController(PeerEngine engine, CallSettings settings)
     {
@@ -114,6 +126,7 @@ public sealed class CallController
             string callId = Guid.NewGuid().ToString();
             var opened = factory.Open(callId) ?? throw new IOException("Could not open a call channel");
             session = new CallSession.Builder(callId, peerId, true, now) { State = CallProtocol.State.OutgoingRinging };
+            LastFailureReason = null;
             activeTransport = opened;
             negotiationGeneration = capable ? 1 : 0; sequence = 0; localMediaReadySent = false;
             protocolVersion = capable ? 2 : 1;
@@ -160,6 +173,7 @@ public sealed class CallController
             if (!settings.AllowIncomingCalls) { SendBestEffort(transport, CallSignaling.Decline(frame.Cid, 1)); CloseTransportQuietly(transport); return; }
 
             session = new CallSession.Builder(frame.Cid, peerId, false, now) { State = CallProtocol.State.IncomingRinging };
+            LastFailureReason = null;
             activeTransport = transport;
             negotiationGeneration = frame.V == 2 ? 1 : 0; sequence = 0; localMediaReadySent = false;
             protocolVersion = frame.V;
@@ -214,12 +228,26 @@ public sealed class CallController
                 if (decision is not (CallVideoConsent.Result.Ready or CallVideoConsent.Result.Voice))
                     throw new IOException("Camera is not available right now");
             }
+            // The ACCEPT goes on the wire BEFORE the state moves to Connecting and before the ring
+            // watchdog is cancelled. It used to be the other way round, with the send wrapped in
+            // `try { } catch { }`: a send that failed still left the session in Connecting with no
+            // watchdog of any kind -- the caller never learned the answer was not delivered and the
+            // call could not be ended, because the only way out was a timer that no longer existed.
+            // An accept is either on the wire or the call ends here, and while it still ends the
+            // peer is told so it does not sit ringing at a stranger.
+            var accept = CallSignaling.Accept(callId, ++sequence);
+            if (protocolVersion == 2) accept.B!["media"] = wantVideo ? "video" : "audio";
+            try { SendFrameTo(activeTransport, accept); }
+            catch (Exception e)
+            {
+                LastFailureReason = e.Message;
+                MediaFaulted?.Invoke(callId, LastFailureReason);
+                EndCallLocked(CallProtocol.EndReason.NetworkFailure);
+                throw;
+            }
             session.State = CallProtocol.State.Connecting;
             t = activeTransport; peerId = session.PeerId; isCaller = session.IsCaller;
             CancelRingTimeout();
-            var accept = CallSignaling.Accept(callId, ++sequence);
-            if (protocolVersion == 2) accept.B!["media"] = wantVideo ? "video" : "audio";
-            try { SendFrameTo(t!, accept); } catch { }
             ScheduleMediaTimeout();
             StartHeartbeat();
             NotifyCallback(session.Snapshot());
@@ -330,8 +358,22 @@ public sealed class CallController
                 }
             },
             autoAcceptVideo: autoVideo, autoStartCamera: autoCamera);
+        adapter.AttachLocal(localVideoSink);
+        adapter.AttachRemote(remoteVideoSink);
         videoCoordinator = created;
         session.Video = created.Published;
+    }
+
+    public void AttachVideoSinks(ICallVideoFrameSink? local, ICallVideoFrameSink? remote)
+    {
+        lock (gate)
+        {
+            var current = videoCoordinator?.Media;
+            if (localVideoSink != null) current?.DetachLocal(localVideoSink);
+            if (remoteVideoSink != null) current?.DetachRemote(remoteVideoSink);
+            localVideoSink = local; remoteVideoSink = remote;
+            current?.AttachLocal(local); current?.AttachRemote(remote);
+        }
     }
 
     // Releases video only. Audio, and the call itself, are untouched: a video failure must never end a
@@ -526,25 +568,46 @@ public sealed class CallController
             ITransport? t; lock (gate) t = activeTransport;
             if (t != null) SendFrameTo(t, CallSignaling.Offer(callId!, NextSeq(), gen, sdp));
         }
-        catch { lock (gate) { SendBestEffort(activeTransport, CallSignaling.Hangup(callId ?? "", NextSeq())); EndCallLocked(CallProtocol.EndReason.MediaError); } }
+        catch (Exception e) { FailMediaLocked(e, callId ?? ""); }
     }
 
     async Task HandleRemoteOfferAsync(ICallMedia m, CallProtocol.Frame frame)
     {
+        string? callId = null;
         try
         {
             var sdp = await m.CreateAnswerAsync(CallSignaling.GetSdp(frame) ?? "");
-            ITransport? t; string? callId; long gen;
+            ITransport? t; long gen;
             lock (gate) { if (session == null) return; t = activeTransport; callId = session.CallId; gen = frame.Gen; }
             if (t != null) SendFrameTo(t, CallSignaling.Answer(callId!, NextSeq(), gen, sdp));
         }
-        catch { lock (gate) { SendBestEffort(activeTransport, CallSignaling.Hangup(session?.CallId ?? "", NextSeq())); EndCallLocked(CallProtocol.EndReason.MediaError); } }
+        catch (Exception e) { FailMediaLocked(e, callId ?? ""); }
     }
 
     async Task HandleRemoteAnswerAsync(ICallMedia m, CallProtocol.Frame frame)
     {
-        try { await m.SetRemoteAnswerAsync(CallSignaling.GetSdp(frame) ?? ""); }
-        catch { lock (gate) { SendBestEffort(activeTransport, CallSignaling.Hangup(session?.CallId ?? "", NextSeq())); EndCallLocked(CallProtocol.EndReason.MediaError); } }
+        string? callId = null;
+        try
+        {
+            lock (gate) callId = session?.CallId;
+            await m.SetRemoteAnswerAsync(CallSignaling.GetSdp(frame) ?? "");
+        }
+        catch (Exception e) { FailMediaLocked(e, callId ?? ""); }
+    }
+
+    // One place for every media-negotiation failure, under `gate`. These three paths used to catch
+    // and discard the exception entirely, so a validator or media refusal -- the single most
+    // common reason a call dies -- was indistinguishable from a network drop in the call log: the
+    // session simply ended as MediaError with no cause anywhere. The reason is recorded on
+    // LastFailureReason before the session is torn down, which is the same lifetime as the call, and
+    // is also where `MediaFaulted` is raised for anyone who wants to see the cause without polling
+    // a field that EndCallLocked has already invalidated.
+    void FailMediaLocked(Exception e, string callId)
+    {
+        LastFailureReason = e is IOException || e is InvalidOperationException ? e.Message : e.GetType().Name;
+        MediaFaulted?.Invoke(callId, LastFailureReason);
+        SendBestEffort(activeTransport, CallSignaling.Hangup(callId, NextSeq()));
+        EndCallLocked(CallProtocol.EndReason.MediaError);
     }
 
 
@@ -720,12 +783,21 @@ public sealed class CallController
     sealed class VideoEffects(CallController owner) : CallVideoActions.IEffects
     {
         public void Answer(string callId, bool video) => owner.SendAnswerLocked(callId, video);
-        public void Request(string callId, string request) =>
+        public void Request(string callId, string request)
+        {
             owner.SendLocked(callId, CallSignaling.VideoRequest(callId, owner.NextSeq(), 0, request));
-        public void Accept(string callId, string request) =>
+            owner.videoCoordinator?.ProposalAcceptedLocally(request);
+        }
+        public void Accept(string callId, string request)
+        {
             owner.SendLocked(callId, CallSignaling.VideoAcceptUpgrade(callId, owner.NextSeq(), 0, request));
-        public void Decline(string callId, string request) =>
+            owner.videoCoordinator?.UpgradeAcceptedLocally(request);
+        }
+        public void Decline(string callId, string request)
+        {
             owner.SendLocked(callId, CallSignaling.VideoDecline(callId, owner.NextSeq(), 0, request));
+            owner.videoCoordinator?.UpgradeDeclinedLocally(request);
+        }
         public void Camera(string callId, bool on) { lock (owner.gate) owner.videoCoordinator?.CameraChosenLocally(on); }
     }
 
@@ -753,10 +825,10 @@ public sealed class CallController
         {
             if (session == null || session.CallId != expectedCallId || videoActions == null) return null;
             if (session.State == CallProtocol.State.IncomingRinging)
-                return video ? videoActions.AcceptVideo(expectedCallId) : videoActions.AnswerWithVoice(expectedCallId);
+                return video ? videoActions.AcceptVideoOrVoice(expectedCallId) : videoActions.AnswerWithVoice(expectedCallId);
             var request = videoConsent?.RequestId;
             if (request == null) return null;
-            return video ? videoActions.AcceptUpgrade(expectedCallId, request) : null;
+            return video ? videoActions.AcceptUpgrade(expectedCallId, request) : videoActions.DeclineUpgrade(expectedCallId, request);
         }
     }
 
@@ -766,7 +838,19 @@ public sealed class CallController
             throw new IOException("That call is no longer waiting");
         var accept = CallSignaling.Accept(expectedCallId, ++sequence);
         if (protocolVersion == 2) accept.B!["media"] = video ? "video" : "audio";
-        SendFrameTo(activeTransport, accept);
+        // Sent before the state change and before the ring watchdog is cancelled, for the same reason
+        // as in AcceptAsync: an answer that could not be delivered must end the call rather than
+        // leave it ringing forever from this side. Unlike AcceptAsync this is reached synchronously
+        // from a button handler through CallVideoActions, which rolls its own consent mutation back
+        // when this throws -- so ending the call here is the behaviour the caller already expects.
+        try { SendFrameTo(activeTransport, accept); }
+        catch (Exception e)
+        {
+            LastFailureReason = e.Message;
+            MediaFaulted?.Invoke(expectedCallId, LastFailureReason);
+            EndCallLocked(CallProtocol.EndReason.NetworkFailure);
+            throw;
+        }
         session.State = CallProtocol.State.Connecting;
         CancelRingTimeout();
         ScheduleMediaTimeout();
@@ -823,8 +907,11 @@ public sealed class CallController
     {
         lock (gate)
         {
-            if (session == null || session.CallId != expectedCallId || !session.IsCaller) return;
-            if ((engine.TrustedCallMask(session.PeerId) & PeerEngine.TrustedRemoteCamera) == 0) return;
+            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.State != CallProtocol.State.Connected) return;
+            // Recipient controls use the grant the OTHER device reported to this caller (Slave
+            // direction), never this machine's local Masters grant. The short freshness window also
+            // makes revoke/failure fail closed between the UI click and the wire send.
+            if ((engine.RemoteControlDisplayMask(session.PeerId) & PeerEngine.TrustedRemoteCamera) == 0) return;
             var live = videoCoordinator?.Published;
             if (live?.Request == null) return;
             SendFrameTo(activeTransport, CallSignaling.RemoteCamera(expectedCallId, NextSeq(), live.Generation,
@@ -836,8 +923,8 @@ public sealed class CallController
     {
         lock (gate)
         {
-            if (session == null || session.CallId != expectedCallId || !session.IsCaller) return;
-            if ((engine.TrustedCallMask(session.PeerId) & PeerEngine.TrustedRemoteSpeaker) == 0) return;
+            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.State != CallProtocol.State.Connected) return;
+            if ((engine.RemoteControlDisplayMask(session.PeerId) & PeerEngine.TrustedRemoteSpeaker) == 0) return;
             SendFrameTo(activeTransport, CallSignaling.RemoteSpeaker(expectedCallId, NextSeq(), on));
         }
     }
@@ -860,6 +947,7 @@ public sealed class CallController
         CloseVideoLocked();
         session.State = CallProtocol.State.Ending;
         session.EndReason = reason;
+        session.FailureReason = LastFailureReason;
         if (session.State == CallProtocol.State.Ending && session.ConnectedAtMs > 0)
             session.DurationMs = PeerEngine.Now - session.ConnectedAtMs;
         var snap = session.Snapshot();

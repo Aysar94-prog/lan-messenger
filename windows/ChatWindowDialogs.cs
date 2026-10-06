@@ -128,7 +128,7 @@ sealed partial class ChatWindow
         }catch(Exception e){MessageBox.Show(e.Message,"Verify device");}
     }
 
-    void ShowTrustedCallAccess(PeerEngine.Peer peer,Form owner)
+    void ShowTrustedCallAccess(PeerEngine.Peer peer,Form owner,bool closeOwnerOnSave=true)
     {
         var mask=engine.TrustedCallMask(peer.Id);
         using var dialog=new Form{Text="Trusted call access",Size=new Size(540,400),StartPosition=FormStartPosition.CenterParent,Font=Font};
@@ -158,9 +158,85 @@ sealed partial class ChatWindow
                 &&MessageBox.Show(owner,"This device will be able to turn your camera on and off during a call, and see the picture.","Enable remote camera control",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;
             if((next&PeerEngine.TrustedAutoAnswerVoice)!=0&&(mask&PeerEngine.TrustedAutoAnswerVoice)==0
                 &&MessageBox.Show(owner,"Calls from this device will connect immediately and may activate your microphone. You can mute or hang up at any time.","Enable trusted call access",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)!=DialogResult.OK)return;
-            engine.SetTrustedCallMask(peer.Id,next);dialog.Close();owner.Close();Render();
+            engine.SetTrustedCallMask(peer.Id,next);dialog.Close();if(closeOwnerOnSave)owner.Close();Render();
         };
         dialog.ShowDialog(owner);
+    }
+
+    static string PermissionScopeLabel(int mask)
+    {
+        var scopes=new List<string>();
+        if((mask&PeerEngine.TrustedAutoAnswerVoice)!=0)scopes.Add("Voice auto-answer");
+        if((mask&PeerEngine.TrustedAutoAnswerVideo)!=0)scopes.Add("Video auto-answer");
+        if((mask&PeerEngine.TrustedRemoteCamera)!=0)scopes.Add("Remote camera");
+        if((mask&PeerEngine.TrustedRemoteSpeaker)!=0)scopes.Add("Remote speaker");
+        return scopes.Count==0?"No permissions":string.Join(" · ",scopes);
+    }
+
+    void ShowPermissionsMenu()
+    {
+        using var dialog=new Form{Text="Call permissions",Size=new Size(440,250),StartPosition=FormStartPosition.CenterParent,Font=Font,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false};
+        var panel=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(22),FlowDirection=FlowDirection.TopDown,WrapContents=false};
+        panel.Controls.Add(MessageLabel("Review permissions by direction. Masters are devices you granted access to; Slave devices granted access to you.",10,Color.SlateGray,380));
+        var masters=new Button{Text="Masters — permissions I granted",AutoSize=true,Width=370};
+        var slave=new Button{Text="Slave — permissions granted to me",AutoSize=true,Width=370};
+        masters.Click+=(_,_)=>{dialog.Hide();ShowPermissionDevices(true);dialog.Show();};
+        slave.Click+=(_,_)=>{dialog.Hide();ShowPermissionDevices(false);dialog.Show();};
+        panel.Controls.Add(masters);panel.Controls.Add(slave);StyleButtons(panel);dialog.Controls.Add(panel);dialog.ShowDialog(this);
+    }
+
+    void ShowPermissionDevices(bool masters)
+    {
+        using var dialog=new Form{Text=masters?"Masters":"Slave",Size=new Size(680,560),StartPosition=FormStartPosition.CenterParent,Font=Font};
+        var root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(16),ColumnCount=1,RowCount=3};
+        root.RowStyles.Add(new(SizeType.Absolute,58));root.RowStyles.Add(new(SizeType.Percent,100));root.RowStyles.Add(new(SizeType.Absolute,46));
+        var explanation=masters
+            ?"Devices you granted permissions to. Select a device to edit or revoke its permissions."
+            :"Devices that granted permissions to you. Only that device can change its grant; results are verified and session-only.";
+        root.Controls.Add(MessageLabel(explanation,10,Color.SlateGray,620),0,0);
+        var list=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true,BackColor=Color.White,Padding=new Padding(8)};root.Controls.Add(list,0,1);
+        var footer=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};
+        var refresh=new Button{Text="Refresh",AutoSize=true,Visible=!masters};var close=new Button{Text="Close",AutoSize=true};close.Click+=(_,_)=>dialog.Close();footer.Controls.Add(refresh);footer.Controls.Add(close);StyleButtons(footer);root.Controls.Add(footer,0,2);dialog.Controls.Add(root);
+        bool refreshing=false;
+        void RenderRows()
+        {
+            list.SuspendLayout();list.Controls.Clear();int shown=0,unknown=0;
+            foreach(var peer in engine.Peers.Where(p=>p.Trusted).OrderBy(p=>p.Name,StringComparer.CurrentCultureIgnoreCase))
+            {
+                int mask;string state;
+                if(masters){mask=engine.TrustedCallMask(peer.Id);if(mask==0)continue;state=peer.Online?"Online":"Offline";}
+                else{
+                    var remote=engine.RemoteCallGrantStatus(peer.Id);
+                    if(remote==null){unknown++;continue;}
+                    mask=remote.Mask;if(mask==0)continue;
+                    var checkedText=DateTimeOffset.FromUnixTimeMilliseconds(remote.CheckedAt).LocalDateTime.ToString("g");
+                    state=remote.Fresh?"Confirmed now":$"Last checked {checkedText}";
+                    if(!peer.Online)state+=" · Offline";
+                }
+                shown++;
+                var row=new Panel{Width=610,Height=76,Margin=new Padding(2,3,2,3),BackColor=Color.FromArgb(246,248,250)};
+                row.Controls.Add(new Label{Text=peer.Name,Font=new Font(Font,FontStyle.Bold),Location=new Point(12,8),AutoSize=true,MaximumSize=new Size(430,24)});
+                row.Controls.Add(new Label{Text=PermissionScopeLabel(mask)+"\n"+state,Location=new Point(12,32),AutoSize=true,MaximumSize=new Size(470,40),ForeColor=Color.DimGray});
+                var open=new Button{Text=masters?"Edit":"Details",AutoSize=true,Location=new Point(510,20)};
+                if(masters)open.Click+=(_,_)=>{ShowTrustedCallAccess(peer,dialog,false);RenderRows();};
+                else open.Click+=(_,_)=>MessageBox.Show(dialog,$"Permissions {peer.Name} granted this device:\n\n{PermissionScopeLabel(mask)}\n\n{state}\n\nThe remote device remains authoritative.",peer.Name,MessageBoxButtons.OK,MessageBoxIcon.Information);
+                row.Controls.Add(open);list.Controls.Add(row);
+            }
+            if(shown==0)list.Controls.Add(MessageLabel(masters?"No verified devices currently have permissions from you.":"No devices have confirmed permissions for you.",11,Ink,580));
+            if(!masters&&unknown>0)list.Controls.Add(MessageLabel($"{unknown} verified device(s): permission status unknown. Offline or older devices may not support this query.",9,Color.SlateGray,580));
+            list.ResumeLayout();
+        }
+        async Task RefreshSlave()
+        {
+            if(masters||refreshing||dialog.IsDisposed)return;refreshing=true;refresh.Enabled=false;refresh.Text="Refreshing…";
+            try{await Task.Run(()=>{foreach(var peer in engine.Peers)if(peer.Trusted&&peer.Online)engine.RefreshRemoteCallGrant(peer.Id);});}
+            finally{if(!dialog.IsDisposed){refreshing=false;refresh.Enabled=true;refresh.Text="Refresh";RenderRows();}}
+        }
+        refresh.Click+=async(_,_)=>await RefreshSlave();
+        var timer=new System.Windows.Forms.Timer{Interval=5000};timer.Tick+=async(_,_)=>await RefreshSlave();
+        dialog.Shown+=async(_,_)=>{RenderRows();if(!masters){timer.Start();await RefreshSlave();}};
+        dialog.FormClosed+=(_,_)=>timer.Dispose();
+        dialog.ShowDialog(this);
     }
     async Task AddAddress()
     {

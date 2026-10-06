@@ -14,8 +14,7 @@
 //   EnableMedia() alone does not supply codecs; leaving those null crashes M155's voice engine.
 //   Probe/create/signalling never construct a physical camera or CoreAudio module.
 //   Real capture is only reachable through `start-video` with an explicitly named
-//   device, and is not implemented in this revision -- `start-video` accepts only the synthetic
-//   source, so the whole media path is exercisable with no hardware attached.
+//   device: camera:default uses DirectShow; synthetic remains an explicit test-only command.
 //
 // Return codes (shared with the managed driver):
 //    1 success   -1 invalid argument   -2 not found / capacity   -3 output too small   -4 internal
@@ -62,7 +61,10 @@
 #include "p2p/base/basic_packet_socket_factory.h"
 #include "rtc_base/physical_socket_server.h"
 #include "rtc_base/thread.h"
+#include "rtc_base/time_utils.h"
 #include "rtc_base/ssl_adapter.h"
+#include "libyuv/convert_argb.h"
+#include "modules/video_capture/video_capture_factory.h"
 
 namespace {
 
@@ -85,7 +87,76 @@ void ReleaseRuntime() {
 // Bumped whenever the exported surface changes shape. The managed side refuses to bind a
 // mismatched DLL rather than calling into an ABI it was not written against.
 constexpr uint32_t kAbiMajor = 1;
-constexpr uint32_t kAbiMinor = 0;
+constexpr uint32_t kAbiMinor = 1;
+
+using FrameCallback = void(__cdecl*)(uint64_t, int, const uint8_t*, int, int, int, void*);
+
+class ManagedFrameSink : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
+ public:
+  void Configure(uint64_t handle, FrameCallback callback, void* context, int kind = 1) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    handle_ = handle; callback_ = callback; context_ = context; kind_ = kind;
+  }
+  void OnFrame(const webrtc::VideoFrame& frame) override {
+    auto i420 = frame.video_frame_buffer()->ToI420();
+    if (i420 == nullptr) return;
+    const int width = i420->width(), height = i420->height(), stride = width * 4;
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return;
+    std::vector<uint8_t> pixels(static_cast<size_t>(stride) * height);
+    if (libyuv::I420ToARGB(i420->DataY(), i420->StrideY(), i420->DataU(), i420->StrideU(),
+                          i420->DataV(), i420->StrideV(), pixels.data(), stride, width, height) != 0) return;
+    // Unregister waits for an in-flight callback before managed delegates/DLL can be released.
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (callback_ != nullptr) callback_(handle_, kind_, pixels.data(), width, height, stride, context_);
+  }
+ private:
+  std::mutex mutex_;
+  uint64_t handle_ = 0;
+  FrameCallback callback_ = nullptr;
+  void* context_ = nullptr;
+  int kind_ = 1;
+};
+
+// Constructed only by an explicit start-video command after the managed consent gate.
+class CameraVideoSource : public webrtc::AdaptedVideoTrackSource,
+                          public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
+ public:
+  bool is_screencast() const override { return false; }
+  std::optional<bool> needs_denoising() const override { return true; }
+  webrtc::MediaSourceInterface::SourceState state() const override { return webrtc::MediaSourceInterface::kLive; }
+  bool remote() const override { return false; }
+  void OnFrame(const webrtc::VideoFrame& frame) override { webrtc::AdaptedVideoTrackSource::OnFrame(frame); }
+  void Start() {
+    std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> devices(webrtc::VideoCaptureFactory::CreateDeviceInfo());
+    if (!devices || devices->NumberOfDevices() == 0) throw std::runtime_error("No Windows camera is available");
+    char name[256] = {}, id[1024] = {};
+    if (devices->GetDeviceName(0, name, sizeof(name), id, sizeof(id)) != 0)
+      throw std::runtime_error("Could not identify the Windows camera");
+    webrtc::VideoCaptureCapability requested, selected;
+    requested.width = 640; requested.height = 480; requested.maxFPS = 15;
+    requested.videoType = webrtc::VideoType::kI420;
+    if (devices->GetBestMatchedCapability(id, requested, selected) < 0 ||
+        selected.width <= 0 || selected.height <= 0 || selected.width > 1920 || selected.height > 1080)
+      throw std::runtime_error("Camera has no supported bounded capture format");
+    selected.maxFPS = (std::min)(selected.maxFPS, 15);
+    capture_ = webrtc::VideoCaptureFactory::Create(id);
+    if (!capture_) throw std::runtime_error("Camera unavailable: check Windows camera privacy settings");
+    webrtc::VideoRotation rotation = webrtc::kVideoRotation_0;
+    if (devices->GetOrientation(id, rotation) == 0) capture_->SetCaptureRotation(rotation);
+    capture_->SetApplyRotation(true);
+    capture_->RegisterCaptureDataCallback(this);
+    if (capture_->StartCapture(selected) != 0) {
+      Stop(); throw std::runtime_error("Camera could not start: access denied, disconnected or busy");
+    }
+  }
+  void Stop() {
+    if (!capture_) return;
+    capture_->StopCapture(); capture_->DeRegisterCaptureDataCallback(); capture_ = nullptr;
+  }
+  ~CameraVideoSource() override { Stop(); }
+ private:
+  webrtc::scoped_refptr<webrtc::VideoCaptureModule> capture_;
+};
 
 // Mirrors the proven endpoint cap. Small on purpose: a desktop client runs a handful of calls,
 // and a hard cap bounds native memory even if the managed side leaks handles.
@@ -124,8 +195,9 @@ class SyntheticVideoSource : public webrtc::AdaptedVideoTrackSource {
     const int step_us = 1000000 / frames_per_second;
     const auto interval = std::chrono::microseconds(step_us);
     worker_ = std::thread([this, step_us, interval]() {
-      uint32_t timestamp = 0;
+      uint8_t shade = 16;
       while (running_.load()) {
+        const int64_t timestamp = webrtc::TimeMicros();
         int out_width = 0;
         int out_height = 0;
         int crop_width = 0;
@@ -143,10 +215,12 @@ class SyntheticVideoSource : public webrtc::AdaptedVideoTrackSource {
               webrtc::I420Buffer::Create(out_width, out_height);
           if (buffer == nullptr) break;
           buffer->InitializeData();
-          webrtc::VideoFrame frame(buffer, webrtc::VideoRotation::kVideoRotation_0, timestamp);
+          std::memset(buffer->MutableDataY(), shade, buffer->StrideY() * out_height);
+          shade = shade >= 220 ? 16 : shade + 4;
+          webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
+              .set_video_frame_buffer(buffer).set_timestamp_us(timestamp).build();
           OnFrame(frame);
         }
-        timestamp += static_cast<uint32_t>(step_us);
         std::this_thread::sleep_for(interval);
       }
     });
@@ -245,12 +319,58 @@ class SetRemoteObserver : public webrtc::SetRemoteDescriptionObserverInterface {
   bool done_ = false;
 };
 
+class SetLocalObserver : public webrtc::SetLocalDescriptionObserverInterface {
+ public:
+  void OnSetLocalDescriptionComplete(webrtc::RTCError error) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    error_ = error.ok() ? std::string() : error.message();
+    done_ = true;
+  }
+  bool WaitFor(int milliseconds) {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(milliseconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (done_) return error_.empty();
+      }
+      Sleep(5);
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    return false;
+  }
+  std::string Error() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return error_;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::string error_;
+  bool done_ = false;
+};
+
 // Gathers ICE candidates and connection state. Candidates are buffered rather than streamed: the
 // managed side already owns an authenticated signalling channel and pulls them per command, which
 // keeps this ABI free of native callbacks and therefore free of cross-thread reentrancy into
 // managed code.
 class PeerObserver : public webrtc::PeerConnectionObserver {
  public:
+  ~PeerObserver() override {
+    if (remote_track_ != nullptr) remote_track_->RemoveSink(&remote_sink_);
+  }
+  void ConfigureFrames(uint64_t handle, FrameCallback callback, void* context) {
+    remote_sink_.Configure(handle, callback, context);
+  }
+  void OnTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {
+    if (transceiver == nullptr || transceiver->receiver() == nullptr) return;
+    auto media = transceiver->receiver()->track();
+    if (media == nullptr || media->kind() != webrtc::MediaStreamTrackInterface::kVideoKind) return;
+    auto* video = static_cast<webrtc::VideoTrackInterface*>(media.get());
+    if (remote_track_ != nullptr) remote_track_->RemoveSink(&remote_sink_);
+    remote_track_ = video;
+    remote_track_->AddOrUpdateSink(&remote_sink_, webrtc::VideoSinkWants());
+  }
   void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState state) override {
     std::lock_guard<std::mutex> lock(mutex_);
     signaling_ = state;
@@ -262,7 +382,8 @@ class PeerObserver : public webrtc::PeerConnectionObserver {
     const std::string text = copy.ToString();
     if (text.empty()) return;
     std::lock_guard<std::mutex> lock(mutex_);
-    candidates_.push_back(text);
+    candidates_.push_back(candidate->sdp_mid() + "|" +
+                          std::to_string(candidate->sdp_mline_index()) + "|" + text);
   }
   void OnIceGatheringChange(
       webrtc::PeerConnectionInterface::IceGatheringState /* state */) override {}
@@ -299,6 +420,8 @@ class PeerObserver : public webrtc::PeerConnectionObserver {
     }
   }
   std::mutex mutex_;
+  ManagedFrameSink remote_sink_;
+  webrtc::scoped_refptr<webrtc::VideoTrackInterface> remote_track_;
   std::vector<std::string> candidates_;
   webrtc::PeerConnectionInterface::SignalingState signaling_ =
       webrtc::PeerConnectionInterface::kStable;
@@ -368,15 +491,23 @@ class Bridge {
       }
       peer_->SetAudioRecording(false);
       peer_->SetAudioPlayout(false);
-      // Advertise an actual audio media section without opening a capture device.
-      auto audio = peer_->AddTransceiver(webrtc::MediaType::AUDIO);
-      if (!audio.ok()) throw std::runtime_error(audio.error().message());
-      std::vector<webrtc::RtpCodecCapability> codecs;
-      for (const auto& codec : factory_->GetRtpSenderCapabilities(webrtc::MediaType::AUDIO).codecs)
-        if (codec.name == "G722") codecs.push_back(codec);
-      if (codecs.empty()) throw std::runtime_error("G722 codec unavailable");
-      auto codec_result = audio.value()->SetCodecPreferences(codecs);
-      if (!codec_result.ok()) throw std::runtime_error(codec_result.message());
+      // This is the independent video PeerConnection. The production audio adapter owns G722.
+      // An audio m-line here violates A02b's single-video-section SDP and ICE m-line index 0.
+      // A receive-only video m-line must exist before the first offer. Adding video only when the
+      // local camera starts makes a receive-only Windows caller advertise audio alone, so Android
+      // can never send its camera even though the user accepted video.
+      webrtc::RtpTransceiverInit video_init;
+      // Negotiate a send slot without acquiring hardware. Later camera toggles reuse this sender.
+      video_init.direction = webrtc::RtpTransceiverDirection::kSendRecv;
+      auto video = peer_->AddTransceiver(webrtc::MediaType::VIDEO, video_init);
+      if (!video.ok()) throw std::runtime_error(video.error().message());
+      video_transceiver_ = video.value();
+      std::vector<webrtc::RtpCodecCapability> video_codecs;
+      for (const auto& codec : factory_->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO).codecs)
+        if (codec.name == "VP8") video_codecs.push_back(codec);
+      if (video_codecs.empty()) throw std::runtime_error("VP8 codec unavailable");
+      auto video_codec_result = video.value()->SetCodecPreferences(video_codecs);
+      if (!video_codec_result.ok()) throw std::runtime_error(video_codec_result.message());
       return true;
     } catch (const std::exception& failure) {
       error_ = failure.what();
@@ -394,6 +525,7 @@ class Bridge {
   void Stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     StopVideoLocked();
+    video_transceiver_ = nullptr;
     if (peer_ != nullptr) {
       peer_->Close();
       peer_ = nullptr;
@@ -418,12 +550,18 @@ class Bridge {
     if (command == "state") return observer_ != nullptr ? observer_->Describe() : NoPeer();
     if (command == "create-offer") return CreateOfferLocked();
     if (command == "set-remote") return SetRemoteLocked(payload);
+    if (command == "set-local") return SetLocalLocked(payload);
     if (command == "create-answer") return CreateAnswerLocked();
     if (command == "add-ice") return AddIceLocked(payload);
     if (command == "take-candidates") return TakeCandidatesLocked();
     if (command == "start-video") return StartVideoLocked(payload);
     if (command == "stop-video") return StopVideoLocked();
     return Error("unknown command");
+  }
+  void ConfigureFrames(uint64_t handle, FrameCallback callback, void* context) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (observer_ != nullptr) observer_->ConfigureFrames(handle, callback, context);
+    local_sink_.Configure(handle, callback, context, 0);
   }
 
  private:
@@ -483,14 +621,49 @@ class Bridge {
     return "{\"sdp\":" + Quote(sdp) + ",\"type\":" + Quote(type) + "}";
   }
 
-  std::string SetRemoteLocked(const std::string& sdp) {
+  std::string SetRemoteLocked(const std::string& payload) {
     if (peer_ == nullptr) return NoPeer();
+    if (payload.empty()) return Error("empty remote description");
+    std::string sdp = payload;
+    webrtc::SdpType type = webrtc::SdpType::kOffer;
+    // Try to detect type prefix: "offer|..." or "answer|..."
+    const size_t sep = payload.find('|');
+    if (sep != std::string::npos && sep > 0 && sep < 10) {
+      const std::string t = payload.substr(0, sep);
+      if (t == "offer" || t == "Offer" || t == "OFFER") {
+        type = webrtc::SdpType::kOffer;
+        sdp = payload.substr(sep + 1);
+      } else if (t == "answer" || t == "Answer" || t == "ANSWER") {
+        type = webrtc::SdpType::kAnswer;
+        sdp = payload.substr(sep + 1);
+      } else if (t == "pranswer" || t == "prAnswer") {
+        type = webrtc::SdpType::kPrAnswer;
+        sdp = payload.substr(sep + 1);
+      }
+    } else {
+      // Try to detect from SDP content
+      if (payload.find("a=type:answer") != std::string::npos ||
+          payload.find("a=type:Answer") != std::string::npos) {
+        type = webrtc::SdpType::kAnswer;
+      } else if (payload.find("a=type:pranswer") != std::string::npos) {
+        type = webrtc::SdpType::kPrAnswer;
+      } else if (payload.find("a=type:offer") != std::string::npos ||
+                 payload.find("a=type:Offer") != std::string::npos) {
+        type = webrtc::SdpType::kOffer;
+      }
+    }
     if (sdp.empty()) return Error("empty remote description");
     webrtc::SdpParseError parse_error;
     std::unique_ptr<webrtc::SessionDescriptionInterface> description =
-        webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, sdp, &parse_error);
+        webrtc::CreateSessionDescription(type, sdp, &parse_error);
     if (description == nullptr) {
-      return Error(std::string("unparsable remote sdp: ") + parse_error.description);
+      // Try the other type as fallback for compatibility
+      webrtc::SdpType other = (type == webrtc::SdpType::kOffer) ?
+          webrtc::SdpType::kAnswer : webrtc::SdpType::kOffer;
+      description = webrtc::CreateSessionDescription(other, sdp, &parse_error);
+      if (description == nullptr) {
+        return Error(std::string("unparsable remote sdp: ") + parse_error.description);
+      }
     }
     auto observer = webrtc::make_ref_counted<SetRemoteObserver>();
     peer_->SetRemoteDescription(std::move(description), observer);
@@ -514,6 +687,41 @@ class Bridge {
     if (!error.empty()) return Error(error);
     if (sdp.empty()) return Error("the answer was empty");
     return "{\"sdp\":" + Quote(sdp) + ",\"type\":" + Quote(type) + "}";
+  }
+
+  std::string SetLocalLocked(const std::string& payload) {
+    if (peer_ == nullptr) return NoPeer();
+    if (payload.empty()) return Error("empty local description");
+    std::string sdp = payload;
+    webrtc::SdpType type = webrtc::SdpType::kAnswer;
+    const size_t sep = payload.find('|');
+    if (sep != std::string::npos && sep > 0 && sep < 10) {
+      const std::string t = payload.substr(0, sep);
+      if (t == "offer" || t == "Offer") {
+        type = webrtc::SdpType::kOffer;
+        sdp = payload.substr(sep + 1);
+      } else if (t == "answer" || t == "Answer") {
+        type = webrtc::SdpType::kAnswer;
+        sdp = payload.substr(sep + 1);
+      } else if (t == "pranswer") {
+        type = webrtc::SdpType::kPrAnswer;
+        sdp = payload.substr(sep + 1);
+      }
+    }
+    webrtc::SdpParseError parse_error;
+    std::unique_ptr<webrtc::SessionDescriptionInterface> description =
+        webrtc::CreateSessionDescription(type, sdp, &parse_error);
+    if (description == nullptr) {
+      return Error(std::string("unparsable local sdp: ") + parse_error.description);
+    }
+    auto observer = webrtc::make_ref_counted<SetLocalObserver>();
+    peer_->SetLocalDescription(std::move(description), observer);
+    if (!observer->WaitFor(3000)) {
+      return Error("timed out applying the local description");
+    }
+    const std::string failure = observer->Error();
+    if (!failure.empty()) return Error(failure);
+    return "{\"ok\":true}";
   }
 
   // Accepts one candidate as "<sdp_mid>|<sdp_mline_index>|<candidate sdp>". The mid and index are
@@ -556,37 +764,37 @@ class Bridge {
     return json;
   }
 
-  // Only a synthetic source is accepted in this revision. Naming a real device is rejected
-  // outright rather than silently substituted, so no caller can believe it opened a camera when
-  // it did not. Real capture stays behind the WVC-12 device gate.
+  // Device acquisition is explicit; unknown device selectors are never silently substituted.
   std::string StartVideoLocked(const std::string& source) {
     if (peer_ == nullptr) return NoPeer();
-    if (video_source_ != nullptr) return "{\"ok\":true,\"alreadyStarted\":true}";
-    if (source != "synthetic") {
-      return Error("only the synthetic source is available; device capture is not implemented "
-                   "in this revision");
+    if (video_source_ != nullptr || camera_source_ != nullptr) return "{\"ok\":true,\"alreadyStarted\":true}";
+    if (source != "synthetic" && source != "camera:default") {
+      return Error("unknown camera selection; use camera:default");
     }
     try {
-      auto source_object = webrtc::make_ref_counted<SyntheticVideoSource>();
+      webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source_object;
+      if (source == "synthetic") {
+        video_source_ = webrtc::make_ref_counted<SyntheticVideoSource>();
+        source_object = video_source_;
+      } else {
+        camera_source_ = webrtc::make_ref_counted<CameraVideoSource>();
+        source_object = camera_source_;
+      }
       webrtc::scoped_refptr<webrtc::VideoTrackInterface> track =
           factory_->CreateVideoTrack(source_object, "lm-video");
-      if (track == nullptr) return Error("could not create the video track");
-      webrtc::RtpTransceiverInit init;
-      init.direction = webrtc::RtpTransceiverDirection::kSendOnly;
-      webrtc::RTCErrorOr<webrtc::scoped_refptr<webrtc::RtpTransceiverInterface>> added =
-          peer_->AddTransceiver(track, init);
-      if (!added.error().ok()) {
-        return Error(std::string("could not attach the video track: ") +
-                     added.error().message());
-      }
-      video_transceiver_ = added.MoveValue();
-      video_source_ = source_object;
+      if (track == nullptr) throw std::runtime_error("could not create the video track");
+      if (!video_transceiver_ || !video_transceiver_->sender()->SetTrack(track.get()))
+        throw std::runtime_error("could not attach the video track");
       video_track_ = track;
-      source_object->Start(15);
-      return "{\"ok\":true,\"source\":\"synthetic\",\"deviceOpened\":false}";
+      track->AddOrUpdateSink(&local_sink_, webrtc::VideoSinkWants());
+      if (camera_source_) camera_source_->Start(); else video_source_->Start(15);
+      return "{\"ok\":true,\"source\":" + Quote(source) + ",\"deviceOpened\":" +
+             (camera_source_ ? "true}" : "false}");
     } catch (const std::exception& failure) {
+      StopVideoLocked();
       return Error(std::string("video start failed: ") + failure.what());
     } catch (...) {
+      StopVideoLocked();
       return Error("video start failed");
     }
   }
@@ -594,19 +802,21 @@ class Bridge {
   // Disposes video only. Audio is untouched by design, so a video problem cannot tear down a
   // healthy audio call.
   std::string StopVideoLocked() {
-    if (video_source_ == nullptr) return "{\"ok\":true,\"wasRunning\":false}";
+    if (video_source_ == nullptr && camera_source_ == nullptr) return "{\"ok\":true,\"wasRunning\":false}";
     // Stop the frame thread before dropping the track, so no frame can be delivered into a
     // source that is being destroyed.
-    video_source_->Stop();
+    if (video_source_) video_source_->Stop();
+    if (camera_source_) camera_source_->Stop();
+    if (video_track_) video_track_->RemoveSink(&local_sink_);
     if (peer_ != nullptr) {
       if (video_transceiver_ != nullptr && video_transceiver_->sender() != nullptr) {
         // Stop sending without renegotiating: audio, if present, stays connected. This is the
         // "video failure disposes video only" rule, enforced natively rather than by convention.
         video_transceiver_->sender()->SetTrack(nullptr);
       }
-      video_transceiver_ = nullptr;
     }
     video_source_ = nullptr;
+    camera_source_ = nullptr;
     video_track_ = nullptr;
     return "{\"ok\":true,\"wasRunning\":true,\"deviceClosed\":true}";
   }
@@ -619,6 +829,8 @@ class Bridge {
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_;
   std::unique_ptr<PeerObserver> observer_;
   webrtc::scoped_refptr<SyntheticVideoSource> video_source_;
+  webrtc::scoped_refptr<CameraVideoSource> camera_source_;
+  ManagedFrameSink local_sink_;
   webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> video_transceiver_;
   webrtc::scoped_refptr<webrtc::VideoTrackInterface> video_track_;
   std::string error_;
@@ -721,6 +933,14 @@ __declspec(dllexport) int lm_wr_destroy(uint64_t handle) {
   } catch (...) {
     return kInternal;
   }
+}
+
+__declspec(dllexport) int lm_wr_set_frame_callback(uint64_t handle, FrameCallback callback,
+                                                   void* context) {
+  auto bridge = Find(handle);
+  if (bridge == nullptr) return kNotFound;
+  bridge->ConfigureFrames(handle, callback, context);
+  return kOk;
 }
 
 }  // extern "C"

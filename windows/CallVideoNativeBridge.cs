@@ -27,19 +27,28 @@ namespace LanMessenger.Windows
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int CommandNative(ulong handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string command,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string payload, IntPtr output, int capacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate void FrameCallback(ulong handle, int kind, IntPtr pixels, int width, int height,
+            int stride, IntPtr context);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int SetFrameCallback(ulong handle, FrameCallback? callback, IntPtr context);
 
         private readonly IntPtr _library;
         private readonly AbiVersion _abiVersion;
         private readonly Create _create;
         private readonly Destroy _destroy;
         private readonly CommandNative _commandNative;
+        private readonly SetFrameCallback _setFrameCallback;
         private readonly IntPtr _buffer;
         private bool _disposed;
+        private readonly object _gate = new();
 
         public static string? FindLatestBridgeDll()
         {
             try
             {
+                string packaged = Path.Combine(AppContext.BaseDirectory, "LanMessenger.WebRtc.Native.dll");
+                if (File.Exists(packaged)) return packaged;
                 string root = @"D:\LAN-Messenger\outputs\.build\video-media";
                 if (!Directory.Exists(root)) return null;
                 var dirs = Directory.GetDirectories(root)
@@ -65,6 +74,8 @@ namespace LanMessenger.Windows
             string full = Path.GetFullPath(path);
             if (!File.Exists(full)) throw new FileNotFoundException(full);
             _library = NativeLibrary.Load(full);
+            try
+            {
             _abiVersion = Marshal.GetDelegateForFunctionPointer<AbiVersion>(
                 NativeLibrary.GetExport(_library, "lm_wr_abi_version"));
             _create = Marshal.GetDelegateForFunctionPointer<Create>(
@@ -73,28 +84,58 @@ namespace LanMessenger.Windows
                 NativeLibrary.GetExport(_library, "lm_wr_destroy"));
             _commandNative = Marshal.GetDelegateForFunctionPointer<CommandNative>(
                 NativeLibrary.GetExport(_library, "lm_wr_command"));
+            _setFrameCallback = Marshal.GetDelegateForFunctionPointer<SetFrameCallback>(
+                NativeLibrary.GetExport(_library, "lm_wr_set_frame_callback"));
             _buffer = Marshal.AllocHGlobal(BufferCapacity);
             uint v = _abiVersion();
-            uint expected = (1u << 16) | 0u;
+            uint expected = (1u << 16) | 1u;
             if (v != expected)
                 throw new InvalidOperationException($"bridge ABI mismatch: got 0x{v:X8}, expected 0x{expected:X8}");
+            }
+            catch
+            {
+                if (_buffer != IntPtr.Zero) Marshal.FreeHGlobal(_buffer);
+                NativeLibrary.Free(_library);
+                throw;
+            }
         }
 
         public ulong CreateBridge()
         {
+            lock (_gate)
+            {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             int code = _create(out ulong h);
             if (code != Ok || h == 0) throw new InvalidOperationException($"lm_wr_create failed: {code}");
             return h;
+            }
         }
 
         public void DestroyBridge(ulong handle)
         {
+            lock (_gate)
+            {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (handle == 0) return;
             _destroy(handle);
+            }
+        }
+
+        public void RegisterFrameCallback(ulong handle, FrameCallback? callback)
+        {
+            lock (_gate)
+            {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            int code = _setFrameCallback(handle, callback, IntPtr.Zero);
+            if (code != Ok) throw new InvalidOperationException($"lm_wr_set_frame_callback failed: {code}");
+            }
         }
 
         public (int Code, string Body) Command(ulong handle, string verb, string payload = "")
         {
+            lock (_gate)
+            {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (string.IsNullOrEmpty(verb)) return (BadArgument, "");
             int cap = BufferCapacity;
             int code = _commandNative(handle, verb, payload ?? "", _buffer, cap);
@@ -113,14 +154,18 @@ namespace LanMessenger.Windows
                 }
             }
             return (code, body);
+            }
         }
 
         public void Dispose()
         {
+            lock (_gate)
+            {
             if (_disposed) return;
             _disposed = true;
             if (_buffer != IntPtr.Zero) Marshal.FreeHGlobal(_buffer);
             if (_library != IntPtr.Zero) NativeLibrary.Free(_library);
+            }
         }
     }
 }

@@ -10,25 +10,38 @@ sealed partial class ChatWindow
     CallSettings? callSettings;
     CallView? callView;
     CallRingtone? ringtone;
+    string? callDiagnosticPath;
+    string? recipientGrantCallId;
+    string? recipientGrantConfirmedCallId;
+    long recipientGrantNextRefresh;
+    bool recipientGrantRefreshing;
 
     void InitializeCalls(string dataDirectory)
     {
+        callDiagnosticPath = Path.Combine(dataDirectory, "call-diagnostics.log");
         callSettings = new CallSettings(dataDirectory);
         callController = new CallController(engine, callSettings) { MediaFactory = new WebRtcCallMedia.Factory() };
         // One switch, read by both the CALLCAPS responder and the negotiator, so the engine can never
         // claim VP8 to a peer that the controller would then refuse to negotiate. The controller's
-        // getter also requires an installed VideoMediaFactory, and none is installed yet, so this
-        // reads false and this build advertises voice only -- the honest answer, and a clean v1 call
-        // for the peer rather than a v2 call stuck waiting for a picture.
+        // getter also requires an installed VideoMediaFactory. Missing or incompatible native code
+        // leaves this false and gives the peer a clean v1 voice call.
         //
         // An earlier version of these two lines seeded the flag from the engine's old `()=>true`
         // default and then made the engine read it back, which pinned it to true with no path to
         // false. Installing the adapter means setting VideoEnabled = true as well as assigning the
         // factory; do not add a read-back here.
         engine.CallVideoSupport = () => callController.VideoEnabled;
-        // No camera and no route to switch, so the two effects that would touch a device decline.
-        // The controls that would have used them never appear, because VideoCapable is false.
-        callController.CameraEligible = _ => false;
+        // The native adapter supplies an independent VP8 path and consent-gated default-camera capture.
+        // Factory construction stays lazy so opening the app or ringing never loads a camera.
+        try
+        {
+            using var abi = new LanMessenger.Windows.CallVideoNativeBridge();
+            callController.VideoMediaFactory = () => new LanMessenger.Windows.CallVideoNativeMedia();
+            callController.VideoEnabled = true;
+        }
+        catch (Exception e) { CallDiagnostic(e, "video-backend-unavailable", e.Message); }
+        // Hardware access occurs only inside StartCamera, after the call-bound consent gate.
+        callController.CameraEligible = _ => callController.VideoEnabled;
         callController.ApplyRemoteSpeakerRoute = () => false;
         callController.SetCallback(snap => { if (IsDisposed || !IsHandleCreated) return; try { BeginInvoke(new Action(() => OnCallStateChanged(snap))); } catch { } });
         engine.CallConnectReceived += (peerId, stream, callId) =>
@@ -92,12 +105,66 @@ sealed partial class ChatWindow
         var snap = callController.Snapshot();
         if (snap == null) return;
         var peerName = engine.Peers.FirstOrDefault(p => p.Id == snap.PeerId)?.Name ?? snap.PeerId;
-        callView.Render(snap, peerName);
+        callController.AttachVideoSinks(callView.LocalFrameSink, callView.RemoteFrameSink);
+        RefreshRecipientGrant(snap);
+        callView.Render(snap, peerName, RecipientControlMask(snap), engine.LastCallVideoProbeStatus);
+    }
+
+    int RecipientControlMask(CallSession snap) => snap.IsCaller && snap.State == CallProtocol.State.Connected
+        && recipientGrantConfirmedCallId == snap.CallId
+        ? engine.RemoteControlDisplayMask(snap.PeerId) : 0;
+
+    void RefreshRecipientGrant(CallSession snap)
+    {
+        if (!snap.IsCaller || snap.State != CallProtocol.State.Connected)
+        {
+            recipientGrantCallId = null; recipientGrantConfirmedCallId = null; recipientGrantNextRefresh = 0; return;
+        }
+        long now = Environment.TickCount64;
+        if (recipientGrantCallId != snap.CallId) { recipientGrantCallId = snap.CallId; recipientGrantConfirmedCallId = null; recipientGrantNextRefresh = 0; }
+        if (recipientGrantRefreshing || now < recipientGrantNextRefresh) return;
+        recipientGrantRefreshing = true; recipientGrantNextRefresh = now + 5000;
+        string callId = snap.CallId, peerId = snap.PeerId;
+        _ = Task.Run(() => engine.RefreshRemoteCallGrant(peerId)).ContinueWith(refresh =>
+        {
+            bool confirmed = refresh.Status == TaskStatus.RanToCompletion && refresh.Result;
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    recipientGrantRefreshing = false;
+                    var current = callController?.Snapshot();
+                    if (current?.CallId == callId && callView != null)
+                    {
+                        recipientGrantConfirmedCallId = confirmed ? callId : null;
+                        var name = engine.Peers.FirstOrDefault(p => p.Id == current.PeerId)?.Name ?? current.PeerId;
+                        callView.Render(current, name, RecipientControlMask(current), engine.LastCallVideoProbeStatus);
+                    }
+                }));
+            }
+            catch { recipientGrantRefreshing = false; }
+        });
     }
 
     void AttachCallViewHandlers(CallView view, bool isIncoming)
     {
-        view.AcceptClicked += () => { if (callController != null) _ = callController.AcceptAsync(); };
+        // Answering is genuinely asynchronous -- it opens media -- so the task is not awaited here. It used
+        // to be `_ = callController.AcceptAsync();` and nothing else, which meant an exception was
+        // discarded: an incoming call that failed to accept produced no message and no log entry, and
+        // the window was left showing "Connecting…" with a hang-up button and no way to make
+        // progress. The continuation is now observed so a refused or undeliverable answer is
+        // reported the same way every other video refusal already is.
+        view.AcceptClicked += () =>
+        {
+            if (callController == null) return;
+            _ = Task.Run(() => callController.AcceptAsync()).ContinueWith(accepted =>
+            {
+                if (accepted.IsCompletedSuccessfully) return;
+                var cause = accepted.Exception?.GetBaseException().Message ?? "The call could not be answered.";
+                CallDiagnostic(accepted.Exception?.GetBaseException(), "accept-failed", cause);
+                ShowVideoRefusal(cause);
+            }, TaskContinuationOptions.ExecuteSynchronously);
+        };
         // The same button means "Decline" to an incoming call and "Cancel" to one of ours. The two are
         // genuinely different wire messages and, more importantly, different things to tell the other
         // person -- a cancellation must never be presented as the peer declining.
@@ -114,13 +181,25 @@ sealed partial class ChatWindow
         {
             var id = callController?.Snapshot()?.CallId;
             if (id == null) return;
-            ReportVideoOutcome(() => callController!.AnswerVideo(id, video));
+            Task.Run(() =>
+            {
+                try
+                {
+                    var result = callController!.AnswerVideo(id, video);
+                    if (video && result == CallVideoConsent.Result.Voice)
+                        ShowVideoRefusal("Video is unavailable. The call was answered with audio only.");
+                    else if (result is not (CallVideoConsent.Result.Ready or CallVideoConsent.Result.Voice))
+                        ShowVideoRefusal(VideoResultMessage(result ?? CallVideoConsent.Result.Ignored));
+                }
+                catch (Exception e) { CallDiagnostic(e, "accept-failed", e.Message); ShowVideoRefusal(e.Message); }
+            });
         };
         view.DeclineVideoClicked += () =>
         {
             var id = callController?.Snapshot()?.CallId;
             if (id != null) ReportVideoOutcome(() => callController!.AnswerVideo(id, video: false));
         };
+        view.HangupClicked += () => callController?.Hangup();
         view.RequestVideoClicked += () =>
         {
             var id = callController?.Snapshot()?.CallId;
@@ -135,7 +214,45 @@ sealed partial class ChatWindow
             if (id == null) return;
             ReportVideoOutcome(() => callController!.SetCamera(id, on));
         };
-        view.FormClosed += (_, _) => callView = null;
+        view.RemoteCameraClicked += (on, facing) =>
+        {
+            var current = callController?.Snapshot();
+            if (current == null || (RecipientControlMask(current) & PeerEngine.TrustedRemoteCamera) == 0) return;
+            callController!.SetRemoteCamera(current.CallId, on, facing);
+        };
+        view.RemoteSpeakerClicked += on =>
+        {
+            var current = callController?.Snapshot();
+            if (current == null || (RecipientControlMask(current) & PeerEngine.TrustedRemoteSpeaker) == 0) return;
+            callController!.SetRemoteSpeaker(current.CallId, on);
+        };
+        view.FormClosed += (_, _) => { callController?.AttachVideoSinks(null, null); callView = null; };
+    }
+
+    // Everything appended to call-diagnostics.log is tab-separated one value per field, so a cause
+    // containing a tab or a newline would silently corrupt every field after it -- and a cause is
+    // whatever an exception happened to say. Collapsed to a single line here, at the only place a
+    // cause can enter the file.
+    static string OneLine(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "none";
+        var flat = value.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        return flat.Length <= 300 ? flat : flat.Substring(0, 300) + "...";
+    }
+
+    // The same log, for a failure that produced no snapshot of its own -- currently the answer path,
+    // where the exception happens before any state change. Shares callDiagnosticPath deliberately:
+    // splitting call evidence across two files is what made the original diagnosis expensive.
+    void CallDiagnostic(Exception? error, string event_, string? cause)
+    {
+        try
+        {
+            File.AppendAllText(callDiagnosticPath!, $"{DateTime.UtcNow:O}\tevent={event_}"+
+                $"\tcause={OneLine(cause ?? error?.Message)}"+
+                $"{(error != null ? "\ttype=" + OneLine(error.GetType().FullName) : "")}{Environment.NewLine}");
+        }
+        // Same rule as the snapshot writer: a log that cannot be written must not take the app down.
+        catch { }
     }
 
     void ReportVideoOutcome(Func<CallVideoConsent.Result?> action)
@@ -166,14 +283,27 @@ sealed partial class ChatWindow
 
     void OnCallStateChanged(CallSession snap)
     {
+        try
+        {
+            File.AppendAllText(callDiagnosticPath!, $"{DateTime.UtcNow:O}\tstate={snap.State}\tcaller={snap.IsCaller}"+
+                $"\tv2={snap.VideoCapable}\tinvitedVideo={snap.InvitedVideo}\tvideo={snap.Video?.Phase.ToString() ?? "none"}"+
+                $"\tend={snap.EndReason?.ToString() ?? "none"}"+
+                // Printed only on the line that ends a call. Carrying it on every snapshot would
+                // reprint an earlier call's reason against a later, healthy one. The immutable
+                // snapshot owns its cause even if another call starts before this UI job runs.
+                $"{(snap.EndReason != null ? "\tcause=" + OneLine(snap.FailureReason) : "")}{Environment.NewLine}");
+        }
+        catch { }
         var peerName = engine.Peers.FirstOrDefault(p => p.Id == snap.PeerId)?.Name ?? snap.PeerId;
         if (callView == null && !snap.State.Terminal())
         {
             callView = new CallView(peerName, isIncoming: snap.State == CallProtocol.State.IncomingRinging);
             AttachCallViewHandlers(callView, isIncoming: snap.State == CallProtocol.State.IncomingRinging);
+            callController?.AttachVideoSinks(callView.LocalFrameSink, callView.RemoteFrameSink);
             callView.Show(this);
         }
-        callView?.Render(snap, peerName);
+        RefreshRecipientGrant(snap);
+        callView?.Render(snap, peerName, RecipientControlMask(snap), engine.LastCallVideoProbeStatus);
         UpdateRingtone(snap.State);
         if (snap.State.Terminal())
         {

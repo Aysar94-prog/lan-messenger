@@ -46,6 +46,7 @@ public sealed partial class PeerEngine : IDisposable
     public bool Running {get=>running;private set=>running=value;}
     public string NetworkState {get=>networkState;private set=>networkState=value;}
     public string LastConnectionError {get;private set;}="";
+    public string LastCallVideoProbeStatus { get; private set; } = "not attempted";
     public event Action? Changed;
     public event Action<Message>? Received;
     // Fired when a contact remotely revokes our verification of them, because we previously
@@ -181,6 +182,7 @@ public sealed partial class PeerEngine : IDisposable
     // A peer's last-answered grant mask. Never persisted and never authoritative: it is bound to the
     // certificate it was answered over and is re-queried rather than remembered across restarts.
     readonly Dictionary<string,(string Fingerprint,int Mask,long CheckedAt)> remoteCallGrants=[];
+    public sealed record RemoteCallGrantInfo(int Mask,long CheckedAt,bool Fresh);
     // Whether this build answers CALLCAPS with VP8. The default is FALSE.
     //
     // The previous default of true was wrong on its own terms, and the reason it was tempting is
@@ -210,35 +212,51 @@ public sealed partial class PeerEngine : IDisposable
     public bool ProbeCallVideo(string peerId)
     {
         Peer? peer;long session;
-        lock(networkGate){if(!Running)return false;session=generation;}
-        lock(gate){if(!peers.TryGetValue(peerId,out peer)||!peer.Trusted)return false;}
-        if(SimulateLegacyBuild)return false;
+        lock(networkGate){if(!Running){LastCallVideoProbeStatus="Windows is offline";return false;}session=generation;}
+        lock(gate){if(!peers.TryGetValue(peerId,out peer)||!peer.Trusted){LastCallVideoProbeStatus="Peer is not verified";return false;}}
+        if(SimulateLegacyBuild){LastCallVideoProbeStatus="Legacy mode";return false;}
         // Bounded twice over: the transaction itself carries the protocol deadline, and this wait is
         // an independent second bound so a wedged socket can never pin the caller for longer than the
         // protocol allows.
         var probe=Task.Run(()=>ProbeCallVideoAsync(peerId,peer,session));
-        if(!probe.Wait(CallCapabilities.TimeoutMs+2000))return false;
+        if(!probe.Wait(CallCapabilities.TimeoutMs+2000)){LastCallVideoProbeStatus="Capability request timed out";return false;}
         return probe.Result;
     }
 
     async Task<bool> ProbeCallVideoAsync(string peerId,Peer peer,long session)
     {
-        TcpClient? client=null;SecureChannel? tls=null;
+        TcpClient? client=null;SecureChannel? tls=null;string stage="connect";
         try{
+            LastCallVideoProbeStatus="Connecting capability check";
             var started=System.Diagnostics.Stopwatch.StartNew();
             client=await Connect(peer.Host,peer.Port);
+            stage="TLS authentication";
             tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,false);
+            stage="HELLO";
+            // Outbound LM4 transactions speak first. The inbound Receive path reads our HELLO
+            // before it writes its own; waiting to read here deadlocked both peers until timeout.
+            await Write(tls,Hello());
             var hello=(await Read(tls)).Split('\t');
-            if(!ValidHello(hello)||hello[2]!=peerId)return false;
+            if(!ValidHello(hello)||hello[2]!=peerId){LastCallVideoProbeStatus="Invalid peer greeting";return false;}
             var fingerprint=SecureIdentity.Remote(tls);
             RecordCertificate(peerId,fingerprint,SecureIdentity.RemotePublicKey(tls));
-            if(!Trusted(peerId,fingerprint))return false;
-            if((await Read(tls))!="LM4\tREADY")return false;
+            if(!Trusted(peerId,fingerprint)){LastCallVideoProbeStatus="Peer certificate is not trusted";return false;}
+            stage="READY";
+            if((await Read(tls))!="LM4\tREADY"){LastCallVideoProbeStatus="Peer did not become ready";return false;}
+            stage="write CALLCAPS";
             await CallCapabilities.WriteRequestAsync(tls,stop.Token);
+            stage="read CALLCAPS reply";
             var reply=await CallCapabilities.ReadReplyAsync(tls,stop.Token);
             lock(networkGate){if(!Running||session!=generation)return false;}
-            return CallCapabilities.Supports(reply,Trusted(peerId,fingerprint),SimulateLegacyBuild,started.ElapsedMilliseconds);
-        }catch{return false;}
+            bool supported=CallCapabilities.Supports(reply,Trusted(peerId,fingerprint),SimulateLegacyBuild,started.ElapsedMilliseconds);
+            LastCallVideoProbeStatus=supported?"Video v2 confirmed":reply.Length==0?"Peer closed the capability request":"Peer replied voice-only";
+            return supported;
+        }catch(Exception e){
+            string detail=e.Message.Replace('\r',' ').Replace('\n',' ').Trim();
+            if(detail.Length>70)detail=detail[..70];
+            LastCallVideoProbeStatus=$"{stage} failed: {e.GetType().Name}"+(detail.Length==0?"":" · "+detail);
+            return false;
+        }
         finally{if(tls!=null)tls.Dispose();else if(client!=null)client.Dispose();}
     }
 
@@ -261,6 +279,7 @@ public sealed partial class PeerEngine : IDisposable
         try{
             client=await Connect(peer.Host,peer.Port);
             tls=identity.Wrap(client.GetStream());await identity.Authenticate(tls,false);
+            await Write(tls,Hello());
             var hello=(await Read(tls)).Split('\t');
             if(!ValidHello(hello)||hello[2]!=peerId)return false;
             var fingerprint=SecureIdentity.Remote(tls);
@@ -288,6 +307,19 @@ public sealed partial class PeerEngine : IDisposable
             if(!peers.TryGetValue(peerId,out var p)||!p.Trusted||p.Verified!=g.Fingerprint)return 0;
             if(g.CheckedAt<=0||Now<g.CheckedAt||Now-g.CheckedAt>=RemoteGrantFreshMs)return 0;
             return g.Mask&(TrustedRemoteCamera|TrustedRemoteSpeaker);
+        }
+    }
+    // Presentation-only snapshot for the Slave permissions list. Unlike
+    // RemoteControlDisplayMask this returns all four reported bits and retains an expired answer as
+    // visibly stale; it never authorises a controller action. Certificate mismatch or revocation
+    // removes the presentation rather than attributing an old device's answer to a new identity.
+    public RemoteCallGrantInfo? RemoteCallGrantStatus(string peerId)
+    {
+        lock(gate){
+            if(!remoteCallGrants.TryGetValue(peerId,out var g))return null;
+            if(!peers.TryGetValue(peerId,out var p)||!p.Trusted||p.Verified!=g.Fingerprint){remoteCallGrants.Remove(peerId);return null;}
+            var fresh=g.CheckedAt>0&&Now>=g.CheckedAt&&Now-g.CheckedAt<RemoteGrantFreshMs;
+            return new(g.Mask,g.CheckedAt,fresh);
         }
     }
     public void SetTrustedCallMask(string peerId,int mask){lock(gate){if(!peers.TryGetValue(peerId,out var p)||!p.Trusted)throw new IOException("Verify this device before granting trusted call access.");mask&=15;trustedCallGrants.TryGetValue(peerId,out var old);if(mask==0)trustedCallGrants.Remove(peerId);else trustedCallGrants[peerId]=(p.Verified,mask);try{Save();}catch{if(old.Fingerprint is not null)trustedCallGrants[peerId]=old;else trustedCallGrants.Remove(peerId);throw;}}Notify();}

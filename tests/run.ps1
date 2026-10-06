@@ -4,7 +4,8 @@ param(
   # Compile-only stub, needed only because CallLog.java (a thin android.util.Log wrapper used by
   # the call-handoff path in PeerEngine.java) is pulled into this otherwise-pure-Java compile set.
   # Never affects runtime; this whole invocation only ever runs on the JVM, never on a device.
-  [string]$AndroidJar = 'C:\Program Files (x86)\Android\android-sdk\platforms\android-34\android.jar'
+  [string]$AndroidJar = 'C:\Program Files (x86)\Android\android-sdk\platforms\android-34\android.jar',
+  [string]$NativeVideoBridge = ''
 )
 $ErrorActionPreference = 'Stop'
 $TestRoot = [IO.Path]::GetFullPath($TestRoot)
@@ -32,6 +33,10 @@ try {
   # only ever has to catch a genuine Android/Windows disagreement.
   dotnet "$TestRoot\csharp\CsharpHarness.dll" --call-video-check
   Check-Result
+  if ($NativeVideoBridge) {
+    dotnet run --project tests/native-video-media/NativeVideoMedia.csproj -c Release -- $NativeVideoBridge
+    Check-Result
+  }
   & tests/video-contract/run.ps1 -JdkRoot $JdkRoot -OutputRoot "$TestRoot\video-contract" -CsharpHarness "$TestRoot\csharp"
   Check-Result
   python tests/voice_architecture_check.py
@@ -93,5 +98,7 @@ try {
   dotnet build tests/WindowsUi/WindowsUi.csproj -c Release --configfile NuGet.Config -o "$TestRoot\ui"
   Check-Result
   dotnet "$TestRoot\ui\WindowsUi.dll" "$TestRoot\ui-results"
+  Check-Result
+  dotnet run --project tests/WindowsCallUi/WindowsCallUi.csproj -c Release
   Check-Result
 } finally { Pop-Location }

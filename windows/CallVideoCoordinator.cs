@@ -25,12 +25,14 @@ public sealed class CallVideoCoordinator : IDisposable
         public bool LocalCamera { get; }
         public bool RemoteCamera { get; }
         public bool RemoteRequest { get; }
+        public string? FailureReason { get; }
 
-        internal Snapshot(CallVideoConsent consent, bool camera)
+        internal Snapshot(CallVideoConsent consent, bool camera, string? failureReason = null)
         {
             Phase = consent.CurrentPhase; Request = consent.RequestId; Generation = consent.Generation;
             LocalCamera = camera; RemoteCamera = consent.RemoteCameraOn;
             RemoteRequest = consent.RemoteRequestPending;
+            FailureReason = failureReason;
         }
     }
 
@@ -64,6 +66,7 @@ public sealed class CallVideoCoordinator : IDisposable
     readonly bool autoAcceptVideo;
     readonly bool autoStartCamera;
     bool autoCameraRetried;
+    string? lastFailure;
     volatile bool autoCameraCanceled;
 
     // One constructor with optional trailing knobs rather than overloads: overloads that differ only
@@ -111,13 +114,13 @@ public sealed class CallVideoCoordinator : IDisposable
 
         public void OnError(long generation, string message) => owner.Post(() =>
         {
-            if (owner.Current(generation)) owner.Fail("failed", true);
+            if (owner.Current(generation)) { owner.lastFailure = message; owner.Fail("failed", true); }
         });
 
         public void OnCameraStopped(long generation) => owner.Post(() =>
         {
             if (!owner.Current(generation)) return;
-            owner.consent.CameraOff(owner.callId); owner.camera = false; owner.State();
+            owner.consent.CameraOff(owner.callId); owner.SetCamera(false);
         });
     }
 
@@ -171,7 +174,7 @@ public sealed class CallVideoCoordinator : IDisposable
         {
             if (Closed) return;
             try { job(); }
-            catch (Exception) { Fail("failed", true); }
+            catch (Exception e) { lastFailure = e.Message; Fail("failed", true); }
             Publish();
         }))
         {
@@ -183,7 +186,7 @@ public sealed class CallVideoCoordinator : IDisposable
 
     void Publish()
     {
-        snapshot = new Snapshot(consent, camera);
+        snapshot = new Snapshot(consent, camera, lastFailure);
         try { observer?.Invoke(snapshot); } catch { }
         if (autoStartCamera && !camera && snapshot.Phase == CallVideoConsent.Phase.Video && !autoCameraRetried)
         {
@@ -336,6 +339,11 @@ public sealed class CallVideoCoordinator : IDisposable
     public void RemoteCamera(bool on, string facing, Func<bool> authorized) => Post(() =>
     {
         if (!authorized() || consent.CurrentPhase != CallVideoConsent.Phase.Video) return;
+        if (on && facing != "keep" && !media.SupportsCameraFacing)
+        {
+            lastFailure = "Front/rear selection is unavailable for the Windows default camera";
+            return;
+        }
         if (!on) { autoCameraCanceled = true; consent.CameraOff(callId); SetCamera(false); return; }
         var result = consent.CameraOn(callId, Eligible());
         if (result is not (CallVideoConsent.Result.Ready or CallVideoConsent.Result.Busy)) return;
@@ -350,21 +358,18 @@ public sealed class CallVideoCoordinator : IDisposable
     public void ProposalAcceptedLocally(string id) => Post(() =>
     {
         if (id != consent.RequestId || consent.Generation != 0) return;
-        Send(CallProtocol.VIDEO_REQUEST, 0, ("request", id));
         Deadline(id, 0, requestTimeoutMs);
     });
 
     public void UpgradeAcceptedLocally(string id) => Post(() =>
     {
         if (id != consent.RequestId) return;
-        Send(CallProtocol.VIDEO_ACCEPT, 0, ("request", id));
         if (!caller) Deadline(id, 0, videoTimeoutMs);
         BeginIfCaller();
     });
 
     public void UpgradeDeclinedLocally(string id) => Post(() =>
     {
-        Send(CallProtocol.VIDEO_DECLINE, 0, ("request", id));
         CancelDeadline();
     });
 
@@ -383,7 +388,14 @@ public sealed class CallVideoCoordinator : IDisposable
         if (on)
         {
             if (!consent.CanCapture(callId, Eligible(), true, true)) return;
-            media.StartCamera(gen); camera = true;
+            try { media.StartCamera(gen); camera = true; lastFailure = null; }
+            catch (Exception e)
+            {
+                // Local hardware failure does not destroy a healthy receive path or audio.
+                lastFailure = e.Message;
+                consent.CameraOff(callId); camera = false;
+                try { media.StopCamera(gen); } catch { }
+            }
         }
         else { media.StopCamera(gen); camera = false; }
         State();
@@ -392,6 +404,7 @@ public sealed class CallVideoCoordinator : IDisposable
     void Initialize(long gen)
     {
         offered = answered = localReady = remoteReady = camera = false;
+        lastFailure = null;
         incomingIce = outgoingIce = 0; revision = 0;
         media.Initialize(gen, () => consent.CanCapture(callId, Eligible(), true, true));
         Deadline(consent.RequestId!, gen, videoTimeoutMs);
@@ -564,7 +577,7 @@ public sealed class CallVideoCoordinator : IDisposable
         }
         deadlineTimer.Dispose();
         worker.Clear();
-        if (!worker.TryPost(() => { try { if (gen >= 2) media.Dispose(gen); } finally { worker.Shutdown(); } }))
+        if (!worker.TryPost(() => { try { media.Dispose(); } finally { worker.Shutdown(); } }))
             worker.Shutdown();
     }
 

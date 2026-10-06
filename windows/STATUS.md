@@ -1,5 +1,201 @@
 # Windows status
 
+## 2026-10-06 Windows video completion execution checkpoint (development only)
+
+Execution authorized by the user. Existing uncommitted Windows video/permissions work was retained
+and completed with consent-gated real default-camera capture, local preview, bounded UI frame delivery,
+native error propagation, serialized output-buffer/lifetime access, generation retry and unconditional
+owner cleanup. Native video now produces a single VP8 m-line and ICE index 0, matching the existing
+Android contract; its earlier audio+video SDP could not pass the shared production validator.
+Camera toggles reuse the negotiated sender. Local camera failure preserves receive video and audio.
+Initial unavailable-video answers fall back to voice; mid-call Accept/Decline video now appears and
+starts/cancels coordinator work without duplicate signaling. Terminal call snapshots own their cause.
+
+Automated: Windows Release 0 errors (existing CS1998); call/video 359/359; native ABI 39/39;
+native managed/real-transport 138/138 (20 lifetimes, three generated ICE/DTLS/VP8 sessions);
+call UI 9/9; dummy NativeAudioReadiness 24/24; shared frame/capability corpora 113+38 agree.
+Local physical Windows default-camera preview and stop/reopen pass 2/2, with no remote peer.
+Full tests/run.ps1 again stops on the recorded pre-existing FullMember capability failure in
+group_membership; the later migration/ownership/Offline/UI checks are run separately.
+
+Android SM-A075F was upgraded in place to original-signer 2.2.71/code98 dev candidate; first-install
+time unchanged. Actual Windows↔Android calls remain pending: that phone's Direct connections list
+currently exposes ultra while Windows Lap shows it Offline. The selected-device policy was preserved.
+Default camera only; alternate selection, busy/unplug physical checks, all-DPI/10-minute stress and live
+recipient-control acceptance remain open. Windows version remains 2.2.42; no final release or push.
+See [execution evidence](video-calling/EVIDENCE-WVR-COMPLETION-20261006.md) and
+[current completion plan](video-calling/PLAN-WINDOWS-VIDEO-READY-COMPLETION.md).
+
+## 2026-10-06 call v2 regression repair (not a release)
+
+Two real-device call regressions are fixed. Both were latent v2 bugs, unreachable while the CALLCAPS
+probe failed and every call ran on protocolVersion 1; the v2 enabler at `ChatWindowCalls.cs:41`
+(`VideoEnabled = true`) plus the HELLO-ordering fix at `PeerEngine.cs:236-238` made the probe succeed
+and exposed them. Task contract, with the full diagnosis and evidence:
+[video-calling/TASK-CONTRACT-CALL-V2-FIX.md](video-calling/TASK-CONTRACT-CALL-V2-FIX.md).
+
+**Root cause 1 — Windows→Android died with `EndReason.MediaError`.** `CallVideoProtocol.ValidSdp`
+required the m-line transport to be exactly `UDP/TLS/RTP/SAVPF`. SIPSorcery 10.0.17 — the Windows
+adapter — emits `UDP/TLS/RTP/SAVP`. The validator refused it, `SendFrameTo` threw `IOException`, and
+a bare `catch` turned that into `EndCallLocked(MediaError)` while discarding the exception. Both ports
+now accept exactly the two legal profiles, `SAVP` and `SAVPF`; `TCP/TLS/RTP/SAVP`, `UDP/TLS/RTP/SAVPX`
+and every other token stay refused, because DTLS over TCP is a different transport, not a different
+profile.
+
+**Root cause 2 — Android→Windows could be neither answered nor ended.** `CallSignaling.Make` never
+allocated the frame body, so `CallSignaling.Accept` returned `B == null` and the controller's
+`accept.B!["media"] = …` threw a `NullReferenceException` *after* the session had moved to `Connecting`
+and *before* any snapshot, with the ring watchdog already cancelled. The accept therefore neither
+reached the wire nor left any way out of the call. `CallSignaling.Accept` now allocates the body, the
+same body Android's `Frame` constructor has always provided. A v1 ACCEPT still serializes to exactly
+the same bytes — `Serialize` only emits `b` for a non-empty body — and that is now asserted.
+
+Accept ordering is fixed in both answer paths (`AcceptAsync`, `SendAnswerLocked`): the ACCEPT goes on
+the wire **before** the state moves to `Connecting` and before the ring watchdog is cancelled, and a
+send that fails ends the call instead of stranding it. The three media-negotiation `catch` blocks now
+record the cause instead of discarding it, through a single `FailMediaLocked` helper, exposed as
+`LastFailureReason` and a `MediaFaulted` event. `call-diagnostics.log` gained a `cause=` field and an
+`event=accept-failed` record for failures that produce no snapshot of their own, both written through
+one tab-collapsing helper so a multi-line exception message cannot corrupt the file. The fire-and-forget
+`_ = callController.AcceptAsync()` now has an observed continuation that reports a failed answer
+instead of dropping it.
+
+Verification, all on this tree:
+
+| Check | Result |
+|---|---|
+| `dotnet build windows\LanMessenger.csproj -c Release` | 0 errors (1 pre-existing CS1998) |
+| `dotnet build tests\CsharpHarness\CsharpHarness.csproj -c Release` | 0 errors |
+| `CsharpHarness --call-video-check` | 338 passed, 0 failed (was 324; +14 new) |
+| `CsharpHarness --call-frame-fixture-check` | 113 records, 0 failures (was 107; +6) |
+| `tests/video-contract/run.ps1 -CsharpHarness …` | 113 frame + 38 capability records agree three-way |
+| `tests/WindowsUi` | PASS |
+| `tests/run.ps1` | PASS except `tests/group_membership.py` |
+
+The new checks were proven to fail against the pre-fix code, not merely to pass against the new one:
+reverting only the two source clauses makes **18 pre-existing** checks fail, because
+`FakeCallVideoMedia` and Android's `FakeCallMedia` now emit `SAVP` instead of the `SAVPF` that agreed
+with the validator by construction. That is the specific reason the suite stayed green while every real
+call failed.
+
+`tests/group_membership.py` fails on `Can't change this group's membership: FullMember… hasn't updated
+to a version that supports it`. This is **pre-existing and unrelated**: it reproduces identically in a
+clean `git worktree` at HEAD `902e92d` with no working-tree changes. It is not caused by this work and
+is not fixed by it. Everything after it in `tests/run.ps1` passes when run individually.
+
+Not done, deliberately: the reordering of the accept path has **no** automated test. `OnInvite` refuses
+a peer absent from `PeerEngine.Peers` with a matching fingerprint, so reaching `AcceptAsync` needs two
+live `PeerEngine`s paired over a real loopback connection — machinery `--call-video-check` deliberately
+does not have. Its absence must not be read as that path being correct.
+
+Physical acceptance is still outstanding and no claim of working calls is made: the disappearance of
+`MediaError` is not evidence of a working call. MT1–MT6 in the task contract need two devices —
+Windows→Android voice connects with two-way audio; Android→Windows incoming call can be accepted;
+hang-up ends the call on both devices from either side; "Accept with video" no longer silently no-ops.
+Once `SAVP` is accepted, a real SIPSorcery session begins on a path that blocks the UI thread
+(`new RTCPeerConnection(null)` measured 192–1389 ms inside `CallController.gate`), so new symptoms are
+possible. No release, no version bump, no commit, no push. Android changed only in the mirrored
+validator clause and the fake's transport string.
+
+## 2026-10-05 receive-only Windows video checkpoint
+
+Windows source now enables the native video adapter when the verified ABI 1.1 bridge is present.
+The bridge advertises a VP8 receive-only transceiver before the first offer; the managed adapter
+now applies local offer/answer descriptions, polls and forwards real ICE candidates, reports media
+readiness only after ICE reaches connected/completed, and labels remote offer versus answer
+explicitly. ABI 1.1 adds a bounded native frame callback: decoded remote I420 is converted to BGRA,
+copied at the managed boundary and rendered into the call window. This makes the intended first
+usable direction Android-camera -> Windows display; Windows camera capture deliberately remains
+disabled (`CameraEligible=false`) rather than substituting synthetic capture or claiming webcam
+support. Probe/ringing still do not enumerate or open a camera.
+
+The recipient-control bar from the preceding checkpoint can now become visible on a real v2 call:
+Windows must be the original caller, the Android Slave grant must be freshly confirmed, Speaker is
+available while connected, and Camera/Front/Rear require the live video leg. New native artifact:
+`outputs/.build/video-media/bridge-c3bc54a8b16445298599dc029a100a99`; NativeBridge 39/39,
+call/video 324/324, Windows Release build 0 errors with one pre-existing CS1998 warning. The updated
+app was launched for user testing. No ADB device was connected, so Windows<->Android image/control
+acceptance is pending and no release/parity claim is made. Android/wire unchanged; no commit/push.
+
+The call window no longer falls back to the old compact layout when capability probing returns v1:
+voice and video now share the larger arranged shell, centered contact initial and grouped action
+bar. A v1 fallback is labelled `Voice call - video unavailable for this connection`, making a
+failed/legacy capability result visible instead of looking like an old binary. Rebuilt and relaunched
+for the next physical retry; visual acceptance remains pending.
+
+## 2026-10-05 recipient controls and call-window layout
+
+The existing `Permissions...` entry is retained. The call window now has a separate, visually
+grouped `Control recipient` bar with Speaker on/off and, during live video, recipient Camera
+on/off plus Front/Rear controls. Visibility matches Android's direction: Windows must be the
+original caller (Master), the call must be Connected/v2, and the Android Slave must have returned
+a fresh certificate-bound grant. Windows refreshes that grant on connection and every five seconds;
+unknown, failed, expired, revoked, changed-certificate, callee-role and ended-call states hide all
+controls. Every click rechecks the same confirmed direction, and `CallController.SetRemoteCamera`
+and `SetRemoteSpeaker` were corrected to authorize from `RemoteControlDisplayMask` rather than the
+opposite-direction local Masters store. Camera controls additionally require a live video leg.
+
+Important current-product limit: Windows production video remains disabled and therefore negotiates
+v1 voice calls. `REMOTE_*` is a v2 contract, so these controls intentionally do not appear in the
+current voice-only runtime; showing them would be a nonfunctional compatibility bug. The UI and
+authorization path are ready for the production video switch, but real Windows-to-Android control
+acceptance remains blocked on Windows video completion. Automated: Release build succeeds (0 errors,
+one pre-existing CS1998 warning); call/video harness 324/324 including focused role/state/scope/v1
+visibility cases. Android and wire protocol unchanged. No release, commit or push.
+
+## 2026-10-05 Masters / Slave call-permission lists
+
+Windows source now exposes a `Permissions...` entry with the same directional meaning used by
+Android: **Masters** lists verified devices that this Windows installation granted call access to,
+and **Slave** lists verified devices that reported granting access to this Windows installation.
+Masters is backed by the existing certificate-bound local grant store and opens the existing
+trusted-call editor, so individual voice auto-answer, video auto-answer, remote-camera and
+remote-speaker grants can be changed or revoked. Slave is deliberately read-only: it queries the
+existing authenticated `CALLGRANTS/1` responder, refreshes online verified peers every five
+seconds or on demand, distinguishes current, last-known/offline and unknown results, and never
+treats the displayed remote mask as local authorization. Certificate changes/revocation discard
+the cached presentation. No Android or wire-format change was needed.
+
+Automated verification: Windows Release build succeeds with 0 errors and 0 warnings; the focused
+Windows call/video harness passes 317/317. The native-window surface
+was unavailable to the computer-control session, so final visual/device acceptance of the two
+dialogs remains pending and is recorded separately from implementation and automated verification.
+No package, release, commit or push was produced.
+
+## 2026-10-05 Android-to-Windows distorted audio regression repair
+
+The reported Android-to-Windows call audio was traced to uncommitted Windows audio changes
+that switched the production preference from G722 to PCMU while leaving the winmm device at
+16 kHz, and reduced the fixed PCM frame from 640 bytes/20 ms to 320 bytes. PCMU is an 8 kHz
+codec, so decoding it into a 16 kHz playback path produced the observed timing distortion and
+choppiness. Restored the established Android-compatible G722-first negotiation and the
+640-byte 16 kHz/20 ms capture/playback contract. The first listening retry then isolated a
+second, outbound-only defect: the Windows microphone passed 320 decoded PCM samples to
+`SendAudio` as 320 RTP timestamp units. G722 has 16 kHz PCM but an RFC-defined 8 kHz RTP
+clock, so each 20 ms packet must advance by 160, not 320; the wrong value advertised 40 ms
+between packets and produced regular gaps on Android. `RtpDurationFor` now applies that G722
+conversion (while leaving other codecs unchanged). A reflection-level focused check confirms
+G722 320 samples => 160 RTP units and PCMU 320 => 320. Also repaired the adjacent malformed
+`RequestVideoClicked`/`HangupClicked` binding that otherwise prevented the current tree from
+building. Windows Release build succeeds with 0 errors and the one pre-existing CS1998 warning.
+Android source and wire protocol are unchanged. A single Android-to-Windows call was initiated
+after the first repair; user listening reported the Lap/Windows microphone still choppy, which
+is the evidence that exposed the RTP-clock defect. Post-clock-fix audible acceptance remains
+pending. No package, release, commit or push was produced.
+
+User acceptance after the RTP-clock correction: audio became "much better" and the severe
+cutting was removed, but the laptop microphone remained low and not fully clear. The production
+winmm path supplies raw PCM and has no WebRTC AGC/noise suppression/AEC. A bounded microphone-
+only conditioning pass initially used fixed gain; user listening still found it slightly low. The
+current source therefore uses bounded adaptive microphone gain: meaningful speech targets RMS
+5000, gain is limited to 1x..12x, rises gradually, falls faster for loud input and retains signed-
+16-bit saturation. Silence below RMS 100 does not increase gain, which avoids lifting room noise
+between speech. Optional diagnostics remain gated by `LANMESSENGER_AUDIO_DIAGNOSTICS` and record
+timing/levels only, never audio. The captured diagnostic evidence showed stable 20 ms delivery but
+very low raw laptop input (RMS 58.8, peak 2267), supporting level conditioning rather than another
+packet-timing change. Focused RTP/gain/limiter checks and Release build pass; physical listening of
+the adaptive version remains pending. This does not claim noise suppression or echo cancellation.
+
 ## 2026-10-05 native bridge crash/empty-offer repair
 
 Captured original AV without WER registry changes. Missing codec factory dependencies
@@ -577,3 +773,7 @@ of bug that Pending note has always been flagging as a real risk.
 
 - Confirm the 0.8.8/0.8.9 rendering and paging behavior on the affected PC/DPI setup.
 - Optional: an engine recent-message index if real-device measurements later show scanning dominating open time (deferred by plan W07 with recorded evidence).
+### WVC-T03 (Real audio transfer - device acceptance)
+- Evidence template: windows/video-calling/EVIDENCE-WVC-T03-REAL-AUDIO.md
+- Status: In Progress (awaiting two-device LAN test execution)
+- WVC-06/T02: Partial - physical CoreAudio/device acceptance pending with documented HELLO/READY/CALLCONNECT trace

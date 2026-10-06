@@ -92,7 +92,7 @@ static class BridgeCheck
             // ---- ABI handshake ------------------------------------------------------
             // The managed side must be able to refuse a DLL built against a different surface.
             var packed = abi();
-            Check("abi version is 1.0", packed == (1u << 16 | 0u), $"got 0x{packed:X8}");
+            Check("abi version is 1.1", packed == (1u << 16 | 1u), $"got 0x{packed:X8}");
 
             ulong New()
             {
@@ -155,7 +155,7 @@ static class BridgeCheck
                     Check("a named camera is refused, never silently substituted",
                         refusedBody.Contains("\"error\""), refusedBody);
                     Check("the refusal names the reason it cannot open hardware",
-                        refusedBody.Contains("not implemented"), refusedBody);
+                        refusedBody.Contains("unknown camera selection"), refusedBody);
 
                     var (startCode, startBody) = Call(live, "start-video", "synthetic");
                     Check("the synthetic source starts", startCode == Ok && startBody.Contains("\"ok\":true"), startBody);

@@ -31,6 +31,7 @@ public sealed class FakeCallVideoMedia : ICallVideoMedia
     public int IceCandidatesToEmit { get; set; }
     public bool FrontCamera { get; private set; } = true;
     public bool EmitReadyOnInitialize { get; set; }
+    public string? CameraStartFailure { get; set; }
 
     public IReadOnlyList<string> Log { get { lock (gate) return log.ToArray(); } }
     public bool CameraRunning { get { lock (gate) return cameraRunning; } }
@@ -108,6 +109,7 @@ public sealed class FakeCallVideoMedia : ICallVideoMedia
             // button. Anything that could have changed since -- permission revocation, the app
             // moving to the background, the call ending -- is caught at this point.
             if (captureGate == null || !captureGate()) throw new InvalidOperationException("Capture not permitted");
+            if (CameraStartFailure != null) throw new InvalidOperationException(CameraStartFailure);
             cameraRunning = true;
             Record($"camera-on:{generation}");
         }

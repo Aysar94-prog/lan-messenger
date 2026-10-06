@@ -47,6 +47,86 @@ static class CallVideoCheck
         public int Count(string type) => Sent.Count(f => f.T == type);
     }
 
+    // ── The two defects that shipped as EndReason.MediaError and as an un-answerable call ──
+//
+// Both of these shipped to a phone, and both were invisible to this suite: the fake media adapter
+// emitted SAVPF, which is the one transport string the validator accepted and the one no real stack
+// on either side emits, and the ACCEPT builder handed the controller a null body that only blew up
+// once protocolVersion was 2. These checks pin both, without a camera, a network or a window.
+//
+// What is NOT covered here, and why: the accept path itself (AcceptAsync / SendAnswerLocked) can only
+// be reached by OnInvite, which refuses a peer that is not in PeerEngine.Peers with a matching
+// fingerprint. Establishing one needs two live PeerEngines paired over a real loopback connection,
+// which this suite deliberately does not do -- it exists to check the managed layer's rules without
+// devices or sockets. So the reordering of the accept (send before state change, end the call rather
+// than strand it) is verified by the device gate in the task contract, not by these checks. The
+// absence of a failure path here must not be read as that path being correct.
+static void AcceptWireChecks()
+    {
+        Section("accept-wire");
+
+        // SIPSorcery 10.0.17 -- the Windows adapter -- writes plain SAVP; libwebrtc writes SAVPF. They
+        // are the same ICE/DTLS transport and differ by one feedback-extension flag, so refusing
+        // either one refused SDP that a real peer had actually produced.
+        Check(CallVideoProtocol.ValidSdp(FakeCallVideoMedia.VideoSdp(2, "actpass", "o"), video: true),
+            "the SDP the Windows adapter actually emits validates");
+        Check(CallVideoProtocol.ValidSdp(FakeCallVideoMedia.AudioSdp(1, "actpass", "s"), video: false),
+            "the audio SDP the Windows adapter actually emits validates");
+
+        // Both profiles stay legal, so a peer that has not switched is not refused for it.
+        Check(CallVideoProtocol.ValidSdp(
+                "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n" +
+                "m=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\n" +
+                "a=fingerprint:sha-256 " + string.Join(":", Enumerable.Repeat("AA", 32)) +
+                "\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n", video: true),
+            "SAVPF is still accepted");
+        Check(CallVideoProtocol.ValidSdp(
+                "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n" +
+                "m=video 9 UDP/TLS/RTP/SAVP 96\r\nc=IN IP4 0.0.0.0\r\n" +
+                "a=fingerprint:sha-256 " + string.Join(":", Enumerable.Repeat("AA", 32)) +
+                "\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n", video: true),
+            "SAVP is accepted");
+
+        // A profile is not a transport. DTLS over TCP is a different transport this codebase does not
+        // implement, and accepting it would hand the peer to a media stack that cannot speak it. A
+        // near-miss token must be refused too: matching the two legal profiles exactly is what keeps
+        // this from becoming "accept anything that looks like SAVP".
+        foreach (var transport in new[] { "TCP/TLS/RTP/SAVP", "TCP/TLS/RTP/SAVPF", "UDP/TLS/RTP/SAVPX", "UDP/TLS/RTP/SAVPFX", "RTP/SAVP" })
+        {
+            Check(!CallVideoProtocol.ValidSdp(
+                    "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n" +
+                    $"m=video 9 {transport} 96\r\nc=IN IP4 0.0.0.0\r\n" +
+                    "a=fingerprint:sha-256 " + string.Join(":", Enumerable.Repeat("AA", 32)) +
+                    "\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n", video: true),
+                $"transport '{transport}' is refused");
+        }
+
+        // The ACCEPT builder must hand back a usable body. The controller writes "media" into it
+        // unconditionally on a v2 call (CallController.AcceptAsync and SendAnswerLocked); with a null
+        // body that threw AFTER the session had moved to Connecting and BEFORE any snapshot, which is
+        // why an incoming call could be neither answered nor ended.
+        var built = CallSignaling.Accept(Call, 4);
+        Check(built.B != null, "the ACCEPT builder returns a body, not null");
+        if (built.B == null) return;   // the next two assertions are exactly what crashed on a null body
+        built.B["media"] = "audio";
+        built.V = 2;
+        Check(CallVideoProtocol.Valid(built), "an ACCEPT with media=audio satisfies the v2 grammar");
+        Check(!built.B.ContainsKey("request"),
+            "an audio ACCEPT carries no request id, which CallVideoProtocol.MediaKeys requires");
+
+        // ...and the same builder still produces a byte-identical v1 frame. Serialize only emits "b"
+        // when the body has more than zero entries (CallSignaling.Serialize), so allocating an empty
+        // body must not add a key: an archived 2.2.42 peer refuses an ACCEPT it did not expect.
+        var v1 = CallSignaling.Accept(Call, 4);
+        v1.V = 1;
+        var wire = CallSignaling.Serialize(v1);
+        // Skip the 4-byte big-endian length prefix: the assertion is about the JSON, and decoding
+        // from offset zero would read those length bytes as characters.
+        var json = System.Text.Encoding.UTF8.GetString(wire, 4, wire.Length - 4);
+        Check(v1.V == 1 && !json.Contains("\"b\""), "a v1 ACCEPT still goes out with no body key");
+        Check(json.Contains("\"t\":\"ACCEPT\""), "the v1 ACCEPT is still an ACCEPT");
+    }
+
     public static int Run()
     {
         OutboundFrameChecks();
@@ -61,9 +141,156 @@ static class CallVideoCheck
         CoordinatorUpgradeChecks();
         CoordinatorInitialVideoChecks();
         MediaSeamChecks();
+        RecipientControlVisibilityChecks();
+        AcceptWireChecks();
+        AcceptControllerChecks();
+        LocalUpgradeEffectChecks();
+        CameraFailureContinuityChecks();
 
         Console.WriteLine($"Windows call-video checks: {passed} passed, {failed} failed");
         return failed == 0 ? 0 : 1;
+    }
+
+    sealed class AnswerTransport(CallController controller, bool fail) : CallController.ITransport
+    {
+        public bool SentWhileRinging;
+        public string? AnswerMedia;
+        public void Send(byte[] bytes)
+        {
+            var frame = CallSignaling.Parse(bytes)!;
+            if (frame.T != CallProtocol.ACCEPT) return;
+            SentWhileRinging = controller.Snapshot()?.State == CallProtocol.State.IncomingRinging;
+            AnswerMedia = frame.B!["media"] as string;
+            if (fail) throw new IOException("injected answer send failure");
+        }
+    }
+
+    static void LocalUpgradeEffectChecks()
+    {
+        Section("local-upgrade-effects");
+        var wire = new RecordingWire();
+        var consent = new CallVideoConsent(Call, true, true, false);
+        consent.SetConnected(Call, true);
+        var media = new FakeCallVideoMedia();
+        using var coordinator = new CallVideoCoordinator(Call, true, consent, _ => true, media, wire.Send);
+        coordinator.AudioConnected(); coordinator.AwaitIdle(5000);
+        coordinator.ReceiveAdmitted(CallSignaling.VideoRequest(Call, 1, 0, Low), _ => true);
+        coordinator.AwaitIdle(5000);
+        Check(consent.AcceptUpgrade(Call, Low, true) == CallVideoConsent.Result.Ready, "original caller accepts recipient's request");
+        wire.Send(CallSignaling.VideoAcceptUpgrade(Call, 1, 0, Low));
+        coordinator.UpgradeAcceptedLocally(Low); coordinator.AwaitIdle(5000);
+        Check(wire.Count(CallProtocol.VIDEO_ACCEPT) == 1, "local effect never duplicates VIDEO_ACCEPT");
+        Check(wire.Count(CallProtocol.OFFER) == 1 && consent.Generation == 2, "local caller acceptance starts video negotiation");
+        coordinator.Dispose(); coordinator.AwaitIdle(5000);
+        Check(media.Disposed, "final teardown releases media owner");
+
+        var voiceConsent = new CallVideoConsent(Other, true, false, false);
+        var unused = new FakeCallVideoMedia();
+        var voiceCoordinator = new CallVideoCoordinator(Other, false, voiceConsent, _ => true, unused, _ => { });
+        voiceCoordinator.Dispose(); voiceCoordinator.AwaitIdle(5000);
+        Check(unused.Disposed, "voice-only v2 call releases native owner before any generation exists");
+    }
+
+    static void CameraFailureContinuityChecks()
+    {
+        Section("camera-failure-continuity");
+        var wire = new RecordingWire();
+        var consent = new CallVideoConsent(Call, true, true, true);
+        consent.PeerAnswered(Call, true); consent.SetConnected(Call, true);
+        var media = new FakeCallVideoMedia { EmitReadyOnInitialize = true, CameraStartFailure = "Camera is busy" };
+        using var coordinator = new CallVideoCoordinator(Call, true, consent, _ => true, media, wire.Send);
+        coordinator.AudioConnected(); coordinator.AwaitIdle(5000);
+        coordinator.ReceiveAdmitted(CallSignaling.MediaAnswer(Call, 1, 2, "video", Call, FakeCallVideoMedia.VideoSdp(2, "active", "a")), _ => true);
+        coordinator.ReceiveAdmitted(CallSignaling.MediaReadyFor(Call, 2, 2, "video", Call), _ => true);
+        coordinator.AwaitIdle(5000);
+        Check(consent.CurrentPhase == CallVideoConsent.Phase.Video && !media.CameraRunning && wire.Count(CallProtocol.ERROR) == 0,
+            "local camera failure preserves connected receive video");
+        Check(coordinator.Published.FailureReason == "Camera is busy", "local camera refusal reaches UI snapshot");
+        media.CameraStartFailure = null; coordinator.CameraOn(); coordinator.AwaitIdle(5000);
+        Check(media.CameraRunning && coordinator.Published.FailureReason == null, "explicit retry starts camera and clears refusal");
+    }
+
+    sealed class AnswerMediaFactory : ICallMedia.IFactory
+    {
+        public int Created;
+        public ICallMedia Create() { Created++; return new AnswerMedia(); }
+    }
+    sealed class AnswerMedia : ICallMedia
+    {
+#pragma warning disable CS0067
+        public event Action<string, string, int>? OnLocalIceCandidate;
+        public event Action? OnMediaReady;
+        public event Action? OnMediaFailed;
+#pragma warning restore CS0067
+        public Task<string> CreateOfferAsync() => Task.FromResult(FakeCallVideoMedia.AudioSdp(1, "actpass", "o"));
+        public Task<string> CreateAnswerAsync(string sdp) => Task.FromResult(FakeCallVideoMedia.AudioSdp(1, "active", "a"));
+        public Task SetRemoteAnswerAsync(string sdp) => Task.CompletedTask;
+        public void AddRemoteIceCandidate(string candidate, string? mid, int index) { }
+        public void SetMuted(bool muted) { IsMuted = muted; }
+        public bool IsMuted { get; private set; }
+        public CallStats GetStats() => new();
+        public void Dispose() { }
+    }
+
+    static void AcceptControllerChecks()
+    {
+        Section("accept-controller");
+        var root = Path.Combine(Path.GetTempPath(), "call-accept-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        using var engine = new PeerEngine(root, "AcceptTests", new TestProtector(root));
+        // Seed the verified-peer lookup only in this test fixture. This exercises the actual controller
+        // answer paths without claiming that the TLS pairing or real audio has been accepted.
+        var peers = (Dictionary<string, PeerEngine.Peer>)typeof(PeerEngine)
+            .GetField("peers", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(engine)!;
+        peers[Other] = new(Other, "Verified fixture", "127.0.0.1", 1, PeerEngine.Now, "fixture", "fixture");
+        var factory = new AnswerMediaFactory();
+        var controller = new CallController(engine, new CallSettings(root))
+        { MediaFactory = factory, VideoMediaFactory = () => new FakeCallVideoMedia(), VideoEnabled = true, CameraEligible = _ => false };
+        var snapshots = new List<CallSession>(); controller.SetCallback(snapshots.Add);
+        void Invite(string id, AnswerTransport transport)
+        {
+            var invite = CallSignaling.VideoInvite(id, 1, Other, engine.Id, "video");
+            controller.OnInvite(invite, Other, transport);
+            Check(controller.Snapshot()?.State == CallProtocol.State.IncomingRinging, "verified fixture reaches incoming ring");
+        }
+        var failed = new AnswerTransport(controller, true);
+        Invite(Call, failed);
+        try { controller.AcceptAsync().GetAwaiter().GetResult(); Check(false, "failed send must surface"); }
+        catch (IOException) { Check(true, "failed send surfaces to the answer handler"); }
+        Check(failed.SentWhileRinging, "ACCEPT sent before Connecting");
+        Check(!controller.HasActive() && snapshots.Last().EndReason == CallProtocol.EndReason.NetworkFailure, "failed answer terminates instead of stranding ring");
+        Check(factory.Created == 0, "failed answer does not open audio media");
+        var failedSnapshot = snapshots.Last();
+        Check(failedSnapshot.FailureReason == "injected answer send failure", "terminal snapshot carries send cause");
+        var clean = new AnswerTransport(controller, false);
+        Invite(Low, clean);
+        Check(controller.LastFailureReason == null, "new invite resets last failure");
+        Check(controller.AnswerVideo(Low, true) == CallVideoConsent.Result.Voice, "denied initial video answers as voice");
+        Check(clean.AnswerMedia == "audio" && clean.SentWhileRinging, "fallback sends one audio ACCEPT before Connecting");
+        Check(controller.Snapshot()?.State == CallProtocol.State.Connecting, "fallback leaves ringing");
+        controller.Hangup();
+        Check(snapshots.Last().EndReason == CallProtocol.EndReason.LocalHangup && snapshots.Last().FailureReason == null, "clean hang-up has no stale failure cause");
+        Check(failedSnapshot.FailureReason == "injected answer send failure", "queued terminal snapshot retains its own cause after next call");
+        controller.OnOffline();
+    }
+
+    static void RecipientControlVisibilityChecks()
+    {
+        Section("recipient-control-visibility");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.Connected, true, 12, true) == 12,
+            "caller sees both fresh scopes during live video");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.Connected, true, 12, false) == 8,
+            "camera stays hidden without live video while speaker remains available");
+        Check(CallRecipientControls.VisibleMask(false, CallProtocol.State.Connected, true, 12, true) == 0,
+            "callee never receives recipient controls");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.OutgoingRinging, true, 12, true) == 0,
+            "ringing call has no recipient controls");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.Connected, true, 4, true) == 4,
+            "camera-only grant does not expose speaker");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.Connected, true, 8, true) == 8,
+            "speaker-only grant does not expose camera");
+        Check(CallRecipientControls.VisibleMask(true, CallProtocol.State.Connected, false, 12, true) == 0,
+            "v1 voice call never exposes v2 recipient controls");
     }
 
     // Every frame the controller can put on a v2 call, taken through the real serializer and the real

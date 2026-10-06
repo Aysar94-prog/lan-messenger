@@ -1,9 +1,12 @@
 # Manual two-device acceptance — Windows call v2 regression fix (MT1–MT6)
 
-Companion to `TASK-CONTRACT-CALL-V2-FIX.md` §6. This is the device gate that blocks final
-completion: the automated suite proves the wire and consent rules, but neither reported symptom is
-reachable from a test harness (`OnInvite` needs two paired live engines; the WinForms accept button
-has no UI test).
+Companion to `TASK-CONTRACT-CALL-V2-FIX.md` §6. This remains the physical device gate.
+Update 2026-10-06: verified-fixture controller tests now reach OnInvite/AcceptAsync and
+Windows call UI tests cover upgrade controls; neither replaces two paired live devices.
+The camera gate is no longer hard-disabled: the native default camera has local physical
+capture evidence. Initial unavailable-video acceptance now answers voice; the older MT5
+description below records the original failure. See EVIDENCE-WVR-COMPLETION-20261006.md
+for current results. Phone Direct connections must include Windows Lap before this gate.
 
 **Platform tag: Both.** Windows PC and one Android phone, same LAN, previously paired and mutually
 Verified.
