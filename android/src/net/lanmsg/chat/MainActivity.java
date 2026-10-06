@@ -839,10 +839,25 @@ public class MainActivity extends Activity {
       requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},CALL_MIC_REQUEST);
       return;
     }
-    // Only ask when a trusted call grant actually applies to this contact -- an ordinary call has
-    // nothing to choose between, and the prompt would just be a tap to dismiss every time.
-    if(e.trustedCallMask(peerId)!=0){confirmTrustedCall(peerId);return;}
-    placeCall(peerId,false);
+    checkTrustedGrantThenCall(peerId);
+  }
+
+  /** Whether to prompt is decided by the grant the OTHER device reports holding over THIS one --
+   *  the local trustedCallGrants table records grants this device gave to others, the opposite
+   *  direction, so it cannot answer "do I have privileges over them". That is exactly the
+   *  verified CALLGRANTS/1 query recipient controls already use (PeerEngine.remoteCallGrant), so
+   *  it is reused here rather than invented twice. A network round trip, so it runs off the UI
+   *  thread; an ordinary call is never delayed on it feeling instant, since callers mostly call
+   *  contacts with no grant at all and this is the one path that needs the real answer. */
+  void checkTrustedGrantThenCall(String peerId){
+    PeerEngine e=engine();
+    if(e==null){placeCall(peerId,false);return;}
+    new Thread(()->{
+      e.refreshRemoteCallGrant(peerId);
+      PeerEngine.RemoteCallGrant g=e.remoteCallGrant(peerId);
+      int mask=g==null?0:g.mask;
+      ui.post(()->{if(isDestroyed())return;if(mask!=0)confirmTrustedCall(peerId);else placeCall(peerId,false);});
+    },"lan-trusted-call-check").start();
   }
 
   /** "Call as trusted" (today's behavior, pre-selected) vs "Call normally" -- a per-call choice,
@@ -1129,8 +1144,7 @@ public class MainActivity extends Activity {
     if(requestCode==CALL_MIC_REQUEST){
       String peerId=pendingCallPeerId;pendingCallPeerId=null;
       if(peerId==null)return;
-      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();
-        PeerEngine e=engine();if(e!=null&&e.trustedCallMask(peerId)!=0)confirmTrustedCall(peerId);else placeCall(peerId,false);}
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();checkTrustedGrantThenCall(peerId);}
       else Toast.makeText(this,"Calling needs the microphone. Enable it in Android settings to call.",Toast.LENGTH_LONG).show();
     }
   }

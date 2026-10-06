@@ -75,32 +75,55 @@ sealed partial class ChatWindow
         if (!peer.Online) { MessageBox.Show(this, peer.Name + " is offline.", "Call"); return; }
         if (callController.HasActive()) { MessageBox.Show(this, "Already in a call.", "Call"); return; }
         var peerId = selected;
-        // Only ask when a trusted call grant actually applies to this contact -- an ordinary call
-        // has nothing to choose between, and the prompt would just be a tap to dismiss every time.
-        if (engine.TrustedCallMask(peerId) != 0)
+        CheckTrustedGrantThenCall(peerId);
+    }
+
+    // Whether to prompt is decided by the grant the OTHER device reports holding over THIS one --
+    // TrustedCallMask records grants this device gave to others, the opposite direction, so it
+    // cannot answer "do I have privileges over them". That is exactly the verified CALLGRANTS/1
+    // query the recipient-control UI already uses (RemoteCallGrantStatus), reused here rather than
+    // invented twice. RefreshRemoteCallGrant is a blocking network round trip, so it runs on a
+    // background thread; an ordinary call (no grant at all, the common case) is not delayed
+    // feeling it, since it always comes back to PlaceCall either way.
+    void CheckTrustedGrantThenCall(string peerId)
+    {
+        Task.Run(() =>
         {
-            // A per-call choice only -- it never touches the stored grant, so the next call to
-            // this contact asks again. "Call as trusted" is pre-selected (today's behavior,
-            // Enter/default-button keeps it) to match Android's equivalent prompt.
-            using var prompt = new Form
+            engine.RefreshRemoteCallGrant(peerId);
+            var mask = engine.RemoteCallGrantStatus(peerId)?.Mask ?? 0;
+            try
             {
-                Text = "Call", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
-                MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(360, 130), Font = Font
-            };
-            prompt.Controls.Add(new Label
-            {
-                Text = "You hold a trusted call grant for this device. Use it for this call?",
-                AutoSize = false, Size = new Size(336, 50), Location = new Point(12, 12)
-            });
-            var trusted = new Button { Text = "Call as trusted", DialogResult = DialogResult.Yes, Location = new Point(12, 75), Size = new Size(160, 32) };
-            var regular = new Button { Text = "Call normally", DialogResult = DialogResult.No, Location = new Point(188, 75), Size = new Size(160, 32) };
-            prompt.Controls.Add(trusted); prompt.Controls.Add(regular);
-            prompt.AcceptButton = trusted; prompt.CancelButton = null;
-            var result = prompt.ShowDialog(this);
-            if (result != DialogResult.Yes && result != DialogResult.No) return;
-            PlaceCall(peerId, regularCall: result == DialogResult.No);
-        }
-        else PlaceCall(peerId, regularCall: false);
+                BeginInvoke(new Action(() =>
+                {
+                    if (mask != 0) ConfirmTrustedCall(peerId);
+                    else PlaceCall(peerId, regularCall: false);
+                }));
+            }
+            catch { }
+        });
+    }
+
+    // "Call as trusted" (today's behavior, pre-selected) vs "Call normally" -- a per-call choice,
+    // not a change to the underlying grant, so the next call to this contact asks again.
+    void ConfirmTrustedCall(string peerId)
+    {
+        using var prompt = new Form
+        {
+            Text = "Call", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(360, 130), Font = Font
+        };
+        prompt.Controls.Add(new Label
+        {
+            Text = "You hold a trusted call grant for this device. Use it for this call?",
+            AutoSize = false, Size = new Size(336, 50), Location = new Point(12, 12)
+        });
+        var trusted = new Button { Text = "Call as trusted", DialogResult = DialogResult.Yes, Location = new Point(12, 75), Size = new Size(160, 32) };
+        var regular = new Button { Text = "Call normally", DialogResult = DialogResult.No, Location = new Point(188, 75), Size = new Size(160, 32) };
+        prompt.Controls.Add(trusted); prompt.Controls.Add(regular);
+        prompt.AcceptButton = trusted; prompt.CancelButton = null;
+        var result = prompt.ShowDialog(this);
+        if (result != DialogResult.Yes && result != DialogResult.No) return;
+        PlaceCall(peerId, regularCall: result == DialogResult.No);
     }
 
     void PlaceCall(string peerId, bool regularCall)

@@ -1,5 +1,16 @@
 # Android status
 
+2026-10-06 trusted/regular prompt bugfix (source only, not packaged yet): the 3.0.3 prompt never
+appeared because `startCallTo()` checked `PeerEngine.trustedCallMask(peerId)`, which records
+grants THIS device gave to OTHERS (the opposite direction) -- a device can never see its own
+local grant table change based on what someone else granted it. Fixed by checking the grant the
+OTHER device reports holding over this one instead: the same verified CALLGRANTS/1 query the
+recipient-control UI already uses (`PeerEngine.remoteCallGrant`/`refreshRemoteCallGrant`), via a
+new `checkTrustedGrantThenCall(peerId)` that refreshes the remote grant on a background thread
+(a real network round trip) before deciding whether to prompt. Compiled clean. Not yet packaged
+or device-tested -- this is exactly the bug the user reported from the 3.0.3 candidate ("it opened
+the call direct, no prompt").
+
 2026-10-06 user-requested test-candidate package 3.0.3/code102, packaging the per-call
 trusted/regular choice below: `android/build.ps1 -VersionName 3.0.3 -VersionCode 102`, all four
 ABIs. Original signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over

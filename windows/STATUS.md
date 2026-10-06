@@ -1,5 +1,13 @@
 # Windows status
 
+2026-10-06 trusted/regular prompt bugfix (source only, not packaged yet): mirrors the same-day
+Android fix. `StartCallToSelected()` checked `engine.TrustedCallMask(peerId)` (grants this device
+gave to others, the wrong direction) instead of the grant the OTHER device reports holding over
+this one. Fixed via a new `CheckTrustedGrantThenCall(peerId)` that runs
+`engine.RefreshRemoteCallGrant(peerId)` + `RemoteCallGrantStatus(peerId)` on a background task
+before deciding whether to show the prompt (`ConfirmTrustedCall`, extracted into its own method).
+`dotnet build -c Release`: 0 errors. Not packaged or device-tested.
+
 2026-10-06 user-requested test-candidate package 3.0.3, packaging the per-call trusted/regular
 choice below: `<Version>` bumped to 3.0.3, published framework-dependent via `dotnet publish -c
 Release`. 0 errors, one pre-existing unrelated warning. Zipped as
