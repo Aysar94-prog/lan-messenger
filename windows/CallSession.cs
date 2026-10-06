@@ -21,18 +21,23 @@ public sealed class CallSession
     // the call has no video -- which includes a v2 call whose adapter could not be created.
     public bool VideoCapable { get; }
     public bool InvitedVideo { get; }
+    // True when the caller chose "Call normally" at the per-call trusted-grant prompt (or the
+    // caller's INVITE carried that choice, for an incoming call). Suppresses this device's own
+    // trusted auto-answer path and recipient-control visibility for this call only; the underlying
+    // grant is untouched. Mirrors CallSession.java's regularCall.
+    public bool RegularCall { get; }
     public CallVideoCoordinator.Snapshot? Video { get; }
 
     public CallSession(string callId, string peerId, CallProtocol.State state, bool isCaller, bool muted,
         string audioRoute, CallProtocol.Quality quality, long createdAtMs, long connectedAtMs, long durationMs,
         CallProtocol.EndReason? endReason, bool videoCapable = false, bool invitedVideo = false,
-        CallVideoCoordinator.Snapshot? video = null, string? failureReason = null)
+        CallVideoCoordinator.Snapshot? video = null, string? failureReason = null, bool regularCall = false)
     {
         CallId = callId; PeerId = peerId; State = state; IsCaller = isCaller; Muted = muted;
         AudioRoute = audioRoute; Quality = quality; CreatedAtMs = createdAtMs; ConnectedAtMs = connectedAtMs;
         DurationMs = durationMs; EndReason = endReason;
         VideoCapable = videoCapable; InvitedVideo = invitedVideo; Video = video;
-        FailureReason = failureReason;
+        FailureReason = failureReason; RegularCall = regularCall;
     }
 
     // A snapshot taken before ConnectedAtMs was set still reports the duration it had; once
@@ -60,6 +65,7 @@ public sealed class CallSession
         public string? FailureReason;
         public bool VideoCapable;
         public bool InvitedVideo;
+        public bool RegularCall;
         public CallVideoCoordinator.Snapshot? Video;
 
         public Builder(string callId, string peerId, bool isCaller, long nowMs)
@@ -68,7 +74,7 @@ public sealed class CallSession
         }
 
         public CallSession Snapshot() => new(CallId, PeerId, State, IsCaller, Muted, AudioRoute, Quality,
-            CreatedAtMs, ConnectedAtMs, DurationMs, EndReason, VideoCapable, InvitedVideo, Video, FailureReason);
+            CreatedAtMs, ConnectedAtMs, DurationMs, EndReason, VideoCapable, InvitedVideo, Video, FailureReason, RegularCall);
 
         public CallSession SnapshotWithDuration()
         {

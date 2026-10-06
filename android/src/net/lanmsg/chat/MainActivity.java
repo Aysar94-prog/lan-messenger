@@ -100,7 +100,7 @@ public class MainActivity extends Activity {
   final RecipientControlVisibility recipientControls=new RecipientControlVisibility();
   void refreshRecipientControls(CallSession call){
     PeerEngine e=engine();
-    String active=e!=null&&e.running&&call!=null&&call.isCaller&&call.videoCapable&&call.state==CallProtocol.State.Connected?call.callId:null;
+    String active=e!=null&&e.running&&call!=null&&call.isCaller&&!call.regularCall&&call.videoCapable&&call.state==CallProtocol.State.Connected?call.callId:null;
     long token=recipientControls.begin(active,android.os.SystemClock.elapsedRealtime());
     if(token<0)return;String peerId=call.peerId;
     new Thread(()->{
@@ -110,7 +110,7 @@ public class MainActivity extends Activity {
     },"lan-recipient-permissions").start();
   }
   int recipientControlMask(CallSession call){
-    PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)||call==null||!call.isCaller||call.state!=CallProtocol.State.Connected)return 0;
+    PeerEngine e=engine();if(e==null||host==null||!"Online".equals(host.state)||call==null||!call.isCaller||call.regularCall||call.state!=CallProtocol.State.Connected)return 0;
     return recipientControls.visible(call.callId,android.os.SystemClock.elapsedRealtime())&e.remoteControlDisplayMask(call.peerId);
   }
   void runRecipientControl(CallSession expected,int scope,CallAction action,String failure){
@@ -839,13 +839,26 @@ public class MainActivity extends Activity {
       requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},CALL_MIC_REQUEST);
       return;
     }
-    placeCall(peerId);
+    // Only ask when a trusted call grant actually applies to this contact -- an ordinary call has
+    // nothing to choose between, and the prompt would just be a tap to dismiss every time.
+    if(e.trustedCallMask(peerId)!=0){confirmTrustedCall(peerId);return;}
+    placeCall(peerId,false);
   }
 
-  void placeCall(final String peerId){
+  /** "Call as trusted" (today's behavior, pre-selected) vs "Call normally" -- a per-call choice,
+   *  not a change to the underlying grant, so the next call to this contact asks again. */
+  void confirmTrustedCall(String peerId){
+    new AlertDialog.Builder(this).setTitle("Call")
+      .setMessage("You hold a trusted call grant for this device. Use it for this call?")
+      .setPositiveButton("Call as trusted",(d,w)->placeCall(peerId,false))
+      .setNegativeButton("Call normally",(d,w)->placeCall(peerId,true))
+      .show();
+  }
+
+  void placeCall(final String peerId,final boolean regularCall){
     if(host==null)return;
     // Blocking: opens an authenticated TLS channel and writes the first signaling frame.
-    new Thread(()->{try{host.startCall(peerId);ui.post(()->{lastSignature="";render();});}
+    new Thread(()->{try{host.startCall(peerId,regularCall);ui.post(()->{lastSignature="";render();});}
       catch(final Exception error){ui.post(()->Toast.makeText(this,error.getMessage()==null?"Could not place the call.":error.getMessage(),Toast.LENGTH_LONG).show());}},"lan-call-start").start();
   }
 
@@ -1116,7 +1129,8 @@ public class MainActivity extends Activity {
     if(requestCode==CALL_MIC_REQUEST){
       String peerId=pendingCallPeerId;pendingCallPeerId=null;
       if(peerId==null)return;
-      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();placeCall(peerId);}
+      if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){if(host!=null)host.startForegroundSafely();
+        PeerEngine e=engine();if(e!=null&&e.trustedCallMask(peerId)!=0)confirmTrustedCall(peerId);else placeCall(peerId,false);}
       else Toast.makeText(this,"Calling needs the microphone. Enable it in Android settings to call.",Toast.LENGTH_LONG).show();
     }
   }

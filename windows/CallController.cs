@@ -110,7 +110,14 @@ public sealed class CallController
     /// Place a call. `inviteVideo` only means "offer video in the INVITE"; it is a request the callee
     /// may decline, and it never acquires a camera -- not here, not during the probe, not while the
     /// other side is still ringing.
-    public string StartCall(string peerId, ITransportFactory factory, bool inviteVideo)
+    public string StartCall(string peerId, ITransportFactory factory, bool inviteVideo) =>
+        StartCall(peerId, factory, inviteVideo, false);
+
+    /// <param name="regularCall">True when the caller chose, at a per-call prompt, to place this as
+    /// an ordinary call despite holding a trusted call grant over this peer -- sent on the wire so
+    /// the receiving side skips its own auto-answer path for this call only; the grant itself is
+    /// untouched.</param>
+    public string StartCall(string peerId, ITransportFactory factory, bool inviteVideo, bool regularCall)
     {
         // The capability probe is a network transaction and runs before the controller lock, exactly as
         // on Android. Every failure -- including not being able to ask at all -- means plain v1 voice,
@@ -135,11 +142,13 @@ public sealed class CallController
             videoConsent = capable ? new CallVideoConsent(callId, true, true, invitedVideo) : null;
             session.VideoCapable = capable;
             session.InvitedVideo = invitedVideo;
+            session.RegularCall = regularCall;
             BindVideoActions(callId);
             var invite = CallSignaling.Invite(callId, ++sequence, engine.Id, peerId);
             // A v1 INVITE keeps exactly caller/callee. Adding "media" to it would break the archived
             // 2.2.42 peer, so the key appears only when the peer proved it understands v2.
             if (capable) invite.B!["media"] = invitedVideo ? "video" : "audio";
+            if (regularCall) invite.B!["trust"] = "ignore";
             try { SendFrameTo(opened, invite); }
             catch
             {
@@ -185,6 +194,7 @@ public sealed class CallController
             videoConsent = frame.V == 2 ? new CallVideoConsent(frame.Cid, true, false, invitedVideo) : null;
             session.VideoCapable = frame.V == 2;
             session.InvitedVideo = invitedVideo;
+            session.RegularCall = frame.B != null && frame.B.TryGetValue("trust", out var trustValue) && trustValue is "ignore";
             BindVideoActions(frame.Cid);
             lastInboundMs = now;
             try { SendFrameTo(transport, CallSignaling.Ringing(frame.Cid, ++sequence)); } catch { }
@@ -192,7 +202,7 @@ public sealed class CallController
             NotifyCallback(session.Snapshot());
             // Trusted auto-answer authorizes answering, not bypassing camera eligibility: a trusted
             // video invitation is only accepted receive-only when this machine cannot currently capture.
-            var mask = engine.TrustedCallMask(peerId);
+            var mask = session.RegularCall ? 0 : engine.TrustedCallMask(peerId);
             if (invitedVideo && (mask & PeerEngine.TrustedAutoAnswerVideo) != 0)
                 _ = AcceptAsync(true, trusted: true);
             else if ((mask & PeerEngine.TrustedAutoAnswerVoice) != 0)
@@ -907,7 +917,7 @@ public sealed class CallController
     {
         lock (gate)
         {
-            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.State != CallProtocol.State.Connected) return;
+            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.RegularCall || session.State != CallProtocol.State.Connected) return;
             // Recipient controls use the grant the OTHER device reported to this caller (Slave
             // direction), never this machine's local Masters grant. The short freshness window also
             // makes revoke/failure fail closed between the UI click and the wire send.
@@ -923,7 +933,7 @@ public sealed class CallController
     {
         lock (gate)
         {
-            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.State != CallProtocol.State.Connected) return;
+            if (session == null || session.CallId != expectedCallId || !session.IsCaller || session.RegularCall || session.State != CallProtocol.State.Connected) return;
             if ((engine.RemoteControlDisplayMask(session.PeerId) & PeerEngine.TrustedRemoteSpeaker) == 0) return;
             SendFrameTo(activeTransport, CallSignaling.RemoteSpeaker(expectedCallId, NextSeq(), on));
         }

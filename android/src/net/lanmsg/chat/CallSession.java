@@ -24,6 +24,13 @@ public class CallSession {
    *  phone caller's own handset would never do. */
   public final long connectedAtMs;
   public final boolean videoCapable, invitedVideo;
+  /** True when the caller chose "Call normally" at a per-call prompt, despite holding a trusted
+   *  call grant over this contact -- the receiving side must ring and wait for a manual accept
+   *  instead of auto-answering, and the caller must not see recipient camera/speaker controls for
+   *  this call, even though the underlying grant is untouched. Meaningless on an incoming call
+   *  this device did not originate with the choice (always false there; it only ever suppresses
+   *  this side's own trusted path, never grants anything). */
+  public final boolean regularCall;
   public final CallVideoCoordinator.Snapshot video;
 
   CallSession(Builder b) {
@@ -38,7 +45,7 @@ public class CallSession {
     this.quality = b.quality;
     this.durationMs = b.durationMs;
     this.connectedAtMs = b.connectedAtMs;
-    this.videoCapable=b.videoCapable;this.invitedVideo=b.invitedVideo;this.video=b.video;
+    this.videoCapable=b.videoCapable;this.invitedVideo=b.invitedVideo;this.regularCall=b.regularCall;this.video=b.video;
   }
 
   /** How long the call has been connected (0 unless Connected).
@@ -68,7 +75,7 @@ public class CallSession {
     CallProtocol.Quality quality = CallProtocol.Quality.Unknown;
     long durationMs;
     long connectedAtMs;
-    boolean videoCapable, invitedVideo;
+    boolean videoCapable, invitedVideo, regularCall;
     CallVideoCoordinator.Snapshot video;
 
     Builder(String callId, String peerId, boolean isCaller, long nowMs) {

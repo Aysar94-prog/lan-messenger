@@ -76,7 +76,11 @@ public class MessengerService extends Service {
 
   /** Place a call.  Called from the Activity; the network work happens on the caller's thread,
    *  which is already a background thread in the Activity's call flow. */
-  public void startCall(String peerId) throws java.io.IOException {
+  public void startCall(String peerId) throws java.io.IOException { startCall(peerId,false); }
+  /** @param regularCall true to place this as an ordinary call -- chosen by the user at a per-call
+   *  prompt when they hold a trusted call grant over this peer -- so the callee's auto-answer is
+   *  skipped and this device gets no recipient controls, for this call only. */
+  public void startCall(String peerId,boolean regularCall) throws java.io.IOException {
     PeerEngine peer = engine;
     CallController cc = callController;
     if (peer == null) throw new java.io.IOException("Local messages are still loading.");
@@ -90,7 +94,7 @@ public class MessengerService extends Service {
     // INVITE can never be written before the connection that carries it exists. The factory is
     // named explicitly because a lambda matches both overloads.
     cc.startCall(peerId, (CallController.TransportFactory)
-      callId -> CallChannel.openOutgoing(peer, peerId, callId, cc));
+      (callId -> CallChannel.openOutgoing(peer, peerId, callId, cc)), false, null, regularCall);
   }
 
   /** The call view-model, or null before the background load finishes. */

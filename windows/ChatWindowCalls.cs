@@ -75,6 +75,36 @@ sealed partial class ChatWindow
         if (!peer.Online) { MessageBox.Show(this, peer.Name + " is offline.", "Call"); return; }
         if (callController.HasActive()) { MessageBox.Show(this, "Already in a call.", "Call"); return; }
         var peerId = selected;
+        // Only ask when a trusted call grant actually applies to this contact -- an ordinary call
+        // has nothing to choose between, and the prompt would just be a tap to dismiss every time.
+        if (engine.TrustedCallMask(peerId) != 0)
+        {
+            // A per-call choice only -- it never touches the stored grant, so the next call to
+            // this contact asks again. "Call as trusted" is pre-selected (today's behavior,
+            // Enter/default-button keeps it) to match Android's equivalent prompt.
+            using var prompt = new Form
+            {
+                Text = "Call", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(360, 130), Font = Font
+            };
+            prompt.Controls.Add(new Label
+            {
+                Text = "You hold a trusted call grant for this device. Use it for this call?",
+                AutoSize = false, Size = new Size(336, 50), Location = new Point(12, 12)
+            });
+            var trusted = new Button { Text = "Call as trusted", DialogResult = DialogResult.Yes, Location = new Point(12, 75), Size = new Size(160, 32) };
+            var regular = new Button { Text = "Call normally", DialogResult = DialogResult.No, Location = new Point(188, 75), Size = new Size(160, 32) };
+            prompt.Controls.Add(trusted); prompt.Controls.Add(regular);
+            prompt.AcceptButton = trusted; prompt.CancelButton = null;
+            var result = prompt.ShowDialog(this);
+            if (result != DialogResult.Yes && result != DialogResult.No) return;
+            PlaceCall(peerId, regularCall: result == DialogResult.No);
+        }
+        else PlaceCall(peerId, regularCall: false);
+    }
+
+    void PlaceCall(string peerId, bool regularCall)
+    {
         // StartCall opens the outbound TCP+TLS connection synchronously (via the transport
         // factory) while holding the controller's internal lock -- genuine network I/O that can
         // take seconds or hang outright against an unresponsive peer. Calling it directly from
@@ -86,8 +116,8 @@ sealed partial class ChatWindow
         {
             try
             {
-                var factory = new EngineTransportFactory(engine, callController) { peerIdForOpen = peerId };
-                callController.StartCall(peerId, factory);
+                var factory = new EngineTransportFactory(engine, callController!) { peerIdForOpen = peerId };
+                callController!.StartCall(peerId, factory, false, regularCall);
             }
             catch (Exception e)
             {
@@ -110,13 +140,13 @@ sealed partial class ChatWindow
         callView.Render(snap, peerName, RecipientControlMask(snap), engine.LastCallVideoProbeStatus);
     }
 
-    int RecipientControlMask(CallSession snap) => snap.IsCaller && snap.State == CallProtocol.State.Connected
+    int RecipientControlMask(CallSession snap) => snap.IsCaller && !snap.RegularCall && snap.State == CallProtocol.State.Connected
         && recipientGrantConfirmedCallId == snap.CallId
         ? engine.RemoteControlDisplayMask(snap.PeerId) : 0;
 
     void RefreshRecipientGrant(CallSession snap)
     {
-        if (!snap.IsCaller || snap.State != CallProtocol.State.Connected)
+        if (!snap.IsCaller || snap.RegularCall || snap.State != CallProtocol.State.Connected)
         {
             recipientGrantCallId = null; recipientGrantConfirmedCallId = null; recipientGrantNextRefresh = 0; return;
         }

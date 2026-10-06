@@ -56,7 +56,7 @@ public class CallController {
   public void configureRemoteSpeaker(RemoteSpeakerHandler handler){remoteSpeakerHandler=handler==null?speaker->false:handler;}
   public void requestRemoteSpeaker(boolean speaker)throws IOException{
     synchronized(lock){
-      if(session==null||!session.isCaller||session.state!=CallProtocol.State.Connected||protocolVersion!=2)
+      if(session==null||!session.isCaller||session.regularCall||session.state!=CallProtocol.State.Connected||protocolVersion!=2)
         throw new IOException("Remote speaker control is unavailable");
       CallProtocol.Frame frame=new CallProtocol.Frame(CallProtocol.REMOTE_SPEAKER,session.callId,sequence.incrementAndGet(),0);
       frame.body.put("speaker",speaker);sendFrame(frame);
@@ -66,7 +66,7 @@ public class CallController {
   public void requestRemoteCamera(String expected,boolean on,String facing)throws IOException{
     synchronized(lock){
       CallVideoCoordinator value=videoCoordinator;
-      if(session==null||!session.isCaller||!session.callId.equals(expected)||session.state!=CallProtocol.State.Connected
+      if(session==null||!session.isCaller||session.regularCall||!session.callId.equals(expected)||session.state!=CallProtocol.State.Connected
           ||protocolVersion!=2||value==null||value.snapshot().phase!=CallVideoConsent.Phase.Video)
         throw new IOException("Recipient camera control requires an active video call");
       CallVideoCoordinator.Snapshot video=value.snapshot();
@@ -268,6 +268,13 @@ public class CallController {
     return startCall(peerId,factory,inviteVideo,null);
   }
   public String startCall(String peerId,TransportFactory factory,boolean inviteVideo,String reservedCallId)throws IOException {
+    return startCall(peerId,factory,inviteVideo,reservedCallId,false);
+  }
+  /** @param regularCall true when the caller asked, at a per-call prompt, to place this as an
+   *  ordinary call despite holding a trusted call grant over this peer -- sent on the wire so the
+   *  receiving side skips its own auto-answer path for this call only; the grant itself is
+   *  untouched. */
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo,String reservedCallId,boolean regularCall)throws IOException {
     if(reservedCallId!=null&&!CallProtocol.validCallId(reservedCallId))throw new IOException("Invalid call invitation");
     // Fresh network transaction is outside the controller lock and UI thread.
     boolean capable=videoEnabled&&engine.probeCallVideo(peerId);
@@ -304,7 +311,7 @@ public class CallController {
       this.frameAdmission = new CallFrameAdmission(callId,peerId,protocolVersion,0);
       this.videoConsent=capable?new CallVideoConsent(callId,true,true,inviteVideo):null;
       bindVideoActions();
-      session.videoCapable=capable;session.invitedVideo=inviteVideo;
+      session.videoCapable=capable;session.invitedVideo=inviteVideo;session.regularCall=regularCall;
       session.state = CallProtocol.State.OutgoingRinging;
       this.negotiationGeneration = capable?1:0;
 
@@ -312,6 +319,7 @@ public class CallController {
       CallProtocol.Frame invite = CallSignaling.invite(callId, sequence.incrementAndGet(),
         engine.id, peerId);
       if(capable)invite.body.put("media",inviteVideo?"video":"audio");
+      if(regularCall)invite.body.put("trust","ignore");
       try {
         sendFrame(invite);
       } catch (IOException e) {
@@ -427,6 +435,7 @@ public class CallController {
       this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,protocolVersion,frame.senderSequence);
       session.videoCapable=protocolVersion==2;
       session.invitedVideo=session.videoCapable&&"video".equals(frame.body.get("media"));
+      session.regularCall="ignore".equals(frame.body.get("trust"));
       this.videoConsent=session.videoCapable?new CallVideoConsent(frame.callId,true,false,session.invitedVideo):null;
       bindVideoActions();
       session.state = CallProtocol.State.IncomingRinging;
@@ -443,7 +452,7 @@ public class CallController {
       scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
 
       CallSession snap = session.snapshot();
-      int trustedMask=engine.trustedCallMask(authenticatedPeerId);
+      int trustedMask=snap.regularCall?0:engine.trustedCallMask(authenticatedPeerId);
       boolean trustedVideo=session.invitedVideo
         &&(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
       boolean trustedVoice=(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0;

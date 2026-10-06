@@ -1,5 +1,17 @@
 # Windows status
 
+2026-10-06 per-call trusted/regular choice (source only, not packaged yet): mirrors the same-day
+Android change. `StartCallToSelected()` now checks `engine.TrustedCallMask(peerId)` and, only
+when non-zero, shows a small custom dialog ("Call as trusted", pre-selected default button vs
+"Call normally") before placing the call. `CallSession.cs` gained `RegularCall`;
+`CallController.cs`'s `StartCall` overload sends `invite.B["trust"]="ignore"` on the wire only for
+"Call normally" (the common case is byte-identical to before); `OnInvite` reads the same key and
+zeroes the trusted mask for that call; `SetRemoteCamera`/`SetRemoteSpeaker`'s existing re-check
+guards now also refuse when `session.RegularCall`, alongside `ChatWindowCalls.cs`'s
+`RecipientControlMask`/`RefreshRecipientGrant`. `dotnet build -c Release`: 0 errors, one
+pre-existing unrelated warning. Not published/packaged/device-tested; needs a real paired call
+against the matching Android change (see android/STATUS.md) before acceptance.
+
 2026-10-06 user-requested test-candidate package 3.0.1, packaging the UI pass below
 (selection-gated buttons, navy/blue restyle): `<Version>` bumped to 3.0.1, published
 framework-dependent via `dotnet publish -c Release` (requires .NET Desktop Runtime 9, same shape

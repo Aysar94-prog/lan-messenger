@@ -1,5 +1,22 @@
 # Android status
 
+2026-10-06 per-call trusted/regular choice (source only, not packaged yet): a device holding a
+trusted call grant over a contact (auto-answer and/or recipient camera/speaker control) now gets
+asked, at call start only when such a grant actually applies, "Call as trusted" (pre-selected,
+byte-identical to prior behavior) vs "Call normally" (this one call only -- the stored grant is
+untouched). Wire change: the INVITE's existing free-form body gained an optional `"trust":
+"ignore"` key, sent only for "Call normally"; omitted entirely for "Call as trusted", so the
+common case is unchanged on the wire. `CallSession.java` gained `regularCall`; `CallController.java`
+reads the key on receipt and skips its own trusted auto-answer path when set, and the recipient
+camera/speaker command methods (`requestRemoteCamera`/`requestRemoteSpeaker`) now also refuse
+when the local session is marked regularCall, alongside `MainActivity.java`'s
+`recipientControlMask`/`refreshRecipientControls` gating. A v1/legacy peer or any build that
+doesn't recognize the new key already ignores unknown body keys, same tolerance as the existing
+`media` key -- no compatibility break. Compiled clean (javac over
+`android/src/net/lanmsg/chat`, 0 errors). Not yet built into a signed candidate or device-tested;
+no interop corpus update yet (see windows/STATUS.md for the matching Windows-side change — both
+need a real paired call, both directions, both dialog choices, before this is accepted).
+
 2026-10-06 user-requested test-candidate package 3.0.2/code101, packaging the call-controls
 redesign below: `android/build.ps1 -VersionName 3.0.2 -VersionCode 101`, all four ABIs. Original
 signer confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over 3.0.1/3.0.0. Output
