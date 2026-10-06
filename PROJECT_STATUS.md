@@ -1,5 +1,10 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-06 paired continuation supersedes the selection blocker below: phone Direct connections
+now selects Lap and ultra with explicit user approval. Both devices Online; Android-originated
+voice-only call accepted on Windows reached Connected and cleanly ended after about 39 seconds.
+This is signaling/connection evidence, not audible-quality or paired-video acceptance.
+
 2026-10-06 Windows video completion execution: real consent-gated default-camera capture and local
 preview now exist alongside remote rendering. Native video SDP was corrected to the shared single-VP8
 m-line/index0 contract; sender reuse, errors, frame bounds and lifetime/generation cleanup were

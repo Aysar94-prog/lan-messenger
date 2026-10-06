@@ -1,5 +1,11 @@
 # Windows status
 
+2026-10-06 paired continuation: user-authorized phone selection now includes Lap and ultra;
+both devices Online. Android-originated voice-only call answered through Windows UI reached
+Connected/Voice, then clean Windows hangup after about 39 seconds (cause=none). No camera
+started; listening quality and paired moving-image acceptance remain pending. Older selection
+blocker below is superseded. See execution evidence for the initial UI-recovery ringing timeout.
+
 ## 2026-10-06 Windows video completion execution checkpoint (development only)
 
 Execution authorized by the user. Existing uncommitted Windows video/permissions work was retained

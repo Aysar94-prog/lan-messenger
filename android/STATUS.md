@@ -1,5 +1,10 @@
 # Android status
 
+2026-10-06 paired continuation: with explicit user approval, Direct connections remains enabled
+and now selects both ultra and Lap. Lap became Online. Android-originated voice call reached
+Connected after Windows UI acceptance; OFFER/ANSWER and MEDIA_READY completed, then Windows
+hangup was received cleanly. No camera started; audio listening/video acceptance remain pending.
+
 ## 2026-10-06 Windows-interoperability dev candidate installed (not a release)
 
 Observed USB SM-A075F `R8YY80A8VLB` carried 2.2.69/code96. Built and installed original-key ARM64

@@ -92,6 +92,19 @@ another already-permitted Windows↔Android test pair).
 
 ## Remaining completion work
 
+### Paired-device continuation, 2026-10-06
+
+User explicitly authorized adding Lap while retaining ultra. USB authorization was restored.
+Observed and saved Direct connections enabled with both verified ultra and Lap selected;
+phone then showed Lap Online and Windows showed SM-A075F Online. No other contact selected.
+One first ringing attempt timed out during UI automation recovery (not an answer failure).
+A second Android-originated voice-only call was accepted through the Windows UI and reached
+Connected/Voice at 10:36:36 UTC. Android logged OFFER/ANSWER and MEDIA_READY in both directions.
+Windows hung up after approximately 39 seconds: end=LocalHangup, cause=none; Android logged
+REMOTE_HANGUP from Connected. No camera was started. This proves paired signaling/connection
+and clean teardown, not audible quality or video-image acceptance. Live camera transmission
+confirmation and user listening acceptance remain required.
+
 Local source checkpoint includes the reviewed inherited video enabler and recipient-control
 dependencies, not only changes authored this turn. Earlier audio-only working-tree edits
 remain unstaged. Builds/tests above used this shared working tree; no isolated clean-commit
