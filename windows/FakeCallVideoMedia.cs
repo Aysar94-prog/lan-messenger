@@ -191,15 +191,20 @@ public sealed class FakeCallVideoMedia : ICallVideoMedia
     static string Candidate(string foundation) =>
         $"candidate:{foundation} 1 udp 2130706431 10.0.0.1 50000 typ host generation 0 ufrag abcd network 1";
 
-    // Built to satisfy CallVideoProtocol.ValidSdp(video: true) exactly: one m-line, UDP/TLS/RTP/SAVPF,
-    // payload types that are all <= 127 and all named by an a=rtpmap line, VP8/90000 present, no
-    // rtpmap outside {VP8, rtx, red, ulpfec}, and a sha-256 fingerprint.
+    // Built to satisfy CallVideoProtocol.ValidSdp(video: true) exactly: one m-line, a legal DTLS
+    // transport profile, payload types that are all <= 127 and all named by an a=rtpmap line,
+    // VP8/90000 present, no rtpmap outside {VP8, rtx, red, ulpfec}, and a sha-256 fingerprint.
+    //
+    // The profile is written as plain `SAVP`, not `SAVPF`, because that is what SIPSorcery 10.0.17 --
+    // the actual Windows adapter -- emits. While the fake said SAVPF it agreed with the validator by
+    // construction, so no test in this repository ever fed the validator the SDP a real peer
+    // produces, and the mismatch between the two shipped as EndReason.MediaError on a phone.
     internal static string VideoSdp(long generation, string setup, string direction) =>
         "v=0\r\n"
         + "o=- " + (700000000000000000L + generation).ToString(CultureInfo.InvariantCulture) + " 2 IN IP4 127.0.0.1\r\n"
         + "s=-\r\nt=0 0\r\n"
         + "a=group:BUNDLE 0\r\na=msid-semantic: WMS\r\n"
-        + "m=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n"
+        + "m=video 9 UDP/TLS/RTP/SAVP 96 97\r\n"
         + "c=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\n"
         + "a=ice-ufrag:" + Ufrag(generation) + "\r\n"
         + "a=ice-pwd:" + Pwd(generation) + "\r\n"
@@ -218,7 +223,7 @@ public sealed class FakeCallVideoMedia : ICallVideoMedia
         + "o=- " + (600000000000000000L + generation).ToString(CultureInfo.InvariantCulture) + " 2 IN IP4 127.0.0.1\r\n"
         + "s=-\r\nt=0 0\r\n"
         + "a=group:BUNDLE 0\r\n"
-        + "m=audio 9 UDP/TLS/RTP/SAVPF 9\r\n"
+        + "m=audio 9 UDP/TLS/RTP/SAVP 9\r\n"
         + "c=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\n"
         + "a=ice-ufrag:" + Ufrag(generation) + "\r\n"
         + "a=ice-pwd:" + Pwd(generation) + "\r\n"

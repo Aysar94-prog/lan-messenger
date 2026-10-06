@@ -42,6 +42,18 @@
 #SAMPLE AVP8	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 9\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:9 VP8/90000\r\n
 #SAMPLE VLATEFP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@:GG\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
 #SAMPLE VP8ORPHAN	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:97 VP8/90000\r\n
+# ── transport profile: SAVP and SAVPF are the two legal profiles ─────────────────
+# The two differ by the "secure RTP with a feedback extension" flag and nothing else -- same
+# ICE/DTLS transport -- and real stacks disagree about which one they write: SIPSorcery 10.0.17
+# (the Windows adapter) writes UDP/TLS/RTP/SAVP, libwebrtc writes UDP/TLS/RTP/SAVPF. Accepting
+# only SAVPF therefore rejected every SDP a real peer produced, and the rejection surfaced as a
+# silent EndReason.MediaError because the sender's validator threw and the handler discarded the
+# exception. Both ports must accept both. TCP is still refused -- a different transport, not a
+# different profile -- and so is any other token, including the near-miss SAVPX.
+#SAMPLE VSAVP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVP 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE ASAVP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVP 9\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:9 G722/8000\r\n
+#SAMPLE VTCPSAVP	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 TCP/TLS/RTP/SAVP 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
+#SAMPLE VSAVPX	v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=video 9 UDP/TLS/RTP/SAVPX 96\r\nc=IN IP4 0.0.0.0\r\na=fingerprint:sha-256 @FP@\r\na=setup:actpass\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:96 VP8/90000\r\n
 
 # ── v1 must keep parsing exactly as it always has ────────────────────────────────
 v1-invite-no-media|1|-|{"t":"INVITE","cid":"00000000-0000-4000-8000-000000000001","seq":1,"gen":0,"b":{"caller":"00000000-0000-4000-8000-00000000000c","callee":"00000000-0000-4000-8000-00000000000d"}}
@@ -123,6 +135,15 @@ v2-offer-video-sdp-vp9|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000
 v2-offer-video-sdp-short-fingerprint|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VLATEFP@"}}
 v2-offer-video-sdp-orphan-rtp-map|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VP8ORPHAN@"}}
 v2-offer-audio-sdp-vp8|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":"@AVP8@"}}
+
+# ── transport profile: both legal profiles accepted, TCP and near-misses still refused ─
+v2-offer-video-sdp-savp|1|1|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VSAVP@"}}
+v2-offer-audio-sdp-savp|1|1|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":"@ASAVP@"}}
+v2-offer-video-sdp-sd-tcp|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VTCPSAVP@"}}
+v2-offer-video-sdp-savpx|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VSAVPX@"}}
+# Answer and ICE frames travel the same validator, so the same SDP must be legal on the way back.
+v2-answer-audio-sdp-savp|1|1|{"v":2,"t":"ANSWER","cid":"00000000-0000-4000-8000-000000000001","seq":8,"gen":1,"b":{"media":"audio","sdp":"@ASAVP@"}}
+v2-answer-video-sdp-savp|1|1|{"v":2,"t":"ANSWER","cid":"00000000-0000-4000-8000-000000000001","seq":8,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VSAVP@"}}
 v2-offer-sdp-not-string|1|0|{"v":2,"t":"OFFER","cid":"00000000-0000-4000-8000-000000000001","seq":7,"gen":1,"b":{"media":"audio","sdp":7}}
 v2-answer-video-gen2|1|1|{"v":2,"t":"ANSWER","cid":"00000000-0000-4000-8000-000000000001","seq":8,"gen":2,"b":{"media":"video","request":"00000000-0000-4000-8000-0000000000aa","sdp":"@VOK@"}}
 

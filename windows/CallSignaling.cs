@@ -214,7 +214,20 @@ public static class CallSignaling
         return f;
     }
     public static CallProtocol.Frame Ringing(string callId, long seq) => Make(CallProtocol.RINGING, callId, seq);
-    public static CallProtocol.Frame Accept(string callId, long seq) => Make(CallProtocol.ACCEPT, callId, seq);
+    // The body is allocated HERE, not in Make. An ACCEPT is the one builder whose caller always
+    // writes into the body: on a v2 call the controller adds "media" to it (CallController.cs:222
+    // and :783). Make leaves B null for the bodyless builders on purpose, and an ACCEPT built that
+    // way made accept.B!["media"] throw a NullReferenceException after the session had already
+    // moved to Connecting -- which is why an incoming Android call could be neither answered nor
+    // ended. Android is not exposed to this because its Frame constructor allocates body eagerly.
+    // A v1 ACCEPT still serializes to exactly the same bytes: Serialize only emits "b" when
+    // Count > 0 (see line 23), so an empty body never reaches the wire.
+    public static CallProtocol.Frame Accept(string callId, long seq)
+    {
+        var f = Make(CallProtocol.ACCEPT, callId, seq);
+        f.B = new();
+        return f;
+    }
     public static CallProtocol.Frame Decline(string callId, long seq) => Make(CallProtocol.DECLINE, callId, seq);
     public static CallProtocol.Frame Busy(string callId, long seq) => Make(CallProtocol.BUSY, callId, seq);
     public static CallProtocol.Frame Cancel(string callId, long seq) => Make(CallProtocol.CANCEL, callId, seq);

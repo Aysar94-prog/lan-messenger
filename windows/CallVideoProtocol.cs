@@ -155,7 +155,15 @@ public static class CallVideoProtocol
                 if (section[0] != (video ? "m=video" : "m=audio")) return false;
                 if (!RegexPort(section[1])) return false;
                 if (int.Parse(section[1]) > 65535) return false;
-                if (section[2] != "UDP/TLS/RTP/SAVPF") return false;
+                // Both SAVP and SAVPF are accepted, and only those two. `SAVPF` is the extended
+                // feedback profile and `SAVP` is the plain secure profile; they differ by one flag
+                // in the same ICE/DTLS transport, and real stacks disagree about which to emit --
+                // SIPSorcery 10.0.17 (the Windows adapter) writes `SAVP`, libwebrtc writes `SAVPF`.
+                // Refusing the other one here broke every real call with EndReason.MediaError, which
+                // is exactly the failure this clause previously caused. TCP is still refused on
+                // purpose: it is a different transport, not a different profile, and this codebase
+                // does not implement DTLS over TCP.
+                if (section[2] is not ("UDP/TLS/RTP/SAVPF" or "UDP/TLS/RTP/SAVP")) return false;
                 for (int i = 3; i < section.Length; i++)
                     if (!RegexPayload(section[i]) || int.Parse(section[i]) > 127) return false;
             }

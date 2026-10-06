@@ -78,7 +78,10 @@ public class FakeCallMedia implements ICallMedia {
       if(failed!=0&&videoListener!=null)videoListener.onError(failed,"fake video failure");
     }
     private void close(){dispose(generation);resources.close();videoListener=null;}
-    private String sdp(){return "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=fingerprint:sha-256 "+
+    // Plain `SAVP` rather than `SAVPF`: the two are the same ICE/DTLS transport and real stacks
+    // disagree about which to emit (SIPSorcery writes SAVP, libwebrtc writes SAVPF), so a fake that
+    // agreed with the validator by construction could never catch a mismatch with a real peer.
+    private String sdp(){return "v=0\r\nm=video 9 UDP/TLS/RTP/SAVP 96\r\na=fingerprint:sha-256 "+
       String.join(":",Collections.nCopies(32,"00"))+"\r\na=rtpmap:96 VP8/90000\r\n";}
   }
 
@@ -158,7 +161,7 @@ public class FakeCallMedia implements ICallMedia {
       "o=- 0 0 IN IP4 127.0.0.1\r\n" +
       "s=LAN Messenger Fake " + type + "\r\n" +
       "t=0 0\r\n" +
-      "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" +
+      "m=audio 9 UDP/TLS/RTP/SAVP 111\r\n" +
       "c=IN IP4 0.0.0.0\r\n" +
       "a=rtpmap:111 opus/48000/2\r\n";
   }

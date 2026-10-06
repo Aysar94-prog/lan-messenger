@@ -91,7 +91,12 @@ public final class CallVideoProtocol {
         ++mLines; section=line.split(" +");
         if (section.length<4 || !section[0].equals(video?"m=video":"m=audio")
             || !section[1].matches("[1-9][0-9]{0,4}")
-            || Integer.parseInt(section[1])>65535 || !section[2].equals("UDP/TLS/RTP/SAVPF")) return false;
+            || Integer.parseInt(section[1])>65535
+            // Port of windows/CallVideoProtocol.cs ValidSdp: both SAVP and SAVPF are accepted
+            // because real stacks disagree about which to emit (SIPSorcery writes SAVP, libwebrtc
+            // writes SAVPF), and refusing the other one is what broke every real call. TCP stays
+            // refused -- that is a different transport, not a different profile.
+            || !(section[2].equals("UDP/TLS/RTP/SAVPF")||section[2].equals("UDP/TLS/RTP/SAVP"))) return false;
         for(int i=3;i<section.length;i++) if (!section[i].matches("[0-9]{1,3}")
             || Integer.parseInt(section[i])>127) return false;
       }
