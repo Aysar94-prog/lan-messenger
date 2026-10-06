@@ -1,5 +1,10 @@
 # Windows status
 
+2026-10-06 user-requested test-candidate package 3.0.6, packaging the call-window restyle
+follow-up below: `<Version>` bumped to 3.0.6, published framework-dependent via `dotnet publish -c
+Release`. 0 errors. Zipped as `outputs/LanMessenger-3.0.6-Windows.zip` (7,584,082 bytes; manifest
+`outputs/SHA256SUMS-Windows-3.0.6.txt`). Not device-tested.
+
 2026-10-06 call-window restyle follow-up (source only, not packaged yet): the earlier navy/blue
 pill-button restyle only reached `Program.cs`'s main toolbar; `CallView.cs`'s own buttons (Hang
 up, Mute, Add video, Accept/Decline, recipient speaker/camera/front/rear) still had the stock 3D
