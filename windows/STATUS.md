@@ -1,5 +1,16 @@
 # Windows status
 
+2026-10-07 separate SubnetDesk helper work (not a LAN Messenger feature/release): the user
+authorized repair and requested a TeamViewer-style bottom-right foldable session/chat dock.
+Helper source now restores visible Windows Flutter CM launch, removes automatic minimize,
+adds the dock/session selector and folded unread indicator, and reuses existing Chat/Voice/
+Disconnect handlers. Rust launch-policy 2/2 and full Flutter suite 53/53 checks pass (including
+5 dock tests); modified Dart analysis has no errors. Full analysis retains upstream style warnings.
+Full helper build and Windows/Android physical acceptance remain pending. LAN Messenger app,
+protocol, Android code and installed SubnetDesk executable unchanged. See
+`../PLAN-SUBNETDESK-CONTINUATION.md`; helper source/status in
+`D:/LAN-Messenger/reference/SubnetDesk-v1.3.0/source/zibo-chen-SubnetDesk-1d3ac5a`.
+
 2026-10-06 user-requested test-candidate package 3.0.6, packaging the call-window restyle
 follow-up below: `<Version>` bumped to 3.0.6, published framework-dependent via `dotnet publish -c
 Release`. 0 errors. Zipped as `outputs/LanMessenger-3.0.6-Windows.zip` (7,584,082 bytes; manifest

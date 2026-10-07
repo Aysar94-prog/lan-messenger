@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-07 SubnetDesk remains a separate helper, not integrated into LAN Messenger. Authorized
+Windows work adds a visible, bottom-right foldable session/chat dock in its v1.3.0 source;
+helper Flutter suite 53/53 and launch-policy 2/2 pass, full native build/device acceptance pending.
+Android remember-password request is planning only (encrypted, opt-in, fingerprint-bound, forget
+action), awaiting explicit start. LAN Messenger implementations, protocol, parity and releases
+are unchanged by this work. See the two PLAN-SUBNETDESK documents and platform status records.
+
 2026-10-06 UI/polish pass across both platforms (source only, not released/packaged — see
 `android/STATUS.md` and `windows/STATUS.md` for full per-platform detail): Android gained
 call-screen fullscreen video and a Direct connections IP refresh (manual button + optional

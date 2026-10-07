@@ -1,5 +1,12 @@
 # Android status
 
+2026-10-07 separate SubnetDesk helper request (planning only): user requested a per-device
+remember-password option in the Android version; interpreted as SubnetDesk, with that assumption
+stated explicitly. Its v1.3.0 mobile UI hardcodes remember=false and its Rust credential store
+supports desktop keyrings but rejects Android. A scoped opt-in, fingerprint-bound encrypted-store
+plan with a forget action and device tests is in `../PLAN-SUBNETDESK-ANDROID-CREDENTIALS.md`.
+No Android app changes/build/signing/install performed for this request; LAN Messenger unchanged.
+
 2026-10-06 user-requested test-candidate package 3.0.5/code104, packaging the frame-validator fix
 below: `android/build.ps1 -VersionName 3.0.5 -VersionCode 104`, all four ABIs. Original signer
 confirmed unchanged (SHA-256 `7f4a0794…8d4161`) — upgrade-safe over 3.0.4 and earlier. Output
