@@ -16,6 +16,13 @@ Upstream v1.3.0 helper checkout:
 - `save_remembered_lan_credential` explicitly rejects platforms outside those desktop OSes.
 - Existing credential identity uses the remote device's 64-hex fingerprint, not its IP address.
   Preserve this binding; changing IP must not cause credential disclosure to a different device.
+- `src/ui_session_interface.rs:handle_peer_info` already saves a session credential on successful
+  authentication when remember is true, and clears it when false. Initial-login loading and
+  failed-credential clearing paths already exist. Reuse these hooks rather than saving a password
+  when the Connect button is pressed. The low-level client helper ignoring its remember argument
+  is not, by itself, proof that the session-level remember implementation is absent.
+- No Android Keystore/Cipher store was found in the existing Kotlin/Java source. Existing desktop
+  LAN identity profiles also reject Android; do not expand identity-profile scope automatically.
 
 ## Scope and tasks
 

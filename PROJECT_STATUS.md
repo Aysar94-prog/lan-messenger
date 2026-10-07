@@ -1,5 +1,11 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 separate SubnetDesk Windows helper candidate: full Rust/Flutter/auxiliary builds pass,
+policy2/2 and Flutter53/53 pass; isolated-data native startup returns1.3.0/exit0. Graphical/paired
+acceptance pending; old installed SubnetDesk service is still Running/Auto and was not replaced.
+Backend handoff requires user direction before session testing. Android credential-saving addition
+is plan-only. No LAN Messenger code/protocol/parity/signing/release changes.
+
 2026-10-07 SubnetDesk remains a separate helper, not integrated into LAN Messenger. Authorized
 Windows work adds a visible, bottom-right foldable session/chat dock in its v1.3.0 source;
 helper Flutter suite 53/53 and launch-policy 2/2 pass, full native build/device acceptance pending.

@@ -4,7 +4,8 @@ Date: 2026-10-07
 
 Scope status: the user explicitly authorized execution on 2026-10-07 and then specified a
 TeamViewer-style foldable dock at the bottom of the Windows desktop, containing chat. SubnetDesk
-source changes and focused verification are in progress. LAN Messenger application code is unchanged.
+source changes and full Windows candidate builds are complete (2026-10-08); graphical/paired
+acceptance is pending. LAN Messenger application code is unchanged.
 
 ## Inputs and boundaries
 
@@ -30,7 +31,7 @@ source changes and focused verification are in progress. LAN Messenger applicati
 | SD-02 | Both | Establish a writable Git working copy at the exact v1.3.0 tag and record upstream state | Complete | SD-01 | Separate helper checkout and pinned hbb_common submodule; LAN Messenger branch/remotes unchanged. |
 | SD-03 | Windows | Trace the missing CM and requested foldable dock | Source tracing complete; physical reproduction pending | SD-02 | See SD-CM findings below. |
 | SD-04 | Windows | Implement the agreed CM/dock fixes | Source implemented | SD-03; execution authorized | Followed SubnetDesk `AGENTS.md`; Android and wire protocol unchanged. |
-| SD-05 | Windows | Build and run focused automated/smoke checks for the fixes | Focused checks pass; full build in progress | SD-04 | Record source verification separately from physical acceptance. |
+| SD-05 | Windows | Build and run focused automated/smoke checks for the fixes | Builds/checks complete; physical acceptance pending | SD-04 | Rust policy 2/2; Flutter 53/53; native CLI startup 0/1.3.0. |
 | INT-01 | Both | Compare SubnetDesk remote-control capabilities with LAN Messenger identity, trust, direct-IP, and permissions models | Planned | SD-01 | Produce a compatibility matrix; do not infer parity. |
 | INT-02 | Both | Select an integration boundary: launch/deep-link, side-by-side IPC, shared identity, or code reuse | Planned | INT-01, licensing review, user decision | Prefer a narrow boundary that avoids coupling the two wire protocols. |
 | INT-03 | Both | Write the shared protocol/security contract if integration requires new messages | Not started | INT-02 | Review both apps, authentication, certificate binding, authorization, replay protection, and failure behavior. |
@@ -100,8 +101,8 @@ target is Windows CM launch/presentation plus removal of involuntary minimize be
 | SD-CM-01 | Windows | Trace live count, launch arguments, UI timers and restoration | Source review complete; device reproduction pending | User report | Confirm actual installed version/process arguments when execution starts. |
 | SD-CM-02 | Windows | Restore visible CM for an interactive Windows desktop | Source implemented | SD-CM-01 | Windows Flutter launches --cm; IPC reuse and prelogin/user-startup paths retained. Runtime/service acceptance pending. |
 | SD-CM-03 | Windows | Remove three-second auto-minimize and review restored-window path | Source implemented | SD-CM-02 | Windows timer removed; periodic polls do not restore/focus a manually minimized window. |
-| SD-CM-04 | Windows | Update launch-policy regression coverage and build the candidate | Policy tests 2/2 pass; build in progress | SD-CM-02, SD-CM-03 | Windows Flutter visible; legacy/other modes retain headless behavior. |
-| SD-CM-05 | Windows | Accept against an unmodified Android peer | Pending candidate build | SD-CM-04 | Check Chat both ways, Voice acceptance/end and audible behavior, Disconnect, reconnect, multiple sessions, manual minimize/restore and service restart. |
+| SD-CM-04 | Windows | Update launch-policy regression coverage and build the candidate | Policy 2/2; full builds pass | SD-CM-02, SD-CM-03 | Windows Flutter visible; legacy/other modes retain headless behavior. |
+| SD-CM-05 | Windows | Accept against an unmodified Android peer | Pending user-approved backend handoff | SD-CM-04 | Old installed service still Running/Auto; do not interrupt sessions without direction. Check Chat, audible Voice, Disconnect, reconnect and service behavior. |
 
 No new Chat/Voice implementation is assumed necessary: CM already has UI and handler paths for
 these operations, but successful presentation alone does not prove their end-to-end operation.
@@ -117,8 +118,8 @@ execution. This replaces the earlier standalone CM-window presentation target.
 | SD-DOCK-01 | Windows | Launch visible CM, expose its taskbar entry, remove automatic minimize | Source implemented; launch-policy tests 2/2 pass | SD-CM source review | Other platforms retain their launch behavior. Existing IPC and logged-in-user startup path are retained. |
 | SD-DOCK-02 | Windows | Bottom-right dock with folded header, chat, permissions and session selector | Source implemented; widget tests 5/5 pass | SD-DOCK-01 | Draft survives folding and tab switching; panel stays expanded beyond the historical timer; keyboard entry works after unfolding. |
 | SD-DOCK-03 | Windows | Unread indicator while folded and expansion for incoming Voice | Source implemented; full integration verification pending | SD-DOCK-02 | Reuses existing chat and voice handlers; no wire change. |
-| SD-DOCK-04 | Windows | Full dependency/toolchain setup and build | In progress | SD-DOCK-01 through SD-DOCK-03 | Flutter 3.44.1/Dart 3.12.1, Rust 1.82 and FRB 1.80.1 installed locally. Bridge generation complete; native dependencies and full build pending. |
-| SD-DOCK-05 | Windows | Candidate startup and Windows/Android physical acceptance | Pending build | SD-DOCK-04 | Verify chat both ways, audible Voice, Disconnect, reconnect, multi-session selection, fold/unfold, manual minimize/restore and service restart. |
+| SD-DOCK-04 | Windows | Full dependency/toolchain setup and build | Complete | SD-DOCK-01 through SD-DOCK-03 | All 16 native packages, full-feature Rust, Flutter Release and auxiliary DLL builds pass. |
+| SD-DOCK-05 | Windows | Candidate startup and Windows/Android physical acceptance | CLI startup pass; paired/graphical pending | SD-DOCK-04; approved backend handoff | Verify chat, audible Voice, Disconnect, reconnect, multi-session selection, fold/unfold, DPI/work area and service startup. |
 
 Focused evidence so far: Windows Flutter launch-policy test 1/1; legacy/headless launch-policy
 test 1/1; foldable-panel Flutter widget tests 5/5 and existing CM API test 1/1;
@@ -127,5 +128,12 @@ LAN-only source gate passes. These do not constitute a full application build or
 
 Additional verification: complete Flutter suite 53/53 pass; full Flutter analysis reports no
 errors with 315 upstream style/deprecation/unused warnings/information. Generated bridge completed.
+2026-10-08: full Rust (flutter,software-update,hwcodec,vram), Flutter Windows Release and auxiliary
+DLL builds all exit 0. Candidate CLI --version exits 0 and reports 1.3.0 using isolated data.
+Candidate folder: `D:\LAN-Messenger\outputs\SubnetDesk-helper-cm\Windows-x64-v1.3.0-cm-dock`.
+The original installed SubnetDesk service is Running/Auto at
+`C:\Program Files\SubnetDesk\SubnetDesk.exe --service`; inspected only, not stopped/replaced.
+It can still launch the old/headless CM, so merely opening the candidate does not test the patched
+incoming-session path. User direction for a session-safe backend handoff is required before pairing.
 Android remember-password addition is a separate planning-first task in
 `PLAN-SUBNETDESK-ANDROID-CREDENTIALS.md`, awaiting explicit execution start.

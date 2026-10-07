@@ -1,5 +1,14 @@
 # Windows status
 
+2026-10-08 separate SubnetDesk helper candidate built: all 16 native packages, full-feature Rust
+DLL (flutter,software-update,hwcodec,vram), Flutter Windows Release and auxiliary DLLs succeed.
+Rust policy 2/2; full Flutter suite 53/53; isolated-data CLI startup exit0/version1.3.0.
+Candidate in `D:/LAN-Messenger/outputs/SubnetDesk-helper-cm/Windows-x64-v1.3.0-cm-dock`.
+Graphical CM, paired chat/audio, DPI and service behavior NOT accepted yet. Existing original
+service remains Running/Auto at C:/Program Files/SubnetDesk/SubnetDesk.exe --service; not stopped
+or replaced. A session-safe, user-approved backend handoff is required before paired testing.
+LAN Messenger application/protocol unchanged; Android remember-password request still planning only.
+
 2026-10-07 separate SubnetDesk helper work (not a LAN Messenger feature/release): the user
 authorized repair and requested a TeamViewer-style bottom-right foldable session/chat dock.
 Helper source now restores visible Windows Flutter CM launch, removes automatic minimize,
