@@ -1,5 +1,18 @@
 # Windows status
 
+2026-10-08 SubnetDesk build79 runtime switch authorized ("switch version and test"). User
+closed78; no active TCP21118 session. Initial raw-path Computer Use launcher opened installed
+1.3.0, detected by actual path/UI; closed normally before testing. Using explicit process:path
+launch now starts main5476 from Windows-x64-v1.3.3-build79-private; listener21118 owned by5476,
+Wi-Fi192.168.1.12. EXE hash B193AFA86ED565D2ED53C9BA400EBC6BCBD48CA0CA13D33B80AFDE658F6EE3AD,
+FileVersion1.3.3+79 and preserved private DLL hash verified. UI backend label remains1.3.3.
+Windows Firewall access permission prompt appeared over scrcpy phone window; skill requires
+human handling and automation stopped without permission input. No phone call/ring acceptance
+yet on79. Original service Stopped/Auto/path and installed files unchanged; no audio output/
+volume changes, no Android rebuild/install or LAN code/wire/parity changes. Frozen archives
+and helper source4e4ba6a unchanged. Await user handling then phone-originated audible test.
+
+
 2026-10-08 SubnetDesk ringtone physical acceptance on running1.3.3+78 FAILED: user heard
 no sound; actual incoming CM7416/main25332 shows Accept/Dismiss with app ring mute off.
 SystemSound.alert uses Flutter MessageBeep with unchecked return; snapshot/add paths could

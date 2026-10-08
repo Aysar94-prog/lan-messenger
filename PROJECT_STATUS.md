@@ -1,5 +1,17 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 SubnetDesk build79 runtime switch explicitly authorized by user. User closed78;
+no established21118 session remained. Raw-path UI launcher initially resolved installed1.3.0;
+detected by process path/UI, closed normally, no call tested on it. Explicit process:path
+launch now runs build79 main5476 from Windows-x64-v1.3.3-build79-private, owning21118.
+EXE hash/FileVersion1.3.3+79 and unchanged no-updater DLL verified. Visible UI native version
+remains1.3.3. Windows Firewall access permission overlay appeared during phone inspection;
+Computer Use stopped without acting on it. User must handle security prompt before paired
+ring test. Audible79 acceptance NOT performed; no call auto-answer or audio-setting change.
+Original service Stopped/Auto/path unchanged; installed files, Android APK/signing, frozen
+archives and LAN Messenger code/protocol/parity unchanged. See platform status and plan.
+
+
 2026-10-08 latest separate SubnetDesk Windows ringtone checkpoint supersedes pending-ring
 acceptance below: actual running1.3.3+78 request UI/mute-off observed, but user hears no sound
 (physical ring FAILED). Approved Windows-only repair replaces SystemSound with app-owned PCM

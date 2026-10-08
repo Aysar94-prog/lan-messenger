@@ -20,11 +20,14 @@ Existing execution approval for ringtone repair applies; no new protocol/Android
 | VR-F2 | Windows | Dedicated in-memory PCM ringtone, checked native start/stop | Implemented; native WAV test PASS | F1 | Own application audio session, no system-scheme dependency or volume override; playback errors surfaced. Native WAV format/bounds tests. |
 | VR-F3 | Windows | Synchronize snapshots/add/events and cancel actual playback | Implemented; Flutter tests PASS | F2 | Authorization/connection gate; duplicate sync cannot reset30s limit; stop on mute/accept/reject/cancel/disconnect/dispose. Local answer tombstone prevents stale pending sync restarting audio. |
 | VR-F4 | Windows | Windows-only frontend build79 using unchanged native backend1.3.3 | Build/staging/archives PASS | F2,F3 | Distinct candidate, FileVersion1.3.3+79; frozen-source release PASS132.1s, Flutter73/73, CTest2/2, DLL hash preserved. Helper4e4ba6a,1199-entry corresponding-source/private gate PASS. Android APK and frozen78 artifacts unchanged. |
-| VR-F5 | Both (test only) | Phone-originated audible acceptance | Pending | F4 | User hears ring on laptop and confirms stop paths. Playback API success is not audible acceptance. Session-safe switch requires ending current call. |
+| VR-F5 | Both (test only) | Phone-originated audible acceptance | Switched to79; awaiting human Firewall prompt handling | F4 | User authorized switch and closed78; main5476/79 owns21118. Security overlay blocks phone test; no permission input automated. User must hear ring and verify stop paths; API success is not audible acceptance. |
 
 Code/build verification complete; audible success still requires user listening on79.
 User repeated a call while main25332/78 remained active and reported no sound again. This
-does not test79. No runtime switch yet; awaiting session-safe user direction. LAN Messenger
+does not test79. User then authorized switch and closed78. Build79 main5476 now owns21118;
+Windows Firewall permission overlay requires human handling, so Computer Use paused before
+phone-call test. Initial raw-path launcher opened installed1.3.0; detected/closed, explicit
+process:path then launched correct79. No audible acceptance yet. LAN Messenger
 implementation/parity, Android package/signing and updater policy remain unchanged.
 
 Date: 2026-10-08. User approved execution with "execute everything"; work in progress.
