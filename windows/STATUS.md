@@ -10,6 +10,8 @@ new visible PID25332 owns21118/UIv1.3.3. Windows Firewall prompt requires manual
 automation paused, paired physical screen/voice/camera/ring/buzzer acceptance pending. Original
 installed service Stopped/Auto/path unchanged; no installed-release replacement.
 Updater shutdown/buzzer/ring implemented; access modes and reconnect chat-memory cleanup pending.
+Android-only build support now helper8a66332/native ARM64 release PASS; Windows artifacts
+remain matched to12a8dac and untouched. Android APK/paired acceptance still pending.
 
 2026-10-08 SubnetDesk private helper execution checkpoint: user approved permanent updater
 shutdown and all listed buzzer/ringtone/access-mode work. Native updater policy and UI removal,

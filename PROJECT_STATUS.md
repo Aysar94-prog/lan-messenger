@@ -10,8 +10,10 @@ Versioned candidate/binary ZIP and1193-entry private-gated corresponding source 
 User approved switch: old1.3.1 closed normally without active session; visible new PID25332
 owns21118 and UIv1.3.3. Windows Firewall permission dialog requires user handling; GUI automation
 paused there. Original installed service Stopped/Auto/path unchanged; physical paired acceptance
-pending. Android main native dependencies pass; cross-built libsodium/native Rust/APK gates remain.
-No new APK installed. Original
+pending. Android main dependencies plus libsodium/OpenSSL pass; actual ARM64 Rust release now
+PASS2m02s (115 warnings recorded). JNI copy hash matches,16KB LOAD alignment/JNI exports checked.
+Android build-only support committed in helper8a66332; Windows source12a8dac artifacts preserved.
+APK building; manifest/signer/source packaging/install/device gates pending. No new APK installed. Original
 package/data/signing preserved. Three access modes, Keystore storage and reconnect chat-memory
 cleanup remain pending implementation; prior execution approval stands. No LAN code/parity changes.
 
