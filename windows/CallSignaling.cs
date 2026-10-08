@@ -228,7 +228,14 @@ public static class CallSignaling
         f.B = new();
         return f;
     }
-    public static CallProtocol.Frame Decline(string callId, long seq) => Make(CallProtocol.DECLINE, callId, seq);
+    // messagesOnly distinguishes a policy-driven decline (the callee is in "Messages only" mode)
+    // from a manual one, so the caller's UI can say why instead of showing a plain "Declined".
+    public static CallProtocol.Frame Decline(string callId, long seq, bool messagesOnly = false)
+    {
+        var f = Make(CallProtocol.DECLINE, callId, seq);
+        if (messagesOnly) f.B = new() { ["reason"] = "messagesOnly" };
+        return f;
+    }
     public static CallProtocol.Frame Busy(string callId, long seq) => Make(CallProtocol.BUSY, callId, seq);
     public static CallProtocol.Frame Cancel(string callId, long seq) => Make(CallProtocol.CANCEL, callId, seq);
 

@@ -25,7 +25,11 @@ public static class CallProtocol
     public enum EndReason
     {
         LocalHangup, RemoteHangup, Declined, BusyRemote, Canceled, TimeoutRinging, TimeoutMedia,
-        SignalingLost, NetworkFailure, Offline, MediaError, LocalDecline, GlareResolved, EngineShutdown
+        SignalingLost, NetworkFailure, Offline, MediaError, LocalDecline, GlareResolved, EngineShutdown,
+        // The callee is reachable (not Offline) but has switched to the "Messages only" presence
+        // mode, which rejects non-trusted calls before ringing. Distinct from Declined so the
+        // caller is told why, instead of assuming they were personally turned away.
+        MessagesOnly
     }
 
     public const int InvitationLimitCount = 5;

@@ -1,5 +1,95 @@
 # Android status
 
+2026-10-08 LAN Messenger 3.0.9 final release: the trusted-call exception bug recorded below
+(`acceptInternal`'s own `!settings.allowIncoming()` gate, fixed to check the trusted mask the same
+way `onInvite` does) is confirmed fixed by the user's own real two-device retest — Lap, "Call as
+trusted", rings through to this phone while it is in "Messages only", and the user confirmed it.
+Final build: `android/build.ps1 -VersionName 3.0.9 -VersionCode 107` (no suffix — this is the real
+release artifact, not a test candidate), all four ABIs, original development signer unchanged
+(SHA-256 `7f4a0794…8d4161`), matching Windows' 3.0.9 by explicit user request. Output
+`outputs/LanMessenger-3.0.9.apk`, 23,188,552 bytes (manifest
+`outputs/SHA256SUMS-Android-3.0.9.txt`). The `-messages-only-test` 3.0.6/3.0.7/3.0.8 candidates
+from this session's device troubleshooting are superseded and removed from `outputs/`. Not
+installed over the test phone's 3.0.8 by this session (that phone already carries the fix, tested
+there before this version bump); no other device install, release notes, or push.
+
+2026-10-08 latest separate SubnetDesk: chat-onlyAPK80 build/signature/identity/no-camera/
+alignment/native/source-private gates PASS, not installed. Keystore password source d422290,
+hardening a9eea0f: payload4/4, Flutter89/89, ARM64 release and internal preflightAPK81 PASS
+(code2081/signature/16KB/raw-strip-package verified); not installed, latest write-readback/
+caret-preserving checkbox/account-history hardening needs final rebuild. Keystore device
+instrumentation and paired save/restart/forget/trust/new-IP tests remain. Android method
+selector/password/code/manual + encrypted capability negotiation/pending cancel now wired
+in SOURCE, no optional credential save/forget on successful code/manual login. Policy7/7
+and generated bridge PASS; compiler/Flutter/interop verification in progress. Original app,
+helper signing/data and permissions untouched; physical chat/audio/access acceptance pending.
+Not all requested work complete; no LAN Messenger Android code/parity changes. See plans.
+
+2026-10-08 "Messages only" presence mode implemented (source only, not yet device-accepted):
+the people-menu's "Go offline"/"Go online" button now opens a chooser (`setItems` AlertDialog,
+`PeopleListView.showConnectionModePrompt`) instead of disconnecting immediately — "Offline
+(everything)" is the unchanged existing `setConnection(false)` behavior, and the new "Messages
+only" option stays Online while setting the existing `MessengerService.setAllowIncomingCalls
+(false)`, which already rejected incoming calls end-to-end via `CallSettings`/`CallController`
+but previously was only reachable from a separate, generic "Allow incoming calls" switch under a
+"Calls" heading — that switch is now removed from the menu (superseded by the connection
+button); its notification-permission caveat and settings-error text remain, now shown
+unconditionally under the connection control. A contact with an explicit trusted-call grant
+(auto-answer voice or video) is an exception and still rings through under this mode —
+`CallController.onInvite` now computes the trusted-call mask before the `allowIncoming()` gate
+(previously the gate ran first and blocked trusted contacts too) and only declines when both the
+mode is on and the caller has no such grant. A non-trusted caller declined this way receives a
+new `DECLINE` body field (`reason: messagesOnly`, via new `rejectMessagesOnly`) and a new
+`CallProtocol.EndReason.MESSAGES_ONLY`, shown by `CallUi.endLabel`/`endHint` as "Messages only" /
+"The other phone is in messages-only mode" — a deliberate, explicit exception to this file's
+earlier "Declined never discloses preference" design, per the user's specific request that the
+caller be told why. Going online directly from full Offline always resets to fully available
+(clears any leftover Messages-only restriction); the mode itself persists across restart via
+`CallSettings`' existing file, unchanged by this work. Full Offline is unaffected: no trusted
+exception, same as before. `android/build.ps1`'s real pipeline ran against this source: WebRTC AAR
+integration, `javac`/D8 compile, and APK packaging (native libs for all four ABIs) all completed
+with no compile errors; the run only stopped at its last step, zipalign, because it refuses to
+overwrite the already-existing `outputs/LanMessenger-3.0.0.apk` from a prior session — a build-
+script safety guard, not a build or test failure, and this session did not pick a new version/
+suffix to push past it since no package/release was requested. Not signed or installed this
+session; see `windows/STATUS.md` for the matching Windows change (built and `tests/run.ps1`-tested
+there) and `../PROJECT_STATUS.md`'s feature comparison. See `../PLAN-CALL-DO-NOT-DISTURB.md` for
+the full task breakdown and open device-acceptance checklist.
+
+2026-10-08 follow-up: user-requested test-candidate package built for device testing:
+`android/build-voice.ps1 -VersionName 3.0.7 -VersionCode 105 -ApkSuffix "-messages-only-test"`,
+all four ABIs, signed with the preserved original development key (`keytool -printcert` SHA-256
+`7f4a0794…8d4161`, matching every prior 2.x/3.x candidate — upgrade-safe, no uninstall needed).
+A first attempt used the script's default `-VersionCode 99`, which silently produced an APK
+Android refused to install over the already-installed 3.0.5/code104 ("App not installed") because
+99 is a lower versionCode than what was already on the phone — Android blocks that as a downgrade
+regardless of matching signer. Rebuilt at code105 (one past the last-known installed candidate)
+to fix it. Output `outputs/LanMessenger-3.0.7-messages-only-test.apk`, 23,188,552 bytes
+(manifest `outputs/SHA256SUMS-Android-3.0.7-messages-only-test.txt`). Installed via `adb install -r`
+onto the reachable test phone (SM-S908E, 192.168.1.51) after a manual sideload attempt failed with
+"package appears invalid" (a corrupted transfer, not an APK defect — `adb install` confirmed the
+same APK installs and verifies cleanly). UI-automation pass over the installed app confirmed the
+connection-button chooser, both directions, work exactly as designed.
+
+2026-10-08 real-device bug found and fixed: the trusted-call exception above did not survive
+contact with a live call. Captured `LANCALL` logcat during the user's own retest (Lap calling
+"ultra"/SM-S908E, which held a Trusted call access grant with Voice+Video auto-answer from
+`ultra`'s own Masters list for Lap, confirmed live via Windows' Slave-tab CALLGRANTS query, "Call
+as trusted" chosen on the caller side) showed `onInvite` correctly admitting the call to ring
+(no "messages only" decline logged) and then, on the auto-answer attempt that same admission
+triggers, immediately sending its own DECLINE and logging `ending call ...: LOCAL_DECLINE` /
+`Trusted auto-answer unavailable: Incoming calls are turned off`. Root cause: `acceptInternal`
+(shared by manual Accept and onInvite's trusted auto-answer call) had its own, separate, older
+`!settings.allowIncoming()` gate that unconditionally declined — added before "Messages only"
+existed, with no knowledge of the trusted-call exception onInvite now applies. Fixed by computing
+the same trusted mask (`session.regularCall ? 0 : engine.trustedCallMask(session.peerId)`) there
+too and only declining when it's zero, mirroring `onInvite` exactly. Windows has no equivalent
+duplicate gate in `AcceptAsync` — confirmed by reading it — so this bug was Android-only.
+Rebuilt/reinstalled as `3.0.8-messages-only-test`/code106 (`outputs/LanMessenger-3.0.8-messages-only-test.apk`,
+manifest `outputs/SHA256SUMS-Android-3.0.8-messages-only-test.txt`), same original signer,
+installed via `adb install -r` over 3.0.7 on the same test phone. Awaiting the user's retest to
+confirm the trusted contact now actually rings through.
+
 2026-10-08 SubnetDesk chat memory continuation: helper05a206d shared Flutter cleanup implemented
 for outgoing Android session reset/error/reconnect/close/dispose and incoming CM lifecycle.
 History/list references and selected draft discarded on session end; fold/tab alone preserves

@@ -1,5 +1,56 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 LAN Messenger 3.0.9 final release (both platforms, matching version number by explicit
+user request): "Messages only" presence mode (see the entry below for the original implementation)
+is complete and user-confirmed on a real two-device LAN retest — a trusted contact's call rings
+through under the mode; a non-trusted caller is declined with a distinct "Messages only" reason
+instead of generic "Declined"; full Offline is unaffected. A real device bug was found and fixed
+during this session's own retest: Android's `CallController.acceptInternal` had an older, separate
+`!settings.allowIncoming()` gate (predating this feature) that ignored the trusted-call exception
+and silently declined every trusted auto-answered call under the new mode; fixed to check the same
+trusted mask `onInvite` already does. Windows had no equivalent duplicate gate and needed no
+corresponding fix. Windows: `<Version>` 3.0.6 → 3.0.9, Release build 0 errors (one pre-existing
+warning); full `tests/run.ps1` passes through every suite up to the already-known, pre-existing,
+flaky `tests/group_membership.py` failure (unrelated — no suite touches calls or connection-mode
+UI). Android: final signed build `-VersionName 3.0.9 -VersionCode 107`, all four ABIs, original
+development signer unchanged (upgrade-safe). Outputs: `outputs/LanMessenger-3.0.9-Windows.zip` and
+`outputs/LanMessenger-3.0.9.apk` with their SHA256SUMS manifests; this session's intermediate
+`-messages-only-test` candidates are removed as superseded. See `windows/STATUS.md`,
+`android/STATUS.md` and `PLAN-CALL-DO-NOT-DISTURB.md`. No push.
+
+2026-10-08 latest SubnetDesk checkpoint (supersedes older pending-build statements):
+chat-only Windows/Android80 builds and packages verified, not installed; physical memory
+cleanup acceptance pending. Android Keystore credentials source d422290 plus hardening
+a9eea0f: payload4/4, Flutter89/89, ARM64 native and internal APK81/signature/identity/
+no-camera/alignment checks PASS; preflight81 not installed, hardening needs final rebuild
+and Keystore/paired device tests. Optional code/manual access now wired in SOURCE:
+encrypted post-trust capability probe, default password0 compatible, code1/manual2 gated;
+libsodium code/nonce, volatile opt-in controls, Windows known-active-unlocked same-process
+listener check, unauthorized CM decision-only card and backend network/IPC/output gates.
+Policy7/7 and bridge generation PASS; compiler/Flutter verification in progress. No new
+release/actual access acceptance claim. All requested work is not complete. Original apps,
+service settings, permissions and signing preserved; LAN Messenger code/parity unaffected.
+Own generated Windows Rust cache was verified/copied to C and old generated D cache removed,
+with a D junction to the retained copy; source/outputs/private/app data untouched (~6.5GB freed).
+See SubnetDesk chat/credential/access/contract plans; safe approved execution continues.
+
+2026-10-08 "Messages only" presence mode implemented on both platforms (source only, not yet
+device-accepted; Windows additionally build/test-verified, see below): chosen from the existing
+Offline control (a chooser on click, not a new separate button) on both platforms, it keeps the
+device Online (presence, messages) while auto-declining non-trusted incoming voice/video calls
+with no ring; a contact holding an explicit trusted-call grant is an exception and still rings
+through. The caller now sees a distinct "Messages only" reason instead of generic "Declined" (new
+wire `DECLINE` body field + new `EndReason`/`MESSAGES_ONLY`, implemented identically on both
+platforms). Windows: `dotnet build -c Release` 0 errors (one pre-existing warning); full
+`tests/run.ps1` passes up through its last suite, which stops on the already-known, unrelated
+`group_membership.py` transport-timeout failure recorded elsewhere in this file against a clean
+HEAD worktree. Android: `android/build.ps1`'s real compile/D8/package pipeline completes with no
+errors, stopping only at its final zipalign step because that step refuses to overwrite an
+existing release APK from a prior session (a safety guard, not a failure) — not signed/installed
+this session. No release, packaging, or device acceptance; see `windows/STATUS.md`,
+`android/STATUS.md` and `PLAN-CALL-DO-NOT-DISTURB.md` for full detail and the remaining
+device-acceptance checklist.
+
 2026-10-08 approved SubnetDesk continuation: session-only chat memory implemented in helper
 05a206db8f4cc5e729602bd464b206ba581b7ad2. Exact peer+connId identity, disconnect/snapshot/
 outgoing error/reconnect/close/dispose cleanup of messages and selected draft, held-list cleanup
@@ -469,6 +520,7 @@ Windows 2.2.42 interoperates with Android 2.2.42, and both remain wire-compatibl
 | Group ownership can be handed off; the owner must do so before leaving a non-empty group (owner-only groups still leave with a plain local delete) | Implemented | Implemented (not yet device-verified) |
 | Blue online / gray offline presence | Implemented | Implemented |
 | Go Online/Go Offline control (strict no-LAN Offline; local history, queued direct/group sends and resumable transfer partials retained; persisted default-Online request separate from actual state/bind failure) | Implemented in source, not in Windows 2.1.0 package; toolbar and tray share transition and show Retry online after bind failure; Refresh/Add by IP disabled Offline; Close hides to tray, Exit terminates | Included in Android 2.1.1 APK, device acceptance pending; people menu and notification share one service-owned engine; Refresh/Add by IP disabled Offline, verification explains Online requirement; Offline bound-only/non-foreground while Activity bound; foreground/multicast only during networking; `START_NOT_STICKY` avoids OS-driven restart |
+| "Messages only" presence mode: stay Online (messages/presence as normal) while auto-declining non-trusted incoming voice/video calls with no ring; a trusted-call-grant contact is an exception and still rings through; the caller sees a distinct "Messages only" reason instead of generic "Declined" | Implemented, released as 3.0.9, device-confirmed (2026-10-08); chosen from the existing Offline control's click chooser (`ConnectionModePrompt.cs`); backend (`CallSettings.AllowIncomingCalls`) pre-existed, this adds the UI, the trusted exception, and the caller-visible wire reason; user's own two-device retest confirms the trusted exception rings through | Implemented, released as 3.0.9/code107, device-confirmed (2026-10-08); same chooser from the people-menu connection button (`PeopleListView.showConnectionModePrompt`), superseding the old standalone "Allow incoming calls" switch; real-device retest found and fixed a second, independent admission gate inside `acceptInternal` that ignored the trusted exception (see `android/STATUS.md`); user's own retest after the fix confirms a trusted contact now rings through |
 | People-screen side menu | Not implemented | Implemented on Android; Profile and About live in it |
 | Hide offline direct peers in the people list | Not implemented | Implemented on Android as an Android-local persisted `Show offline users` flag, default off; a people-list display filter for direct-peer rows only; it does not change engine state, routing or the wire, and deep links and open chats bypass the list rather than being filtered |
 | Hide all group rows in the people list | Not implemented | Implemented on Android as a separate Android-local persisted `Hide groups` flag, default off, mirroring the offline-peer filter exactly (display-only, engine/wire unaffected, deep links and open chats bypass it) |

@@ -1,5 +1,6 @@
 package net.lanmsg.chat;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -31,48 +32,55 @@ final class PeopleListView {
     Button slave=menuItem(activity,"Slave");slave.setOnClickListener(v->{closeMenu(activity);activity.showPermissionDevices(false);});panel.addView(slave);
     Button direct=menuItem(activity,"Direct connections");direct.setOnClickListener(v->{closeMenu(activity);DirectConnectionUi.show(activity);});panel.addView(direct);
     boolean retry=activity.host!=null&&activity.host.requestedOnline&&"Offline".equals(activity.host.state);
-    Button connection=menuItem(activity,retry?"Retry online":activity.host!=null&&activity.host.requestedOnline?"Go offline":"Go online");connection.setOnClickListener(v->{closeMenu(activity);activity.setConnection(retry||activity.host==null||!activity.host.requestedOnline);});panel.addView(connection);
+    boolean isOnline=activity.host!=null&&activity.host.requestedOnline&&!retry;
+    boolean messagesOnly=isOnline&&!activity.host.allowIncomingCalls();
+    Button connection=menuItem(activity,retry?"Retry online":!isOnline?"Go online":messagesOnly?"Messages only":"Go offline");
+    connection.setOnClickListener(v->{
+      closeMenu(activity);
+      if(!isOnline){activity.setAllowIncomingCalls(true);activity.setConnection(true);return;}
+      showConnectionModePrompt(activity,messagesOnly);
+    });
+    panel.addView(connection);
     // setChecked runs before the listener is attached, so building the menu never reports a change.
     Switch offlineToggle=new Switch(activity);offlineToggle.setText("Show offline users");offlineToggle.setTextSize(16);offlineToggle.setPadding(0,activity.dp(12),0,0);offlineToggle.setChecked(activity.showOffline);offlineToggle.setOnCheckedChangeListener((view,checked)->setShowOffline(activity,checked));panel.addView(offlineToggle,new LinearLayout.LayoutParams(-1,-2));
     Switch groupsToggle=new Switch(activity);groupsToggle.setText("Hide groups");groupsToggle.setTextSize(16);groupsToggle.setPadding(0,activity.dp(12),0,0);groupsToggle.setChecked(activity.hideGroups);groupsToggle.setOnCheckedChangeListener((view,checked)->setHideGroups(activity,checked));panel.addView(groupsToggle,new LinearLayout.LayoutParams(-1,-2));
-    panel.addView(activity.label("Calls",19));
-    // A08: the incoming-call preference. It lives in the service (persisted in the app's files
-    // directory), not in this menu's SharedPreferences, because the service must be able to read it
-    // with no Activity running. The menu is rebuilt on every open, so the switch always shows the
-    // value the service actually holds, including a value that survived a restart or was loaded
-    // from a corrupt file.
+    // The incoming-call preference used to be a standalone switch here (A08); it is now chosen
+    // from the connection button above, next to Online/Offline, as "Messages only". The preference
+    // itself still lives in the service (persisted in the app's files directory, not this menu's
+    // SharedPreferences), because the service must be able to read it with no Activity running.
     MessengerService service=activity.host;
-    if(service==null){
-      TextView callsUnavailable=activity.label("Calls are still starting. Open the app again in a moment to change this.",14);
-      callsUnavailable.setTextColor(Color.rgb(112,128,144));panel.addView(callsUnavailable);
-    } else {
-      Switch incomingCalls=new Switch(activity);incomingCalls.setText("Allow incoming calls");incomingCalls.setTextSize(16);incomingCalls.setPadding(0,activity.dp(12),0,0);
-      incomingCalls.setChecked(service.allowIncomingCalls());
-      incomingCalls.setContentDescription("Allow incoming calls");
-      // setChecked runs before the listener is attached, so building the menu never reports a change.
-      incomingCalls.setOnCheckedChangeListener((view,checked)->activity.setAllowIncomingCalls(checked));
-      panel.addView(incomingCalls,new LinearLayout.LayoutParams(-1,-2));
+    if(service!=null){
       // If this device may not post notifications, an incoming call cannot be announced at all:
       // the platform silently discards the ringing notification, so the caller's phone rings out
       // and reports "No answer" with no clue why. This is the one place the user can act on it.
-      // The switch is left enabled, because this device can still place outgoing calls.
       if(!activity.canPostNotifications()){
         TextView noNotifications=activity.label("This device is not allowed to show notifications, so incoming calls cannot be announced here. Enable notifications for LAN Messenger in Android settings, otherwise an incoming call rings out on the other phone with no explanation.",13);
         noNotifications.setTextColor(Color.rgb(211,47,47));panel.addView(noNotifications);
       }
       // A corrupt or unreadable settings file disables admission and says so. The message names
-      // the recoverable action, because the user cannot tell a refused call from an off switch.
+      // the recoverable action, because the user cannot tell a refused call from "Messages only".
       String settingsError=service.callSettingsError();
       if(settingsError!=null&&!settingsError.isEmpty()){
-        TextView errorLine=activity.label(settingsError+"\nIncoming calls stay off until you turn this back on.",13);
+        TextView errorLine=activity.label(settingsError+"\nIncoming calls stay off until you go fully online again.",13);
         errorLine.setTextColor(Color.rgb(211,47,47));panel.addView(errorLine);
       }
-      panel.addView(activity.label("Turning this off does not stop you calling others. A call that is already ringing is declined and its notification is withdrawn.",13));
     }
     Button deleteDataItem=menuItem(activity,"Delete app data");deleteDataItem.setTextColor(Color.rgb(211,47,47));deleteDataItem.setOnClickListener(v->{closeMenu(activity);activity.confirmDeleteAllData();});panel.addView(deleteDataItem);
     panel.addView(activity.label("Hiding a row only removes it from this list. The contact or group, its chats, its unread count and any queued message stay on this device.",13));
     activity.stage.addView(overlay,new FrameLayout.LayoutParams(-1,-1));activity.menuOverlay=overlay;activity.menuOpen=true;}
   static void closeMenu(MainActivity activity){if(activity.menuOverlay!=null){if(activity.stage!=null)activity.stage.removeView(activity.menuOverlay);activity.menuOverlay=null;}activity.menuOpen=false;}
+  // Shown when the connection button is clicked while online: "Offline (everything)" keeps today's
+  // exact behavior; the second item either switches to "Messages only" or, if already there,
+  // switches back to fully online. Mirrors windows/ConnectionModePrompt.cs.
+  static void showConnectionModePrompt(MainActivity activity,boolean messagesOnly){
+    CharSequence[] items={"Offline (everything)",messagesOnly?"Allow calls again (fully online)":"Messages only (no calls)"};
+    new AlertDialog.Builder(activity).setTitle("Go offline").setItems(items,(d,which)->{
+      if(which==0){activity.setConnection(false);return;}
+      // The target value is exactly "whether we were restricted before": true flips a restricted
+      // device back to fully online; false puts a fully-online device into Messages only.
+      activity.setAllowIncomingCalls(messagesOnly);
+    }).setNegativeButton("Cancel",null).show();
+  }
   static Button barButton(MainActivity activity,String glyph,int size){Button b=new Button(activity);b.setText(glyph);b.setAllCaps(false);b.setTextSize(size);b.setTextColor(Color.WHITE);b.setBackgroundColor(Color.TRANSPARENT);b.setMinWidth(activity.dp(46));return b;}
   static Button menuItem(MainActivity activity,String text){Button b=activity.button(text);b.setTextSize(17);b.setTextColor(activity.ink);b.setGravity(android.view.Gravity.LEFT|android.view.Gravity.CENTER_VERTICAL);b.setPadding(activity.dp(4),activity.dp(12),activity.dp(4),activity.dp(12));b.setBackgroundColor(Color.TRANSPARENT);return b;}
   // Android-local, defaults to false. A failed read must not crash startup, and a failed write only

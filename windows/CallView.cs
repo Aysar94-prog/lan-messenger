@@ -272,6 +272,7 @@ sealed class CallView : Form
     {
         CallProtocol.EndReason.LocalHangup or CallProtocol.EndReason.RemoteHangup => "Call ended",
         CallProtocol.EndReason.Declined or CallProtocol.EndReason.LocalDecline => "Declined",
+        CallProtocol.EndReason.MessagesOnly => "This user is in messages-only mode",
         CallProtocol.EndReason.BusyRemote => "Busy",
         CallProtocol.EndReason.Canceled => "Canceled",
         CallProtocol.EndReason.TimeoutRinging => "No answer",

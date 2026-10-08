@@ -1,5 +1,59 @@
 # Windows status
 
+2026-10-08 LAN Messenger 3.0.9 final release: "Messages only" presence mode (see entries below
+for the implementation and the real-device trusted-call bug found and fixed on Android) confirmed
+working end to end by the user's own retest (trusted contact rings through under the mode;
+non-trusted caller sees "This user is in messages-only mode"; full Offline unaffected). `<Version>`
+bumped 3.0.6 → 3.0.9, matching Android's 3.0.9/versionCode 107 by explicit user request (same
+"numbered to match," independent version schemes convention as the 2.2.42 pair). Release build: 0
+errors, one pre-existing benign warning. Full `tests/run.ps1`: passed through every suite up to
+`tests/group_membership.py`, which failed on this run at a different assertion ("FullMember14
+hasn't updated to a version that supports it") than it has on prior runs of this same unmodified
+test file — consistent with the already-documented pre-existing, flaky, unrelated failure in this
+one test (no suite here touches calls, `CallSettings`, or connection-mode UI), not a regression
+from this change. Published `outputs/LanMessenger-3.0.9-Windows.zip` (manifest
+`outputs/SHA256SUMS-Windows-3.0.9.txt`); not installed/device-accepted by this session beyond the
+Android side's own confirmed retest. No push.
+
+2026-10-08 latest separate SubnetDesk: chat-only80 build/package PASS, not switched;
+physical cleanup acceptance pending. Code/manual access now wired in helper SOURCE,
+not accepted/released: post-trust encrypted capabilities, libsodium single-use120s/5-fail
+code, nonce/connId/manual60s/queue8/source2, volatile receiver toggles, native WTS query
+known-active-unlocked + actual same-process listener fail-closed, early CM accept/deny-only
+panel and backend preauth network/IPC/video/general/authed-channel gates. Common permission/
+scope/audit/logon grant path. Policy7/7 and bridge generation PASS; native/Flutter checks
+in progress. Running79 unchanged, no original install/service/permission modifications.
+Android saved credentials initial APK81 verified separately; final hardening/device tests
+pending. Not all requests done, no LAN Messenger feature/parity changes. See access plans.
+
+2026-10-08 "Messages only" presence mode implemented (source only, not yet device-accepted):
+the "Go offline" toolbar button and tray item now open a chooser (`ConnectionModePrompt.cs`)
+instead of disconnecting immediately — "Offline (everything)" is the unchanged existing
+behavior, and the new "Messages only" option stays Online (network up, presence shown, messages
+sent/received normally) while setting the existing `CallSettings.AllowIncomingCalls=false`, which
+already rejected incoming calls end-to-end but previously had no UI anywhere to reach it. A
+contact with an explicit trusted-call grant (auto-answer voice or video) is an exception and
+still rings through under this mode — `CallController.OnInvite` now computes the trusted-call
+mask before the `AllowIncomingCalls` gate (previously the gate ran first and blocked trusted
+contacts too) and only declines when both the mode is on and the caller has no such grant. A
+non-trusted caller declined this way receives a new `DECLINE` body field (`reason: messagesOnly`)
+and a new `CallProtocol.EndReason.MessagesOnly`, shown in `CallView.cs` as "This user is in
+messages-only mode" instead of the generic "Declined" — a deliberate choice (the user explicitly
+asked the caller to be told why). Clicking "Go online" directly from full Offline always resets
+to fully available (clears any leftover Messages-only restriction); the mode itself persists
+across restart via `CallSettings`' existing file, unchanged by this work. Full Offline is
+unaffected: no trusted exception, same as before. `dotnet build -c Release` passes clean (0
+errors, the one pre-existing benign warning). Full `tests/run.ps1` was run: it stops on
+`tests/group_membership.py`'s `pair_retry` step with a transport timeout/connection-failed
+assertion — the same pre-existing, unrelated failure already recorded against a clean HEAD
+worktree elsewhere in this project's status history (not caused by this change; no test here
+exercises calls, `CallSettings` or admission). Every test that ran before that point passed,
+including all verification/group/offline suites. No package/release/commit/push. Android has the
+matching change in the same session; see `android/STATUS.md` and `../PROJECT_STATUS.md`'s
+feature comparison. See `../PLAN-CALL-DO-NOT-DISTURB.md` for the full task breakdown and open
+device-acceptance checklist (trusted-contact ring-through, caller-visible reason text, and
+presence-while-restricted all still need real-device confirmation).
+
 2026-10-08 SubnetDesk chat memory continuation: helper05a206d shared Flutter cleanup implemented.
 CM message identity includes connId, ends/disconnected cards/snapshots clear that session's
 messages and selected draft/unread state; sender error/reconnect/close/dispose clear outgoing.

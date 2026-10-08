@@ -124,12 +124,15 @@ public class CallUi {
     return "Connection quality reduced\nCheck your LAN connection. On Wi-Fi, try moving closer to the router.";
   }
 
-  /** End reason label. "Declined" for both manual and policy — never discloses preference. */
+  /** End reason label. "Declined" still covers a manual decline and the plain "incoming calls
+   *  off" policy alike. MESSAGES_ONLY is the one deliberate exception: the user asked for the
+   *  caller to be told explicitly, instead of seeing a generic decline. */
   static String endLabel(CallProtocol.EndReason r) {
     if (r == null) return "Call ended";
     switch (r) {
       case DECLINED:       return "Declined";
       case LOCAL_DECLINE:  return "Declined";
+      case MESSAGES_ONLY:  return "Messages only";
       case BUSY_REMOTE:    return "Busy";
       case CANCELED:       return "Canceled";
       case TIMEOUT_RINGING: return "No answer";
@@ -160,6 +163,7 @@ public class CallUi {
       // to be the other way round from DECLINED.  Telling the person who declined that *the other
       // phone* declined is the app accusing the far end of something they just did themselves.
       case LOCAL_DECLINE:  return "You declined the call.";
+      case MESSAGES_ONLY:  return "The other phone is in messages-only mode.";
       case BUSY_REMOTE:    return "The other phone is already on a call.";
       case CANCELED:       return "The call was cancelled before anyone answered.";
       case TIMEOUT_RINGING: return "The other phone rang but did not answer.";

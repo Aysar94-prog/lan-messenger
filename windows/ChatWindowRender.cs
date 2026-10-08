@@ -15,7 +15,7 @@ sealed partial class ChatWindow
         if(selected!=null&&Visible&&WindowState!=FormWindowState.Minimized)try{engine.MarkRead(selected);}catch{}
         var peers=engine.Peers;
         status.Text=$"{engine.NetworkState}{(connectionProblem.Length>0?" · "+connectionProblem+" · Retry online":"")}  ·  {(engine.Running?peers.Count(p=>p.Online):0)} online  ·  {engine.Pending} queued  ·  Your ID: {engine.Id[..8]}";
-        connection.Text=trayConnection.Text=requestedOnline?(engine.Running?"Go offline":"Retry online"):"Go online";
+        connection.Text=trayConnection.Text=!requestedOnline?"Go online":!engine.Running?"Retry online":callSettings!=null&&!callSettings.AllowIncomingCalls?"Messages only":"Go offline";
         scan.Enabled=add.Enabled=engine.Running;
         var groups=engine.Groups;
         // Most recently active conversation first, like a typical chat app — not name/online order.

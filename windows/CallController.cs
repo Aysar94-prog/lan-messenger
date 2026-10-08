@@ -179,7 +179,13 @@ public sealed class CallController
             if (session != null && !session.State.Terminal()) { SendBestEffort(transport, CallSignaling.Busy(frame.Cid, 1)); CloseTransportQuietly(transport); return; }
             var peer = engine.Peers.FirstOrDefault(p => p.Id == peerId);
             if (peer == null || !peer.Trusted) { CloseTransportQuietly(transport); return; } // silence: identity mismatch
-            if (!settings.AllowIncomingCalls) { SendBestEffort(transport, CallSignaling.Decline(frame.Cid, 1)); CloseTransportQuietly(transport); return; }
+            // "Messages only" rejects everyone except a contact with an explicit trusted-call grant
+            // (auto-answer voice or video) -- computed the same way the auto-answer check further
+            // below does, so the exception is exactly "whoever auto-answer already lets through".
+            var regularCallInvite = frame.B != null && frame.B.TryGetValue("trust", out var trustValueInvite) && trustValueInvite is "ignore";
+            var trustedMaskInvite = regularCallInvite ? 0 : engine.TrustedCallMask(peerId);
+            if (!settings.AllowIncomingCalls && trustedMaskInvite == 0)
+            { SendBestEffort(transport, CallSignaling.Decline(frame.Cid, 1, messagesOnly: true)); CloseTransportQuietly(transport); return; }
 
             session = new CallSession.Builder(frame.Cid, peerId, false, now) { State = CallProtocol.State.IncomingRinging };
             LastFailureReason = null;
@@ -194,7 +200,7 @@ public sealed class CallController
             videoConsent = frame.V == 2 ? new CallVideoConsent(frame.Cid, true, false, invitedVideo) : null;
             session.VideoCapable = frame.V == 2;
             session.InvitedVideo = invitedVideo;
-            session.RegularCall = frame.B != null && frame.B.TryGetValue("trust", out var trustValue) && trustValue is "ignore";
+            session.RegularCall = regularCallInvite;
             BindVideoActions(frame.Cid);
             lastInboundMs = now;
             try { SendFrameTo(transport, CallSignaling.Ringing(frame.Cid, ++sequence)); } catch { }
@@ -202,7 +208,7 @@ public sealed class CallController
             NotifyCallback(session.Snapshot());
             // Trusted auto-answer authorizes answering, not bypassing camera eligibility: a trusted
             // video invitation is only accepted receive-only when this machine cannot currently capture.
-            var mask = session.RegularCall ? 0 : engine.TrustedCallMask(peerId);
+            var mask = trustedMaskInvite;
             if (invitedVideo && (mask & PeerEngine.TrustedAutoAnswerVideo) != 0)
                 _ = AcceptAsync(true, trusted: true);
             else if ((mask & PeerEngine.TrustedAutoAnswerVoice) != 0)
@@ -499,7 +505,9 @@ public sealed class CallController
                     EndCallLocked(CallProtocol.EndReason.BusyRemote);
                     return;
                 case CallProtocol.DECLINE:
-                    EndCallLocked(CallProtocol.EndReason.Declined);
+                    var declineReason = frame.B != null && frame.B.TryGetValue("reason", out var dr) && dr is "messagesOnly"
+                        ? CallProtocol.EndReason.MessagesOnly : CallProtocol.EndReason.Declined;
+                    EndCallLocked(declineReason);
                     return;
                 case CallProtocol.CANCEL:
                     EndCallLocked(CallProtocol.EndReason.Canceled);

@@ -55,7 +55,11 @@ public final class CallProtocol {
     MEDIA_ERROR,
     LOCAL_DECLINE,
     GLARE_RESOLVED,
-    ENGINE_SHUTDOWN
+    ENGINE_SHUTDOWN,
+    // The callee is reachable (not Offline) but has switched to the "Messages only" presence mode,
+    // which rejects non-trusted calls before ringing. Distinct from DECLINED so the caller is told
+    // why, instead of assuming they were personally turned away. Mirrors Windows CallProtocol.cs.
+    MESSAGES_ONLY
   }
 
   // ── Admission & throttling constants ───────────────────────────

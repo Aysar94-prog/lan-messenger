@@ -149,7 +149,7 @@ sealed partial class ChatWindow : Form
         verify.Click+=(_,_)=>VerifyDevice();
         callButton.Click+=(_,_)=>StartCallToSelected();
         var trayMenu=new ContextMenuStrip();trayMenu.Items.Add("Open LAN Messenger",null,(_,_)=>RestoreWindow());trayMenu.Items.Add(trayConnection);trayMenu.Items.Add("Test notification",null,(_,_)=>ShowNotification(null,"LAN Messenger","This is a test notification from LAN Messenger."));trayMenu.Items.Add("Exit",null,(_,_)=>{exiting=true;Close();});tray.ContextMenuStrip=trayMenu;tray.DoubleClick+=(_,_)=>RestoreWindow();tray.BalloonTipClicked+=(_,_)=>RestoreWindow(notificationPeer);
-        connection.Click+=(_,_)=>SetConnection(!requestedOnline||!engine.Running);trayConnection.Click+=(_,_)=>SetConnection(!requestedOnline||!engine.Running);
+        connection.Click+=(_,_)=>ConnectionButtonClicked();trayConnection.Click+=(_,_)=>ConnectionButtonClicked();
         engine.Received+=m=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();var peer=engine.Peers.FirstOrDefault(p=>p.Id==m.From);ShowNotification(m.GroupId.Length>0?m.GroupId:m.From,m.GroupId.Length>0?engine.DisplayName(m.GroupId):peer?.Name??"LAN Messenger","New encrypted message");}));}catch{}};
         engine.Forgotten+=peerId=>{if(!IsDisposed&&IsHandleCreated)try{BeginInvoke(new Action(()=>{Render();ShowNotification(peerId,"LAN Messenger",engine.DisplayName(peerId)+" has removed you as a contact. Verify again to keep chatting.");}));}catch{}};
         // Attachment transfers run on background connection threads, not the UI thread — marshal
@@ -166,6 +166,27 @@ sealed partial class ChatWindow : Form
         InitializeCalls(data);
     }
     string connectionProblem="";
+    // The one click handler for both the toolbar button and tray item. While offline, the click
+    // just goes online (and, since nothing chose "Messages only" this session, clears any leftover
+    // restriction so returning to Online is always fully available). While online, it offers a
+    // choice instead of immediately disconnecting, since "stop receiving calls" and "stop receiving
+    // everything" are now two different, equally reachable actions from the same button.
+    void ConnectionButtonClicked()
+    {
+        if(!requestedOnline||!engine.Running)
+        {
+            if(callSettings!=null)callSettings.AllowIncomingCalls=true;
+            SetConnection(true);
+            return;
+        }
+        var messagesOnly=callSettings!=null&&!callSettings.AllowIncomingCalls;
+        switch(ConnectionModePrompt.Show(this,messagesOnly))
+        {
+            case ConnectionModePrompt.Choice.Offline: SetConnection(false); break;
+            case ConnectionModePrompt.Choice.MessagesOnly: if(callSettings!=null)callSettings.AllowIncomingCalls=false; Render(); break;
+            case ConnectionModePrompt.Choice.FullOnline: if(callSettings!=null)callSettings.AllowIncomingCalls=true; Render(); break;
+        }
+    }
     void SetConnection(bool online,bool persist=true)
     {
         requestedOnline=online;

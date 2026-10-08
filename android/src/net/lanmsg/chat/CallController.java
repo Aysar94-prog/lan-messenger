@@ -391,9 +391,15 @@ public class CallController {
 
       // Admission policy. Checked before any ringing, notification, media or audio claim, and
       // before glare handling, so simultaneous dialing cannot slip past a disabled preference.
-      if (!settings.allowIncoming()) {
-        CallLog.i("INVITE declined: incoming calls are switched off");
-        reject(frame, authenticatedPeerId, transport, CallProtocol.DECLINE);
+      // "Messages only" (settings.allowIncoming()==false while still Online) rejects everyone
+      // except a contact with an explicit trusted-call grant (auto-answer voice or video) --
+      // computed the same way the auto-answer check further below does, so the exception is
+      // exactly "whoever auto-answer already lets through".
+      boolean regularCallInvite = "ignore".equals(frame.body.get("trust"));
+      int trustedMaskInvite = regularCallInvite ? 0 : engine.trustedCallMask(authenticatedPeerId);
+      if (!settings.allowIncoming() && trustedMaskInvite == 0) {
+        CallLog.i("INVITE declined: incoming calls are switched off (messages only)");
+        rejectMessagesOnly(frame, authenticatedPeerId, transport);
         return null;
       }
 
@@ -435,7 +441,7 @@ public class CallController {
       this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,protocolVersion,frame.senderSequence);
       session.videoCapable=protocolVersion==2;
       session.invitedVideo=session.videoCapable&&"video".equals(frame.body.get("media"));
-      session.regularCall="ignore".equals(frame.body.get("trust"));
+      session.regularCall=regularCallInvite;
       this.videoConsent=session.videoCapable?new CallVideoConsent(frame.callId,true,false,session.invitedVideo):null;
       bindVideoActions();
       session.state = CallProtocol.State.IncomingRinging;
@@ -452,7 +458,7 @@ public class CallController {
       scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
 
       CallSession snap = session.snapshot();
-      int trustedMask=snap.regularCall?0:engine.trustedCallMask(authenticatedPeerId);
+      int trustedMask=trustedMaskInvite;
       boolean trustedVideo=session.invitedVideo
         &&(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
       boolean trustedVoice=(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0;
@@ -475,6 +481,23 @@ public class CallController {
         reply.body = new LinkedHashMap<>();
         reply.body.put("peer", peerId);
       }
+      transport.send(CallSignaling.serialize(reply));
+    } catch (Exception ignored) {
+      // The channel is already gone; the caller falls back to its own ringing timeout.
+    }
+  }
+
+  /** Decline an invitation specifically because "Messages only" is on, distinct from a plain
+   *  reject(DECLINE): the body carries reason=messagesOnly so the caller's CallUi can say why,
+   *  instead of the generic "Declined". Mirrors Windows CallSignaling.Decline(messagesOnly:true). */
+  private void rejectMessagesOnly(CallProtocol.Frame frame, String peerId, Transport transport) {
+    try {
+      CallProtocol.Frame reply = new CallProtocol.Frame(CallProtocol.DECLINE, frame.callId,
+        sequence.incrementAndGet(), 0);
+      reply.protocolVersion=frame.protocolVersion;
+      reply.body = new LinkedHashMap<>();
+      if (frame.protocolVersion==1) reply.body.put("peer", peerId);
+      reply.body.put("reason", "messagesOnly");
       transport.send(CallSignaling.serialize(reply));
     } catch (Exception ignored) {
       // The channel is already gone; the caller falls back to its own ringing timeout.
@@ -521,13 +544,21 @@ public class CallController {
           throw new IOException("Camera permission or foreground access unavailable");
       }
 
-      // A disabled preference withdraws the invitation rather than letting it through.
+      // A disabled preference withdraws the invitation rather than letting it through -- unless
+      // the caller holds the same trusted-call grant that onInvite already let ring (and, for
+      // auto-answer, already decided to answer): re-checking the bare preference here, without
+      // that exception, silently killed every trusted auto-answered call under "Messages only",
+      // since this path runs for the auto-answer attempt onInvite just triggered as much as for
+      // a manual Accept tap. Mirrors the exact onInvite admission exception.
       if (!settings.allowIncoming()) {
-        try {
-          sendFrame(CallSignaling.decline(session.callId, sequence.incrementAndGet()));
-        } catch (IOException ignored) {}
-        endCall(CallProtocol.EndReason.LOCAL_DECLINE);
-        throw new IOException("Incoming calls are turned off");
+        int trustedMask = session.regularCall ? 0 : engine.trustedCallMask(session.peerId);
+        if (trustedMask == 0) {
+          try {
+            sendFrame(CallSignaling.decline(session.callId, sequence.incrementAndGet()));
+          } catch (IOException ignored) {}
+          endCall(CallProtocol.EndReason.LOCAL_DECLINE);
+          throw new IOException("Incoming calls are turned off");
+        }
       }
 
       // Claim audio capture (A05)
@@ -690,7 +721,8 @@ public class CallController {
         case CallProtocol.DECLINE:
           if (session.state == CallProtocol.State.OutgoingRinging ||
               session.state == CallProtocol.State.IncomingRinging) {
-            endCall(CallProtocol.EndReason.DECLINED);
+            boolean messagesOnly = frame.body != null && "messagesOnly".equals(frame.body.get("reason"));
+            endCall(messagesOnly ? CallProtocol.EndReason.MESSAGES_ONLY : CallProtocol.EndReason.DECLINED);
           }
           break;
 
