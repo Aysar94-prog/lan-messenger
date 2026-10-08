@@ -1,5 +1,28 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 SubnetDesk Windows native runner repair executed with user approval. Production
+argument helper old0/17 -> fixed17/17; CTest1/1; launch policy2/2; Flutter53/53; full Rust and
+Flutter Windows release builds pass. Local candidate1.3.1+76 (CLI1.3.1/exit0) staged and started
+as PID4052, owning .12:21118; old installed service remains Stopped/Auto/unmodified. --cm now
+reaches Flutter CM initialization instead of immediate exit1; idle/no-client probe then closes.
+Actual incoming dock/chat/fold acceptance pending phone reconnect. No LAN Messenger/Android
+implementation, wire, signing or installed-release replacement. Binary and corresponding-source
+archives complete (source2aa0dc7 plus pinned hbb_common/WindowInjection, private-material gate pass).
+
+2026-10-08 SubnetDesk dock acceptance FAILED after verified backend handoff: Android .51 has
+an Established session to candidate PID1896 on .12:21118, but no CM process/window survives.
+Candidate logs Failed to connect to connection manager; manual --cm probe exits1.
+Native runner trims the last non-whitespace character (--cm -> --c), breaking its instance
+allowlist. Repair/version/native regression plan prepared; no application changes or rebuild
+during diagnosis. See PLAN-SUBNETDESK-WINDOWS-RUNNER.md. Old service remains Stopped/Auto.
+
+2026-10-08 SubnetDesk temporary backend handoff explicitly authorized and completed on
+192.168.1.12: original service is Stopped with Automatic startup/path unchanged; old server,
+headless CM and tray gone. Candidate PID1896 owns TCP21118; native main window exists.
+User reconnect requested; visible incoming dock/chat/voice acceptance still pending.
+Earlier attempts had no dock while old backend was active. No installed binary/version,
+LAN Messenger code/protocol, Android implementation, signing or release change.
+
 2026-10-08 separate SubnetDesk Windows helper candidate: full Rust/Flutter/auxiliary builds pass,
 policy2/2 and Flutter53/53 pass; isolated-data native startup returns1.3.0/exit0. Graphical/paired
 acceptance pending; old installed SubnetDesk service is still Running/Auto and was not replaced.

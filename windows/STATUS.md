@@ -1,5 +1,33 @@
 # Windows status
 
+2026-10-08 authorized separate SubnetDesk runner repair: trim helper preserves final character
+and safely handles empty/all-whitespace. Actual production-header regression old0/17 -> fixed17/17,
+CMake/CTest1/1, launch-policy2/2; Flutter53/53. Full Rust release passes (46 existing warnings),
+Flutter Windows Release passes. Local candidate1.3.1+76, CLI1.3.1/exit0; DLL hash matches rebuilt
+Rust output. Runtime switched at09:47:38 to candidate PID4052 owning .12:21118. Manual --cm
+survives5s/reaches Flutter FFI cm; idle no-client probe later closes consistent with6s idle policy.
+Incoming-session native panel/fold/chat/audio NOT accepted; user phone reconnect requested.
+Old installed files/service startup unchanged; service Stopped/Auto. No Android/LAN Messenger
+code or wire changes. New binary/corresponding-source archives complete under
+outputs/SubnetDesk-helper-cm; source commit2aa0dc7 plus pinned sources;1180-entry private gate pass.
+
+2026-10-08 SubnetDesk actual incoming dock acceptance FAILED with the new receiver active.
+Android .51 session Established on candidate PID1896/.12:21118; no --cm process persists.
+Main log at09:33:20/09:33:33 reports Failed to connect to connection manager; direct --cm
+diagnostic exits1 without disconnecting main. Native runner's trailing-space trim deletes
+last actual character (--cm -> --c), so the single-instance allowlist rejects it. Confirmed
+upstream bug missed by prior widget/launch-policy tests. Planning-first repair and distinct
+version/native acceptance tasks in ../PLAN-SUBNETDESK-WINDOWS-RUNNER.md; code/build unchanged.
+
+2026-10-08 user-approved SubnetDesk backend handoff completed on 192.168.1.12. Normal service
+stop lacked rights; elevated path-validated helper succeeded. Original service Stopped/Auto,
+original installed path/files untouched. Old server, --cm-no-ui and tray removed from runtime.
+Candidate restarted as PID1896; TCP21118 ownership verified at the candidate path and native
+main-window handle exists. Incoming-session dock, fold/unfold, paired chat and audible Voice
+NOT accepted yet; phone reconnect requested. Automatic startup remains, so a Windows reboot
+may restore the original backend. No version bump or installed release replacement.
+Evidence: outputs/SubnetDesk-helper-cm/checks/stop-old-backend.log and continuation plan.
+
 2026-10-08 separate SubnetDesk helper candidate built: all 16 native packages, full-feature Rust
 DLL (flutter,software-update,hwcodec,vram), Flutter Windows Release and auxiliary DLLs succeed.
 Rust policy 2/2; full Flutter suite 53/53; isolated-data CLI startup exit0/version1.3.0.

@@ -2,6 +2,29 @@
 
 Date: 2026-10-07
 
+## Authorized temporary backend handoff (2026-10-08)
+
+User explicitly approved stopping the old backend on this computer (Wi-Fi 192.168.1.12),
+then starting the candidate. This is not authorization to replace installed files, reconfigure
+the service, deploy to 192.168.1.61, change Android, or publish a release.
+
+| ID | Platform | Task | Status | Dependencies | Acceptance / testing notes |
+|---|---|---|---|---|---|
+| SD-HANDOFF-01 | Windows | Snapshot old service, processes and candidate paths | Complete | User approval | Original service Running/Auto, PID7604; old server PID3808 owns TCP21118; old CM PID9592 uses --cm-no-ui. Candidate main PID9704. |
+| SD-HANDOFF-02 | Windows | Temporarily stop old service and remaining validated old processes | Complete | SD-HANDOFF-01; administrative service rights | Normal stop lacked rights; elevated, path-validated helper succeeded. Service Stopped/Auto; old server, headless CM and tray gone. No deletion, binary replacement, startup-mode or config change. Rollback: stop candidate and Start-Service SubnetDesk. |
+| SD-HANDOFF-03 | Windows | Restart candidate and verify listener ownership | Complete | SD-HANDOFF-02 | Candidate PID1896 owns TCP21118 and has a native main-window handle. No installed-path SubnetDesk process remains. This is not a dock/session test. |
+| SD-HANDOFF-04 | Windows | Incoming Android session and dock acceptance | Pending | SD-HANDOFF-03; user reconnects phone | Candidate --cm, visible native panel lasting >3 seconds, fold/unfold and chat separately accepted. If no window appears, retain failure evidence. |
+
+Earlier user attempts did not show the requested dock. Local inspection found old service/backend
+still active alongside the new UI, with a new connection in old cm-no-ui logs. This is failed
+user-visible acceptance, not a successful test of the candidate's incoming-session backend.
+
+Handoff completed approximately 09:32 Asia/Jerusalem. User requested to reconnect the phone to
+192.168.1.12 for actual incoming-session acceptance. The service retains Automatic startup and
+the original installed path, so Windows restart may bring the old backend back. No installed
+release/version change was made; candidate still reports 1.3.0+75. Diagnostic transcript:
+`D:\LAN-Messenger\outputs\SubnetDesk-helper-cm\checks\stop-old-backend.log`.
+
 Scope status: the user explicitly authorized execution on 2026-10-07 and then specified a
 TeamViewer-style foldable dock at the bottom of the Windows desktop, containing chat. SubnetDesk
 source changes and full Windows candidate builds are complete (2026-10-08); graphical/paired
