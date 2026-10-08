@@ -1,5 +1,15 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 SubnetDesk voice-start follow-up: Windows build79 main5476 has established phone
+connection/actual CM23876. User's Failed to start voice call is directly matched by helper
+PID16032 Android log: no RECORD_AUDIO permission -> recorder fail -> onVoiceCallStarted fail.
+Helper1.3.3/code2078 granted=false/AppOps ignore; original1.3.0/code2075 is separately granted.
+Read-only diagnosis, no permission/source/build/signing changes. Human helper microphone grant
+and paired audible retest required. Windows ringtone79 and voice acceptance still pending;
+transport alone is not audio acceptance. See DIAGNOSIS-SUBNETDESK-VOICE-20261008.md.
+No LAN Messenger code/protocol/parity changes.
+
+
 2026-10-08 SubnetDesk build79 runtime switch explicitly authorized by user. User closed78;
 no established21118 session remained. Raw-path UI launcher initially resolved installed1.3.0;
 detected by process path/UI, closed normally, no call tested on it. Explicit process:path

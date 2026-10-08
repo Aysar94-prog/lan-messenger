@@ -2,6 +2,34 @@
 
 Date: 2026-10-08. Read-only diagnosis, not an app repair or release.
 
+## New helper permission failure after Windows build79 switch
+
+User reports "Failed to start voice call." Current resumed phone activity belongs to
+com.zibochen.subnetdesk.helper, version1.3.3/code2078, PID16032. Separate original package
+com.zibochen.subnetdesk1.3.0/code2075 remains installed/running and has RECORD_AUDIO
+granted=true. Helper has RECORD_AUDIO granted=false and AppOps ignore; original permission
+does not establish permission for the separately installed helper.
+
+Helper-process-only phone log records (device clock timestamps, not host clock):
+
+```text
+10-08 18:40:42.622 16032 D LOG_AUDIO_RECORD_HANDLE: createAudioRecorder failed, no RECORD_AUDIO permission
+10-08 18:40:42.623 16032 E LOG_AUDIO_RECORD_HANDLE: createAudioRecorder fail
+10-08 18:40:42.623 16032 E mMainActivity: onVoiceCallStarted fail
+```
+
+Inspected AudioRecordHandle.kt checks RECORD_AUDIO before creating the recorder and returns
+false with that log. MainActivity.kt emits the exact user-facing failure when this returns
+false. Thus this recorded failure is missing helper microphone permission, not a guessed
+Windows ringtone regression. Windows main5476/build79 owns21118 with an established phone
+connection and actual child CM23876 from the same build79 folder. This transport evidence
+does not accept ringing/audio quality. Firewall prompt disposition was not observed.
+
+Read-only diagnosis only: no permission/AppOps, source, package, service, output/volume or
+call changes. User must grant Microphone to **SubnetDesk Helper** manually in Android app
+permissions, preferably while using the app, then retry. Permission grant alone does not
+prove audible voice/ringtone or call lifecycle success. No credentials/chat recorded.
+
 ## Superseding approved retest checkpoint
 
 User explicitly approved microphone access. RECORD_AUDIO is now granted=true/AppOps

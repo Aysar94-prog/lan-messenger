@@ -1,5 +1,17 @@
 # Android status
 
+2026-10-08 SubnetDesk new helper voice-start diagnosis (read-only): user reports Failed to
+start voice call after Windows build79 switch. Resumed phone app is helper1.3.3/code2078,
+PID16032. RECORD_AUDIO granted=false/AppOps ignore; filtered helper log at device clock
+18:40:42 explicitly reports no RECORD_AUDIO permission, createAudioRecorder fail and
+onVoiceCallStarted fail. Source correspondence verified; this recorded failure is missing
+helper microphone permission. Original1.3.0/code2075 remains granted=true, but its separate
+permission does not authorize helper. No permission/AppOps/install/source or signing changes;
+user must handle helper microphone grant manually then retry. Windows79 phone transport/CM
+is established, but audible voice/ringtone acceptance remains pending. No LAN/protocol edits.
+See ../DIAGNOSIS-SUBNETDESK-VOICE-20261008.md; prior helper ungranted checkpoint still applies.
+
+
 2026-10-08 latest separate SubnetDesk helper checkpoint: user explicitly approved View camera
 removal on Android and Windows, retaining screen/control and voice. Shared/mobile controls
 removed and native routes deny camera; source1.3.3+78, Flutter65/65 pass on Windows host.

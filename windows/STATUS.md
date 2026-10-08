@@ -1,5 +1,15 @@
 # Windows status
 
+2026-10-08 follow-up to79 handoff: main5476/build79 now has established phone .51 connection
+on21118 and actual child CM23876 from the79 folder. User reports Failed to start voice call;
+filtered phone helper PID16032 log explicitly shows missing RECORD_AUDIO, then recorder/call
+startup failure. Android helper permission remains granted=false/AppOps ignore while original
+package is granted=true. This recorded failure is helper microphone denial, not evidence of
+failed Windows ring playback. Firewall prompt disposition not observed; no permission actions
+automated. User must handle helper mic then retry. No audible79 acceptance yet, no Windows/
+Android code/build/settings/signing or service changes. See shared voice diagnosis.
+
+
 2026-10-08 SubnetDesk build79 runtime switch authorized ("switch version and test"). User
 closed78; no active TCP21118 session. Initial raw-path Computer Use launcher opened installed
 1.3.0, detected by actual path/UI; closed normally before testing. Using explicit process:path
