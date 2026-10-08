@@ -60,3 +60,18 @@ Keep all private key material outside source archives.
 
 Execution is authorized; secure store/UI implementation and device acceptance remain pending.
 If the user intended LAN Messenger Android, revise this plan's target before implementation.
+
+## Additional source audit:2026-10-08
+
+- Native Android release now builds; APK/device gates remain independent. Do not change
+  feature source while the1.3.3 candidate is being compiled/archived.
+- handle_peer_info already runs credential saving in spawn_blocking and reports failures
+  through interface.msgbox. Reuse it; avoid a second early save from the Connect button.
+- Android load must branch before desktop PeerConfig username lookup if both username and
+  password are encrypted; otherwise loading would wrongly require plaintext metadata.
+- libs/scrap/src/android/ffi.rs owns JavaVM and application-context GlobalRefs, initialized
+  by Java_ffi_FFI_onAppStart before MainService. JNI access should reuse that lifecycle;
+  native attached threads must not assume FindClass uses the app's class loader.
+- Current save/clear hooks validate64-hex fingerprint and username/password. Retain validation
+  and failure UI, no insecure fallback. Per-device forget must delete encrypted entry rather
+  than merely removing the old PeerConfig metadata.
