@@ -1,5 +1,32 @@
 # SubnetDesk Windows incoming voice ringtone
 
+## Physical failure follow-up (2026-10-08, Windows only)
+
+Supersedes the older build/pending-install entries below. User reports no audible ring on
+the running Windows1.3.3+78 receiver. Actual child CM7416 belongs to main25332 and shows
+Accept/Dismiss and "Mute call ringtone" (not muted). Thus signaling/UI reach the new app;
+audible acceptance FAILED. This does not prove playback was invoked. System sound file
+exists; output routing/volume remain unverified and unchanged.
+
+Source findings: default ring uses Flutter SystemSound.alert; the installed Windows engine
+calls MessageBeep(MB_OK), discards its return value and reports success. Native client
+snapshot/add paths do not synchronize ring state, and an event before client registration
+is ignored. These are confirmed gaps, not a proven single cause of this live failure.
+Existing execution approval for ringtone repair applies; no new protocol/Android work.
+
+| ID | Platform | Task | Status | Dependencies | Notes / acceptance and testing |
+|---|---|---|---|---|---|
+| VR-F1 | Windows | Trace running receiver, call UI and audio route | Complete | None | Correct new CM, pending request, app mute off; no OS audio changes. |
+| VR-F2 | Windows | Dedicated in-memory PCM ringtone, checked native start/stop | Implemented; native WAV test PASS | F1 | Own application audio session, no system-scheme dependency or volume override; playback errors surfaced. Native WAV format/bounds tests. |
+| VR-F3 | Windows | Synchronize snapshots/add/events and cancel actual playback | Implemented; Flutter tests PASS | F2 | Authorization/connection gate; duplicate sync cannot reset30s limit; stop on mute/accept/reject/cancel/disconnect/dispose. Local answer tombstone prevents stale pending sync restarting audio. |
+| VR-F4 | Windows | Windows-only frontend build79 using unchanged native backend1.3.3 | Build/staging/archives PASS | F2,F3 | Distinct candidate, FileVersion1.3.3+79; frozen-source release PASS132.1s, Flutter73/73, CTest2/2, DLL hash preserved. Helper4e4ba6a,1199-entry corresponding-source/private gate PASS. Android APK and frozen78 artifacts unchanged. |
+| VR-F5 | Both (test only) | Phone-originated audible acceptance | Pending | F4 | User hears ring on laptop and confirms stop paths. Playback API success is not audible acceptance. Session-safe switch requires ending current call. |
+
+Code/build verification complete; audible success still requires user listening on79.
+User repeated a call while main25332/78 remained active and reported no sound again. This
+does not test79. No runtime switch yet; awaiting session-safe user direction. LAN Messenger
+implementation/parity, Android package/signing and updater policy remain unchanged.
+
 Date: 2026-10-08. User approved execution with "execute everything"; work in progress.
 User reports voice call now works after granting Android microphone permission, but
 Windows receives the request without a ringtone. Phone log at10:29:29 confirms recorder

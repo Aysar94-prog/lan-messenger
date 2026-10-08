@@ -1,5 +1,21 @@
 # Windows status
 
+2026-10-08 SubnetDesk ringtone physical acceptance on running1.3.3+78 FAILED: user heard
+no sound; actual incoming CM7416/main25332 shows Accept/Dismiss with app ring mute off.
+SystemSound.alert uses Flutter MessageBeep with unchecked return; snapshot/add paths could
+miss starting ring. Verified source gaps, not a proved single runtime cause. Approved Windows-
+only repair now uses app-owned PCM/checked native WinMM start/stop on normal app audio session;
+failure displayed. Snapshot/event/add synchronize authorized connected pending sessions;
+local answer tombstone prevents stale sync restarting; mute/cancel/disconnect/timeout/dispose
+stop actual audio. Helper4e4ba6a local commit; no push. Frozen-source Windows frontend build79
+PASS132.1s, Flutter73/73 and CTest2/2 PASS. New folder/binary ZIP/source ZIP complete;1199-entry
+source/private gate pass. FileVersion1.3.3+79, backend remains1.3.3 with verified unchanged
+DLL hash. See outputs/SubnetDesk-helper-cm/RELEASE-1.3.3-BUILD79.md and hash manifest.
+NOT switched: main25332 still on78; user's repeated no-sound call during build also tested78,
+not79. Await session-safe user direction and real audible acceptance. Android APK/signing,
+frozen78 artifacts, installed service/files and LAN Messenger code/wire/parity unchanged.
+
+
 2026-10-08 latest separate SubnetDesk helper checkpoint: View camera removal explicitly
 approved and implemented in UI and native outgoing/incoming guards. Screen/control and voice
 remain in scope; LAN Messenger video/code unchanged. Version1.3.3+78 native/Flutter releases

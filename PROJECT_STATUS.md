@@ -1,5 +1,19 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 latest separate SubnetDesk Windows ringtone checkpoint supersedes pending-ring
+acceptance below: actual running1.3.3+78 request UI/mute-off observed, but user hears no sound
+(physical ring FAILED). Approved Windows-only repair replaces SystemSound with app-owned PCM
+and checked native playback/stop; authoritative snapshot/add/event sync and lifecycle stop
+completed. Helper4e4ba6a, frozen-source Windows frontend1.3.3+79 PASS132.1s, Flutter73/73,
+CTest2/2; staged distinct candidate and binary/corresponding1199-entry private-gated source
+archives complete. Backend1.3.3/no-updater DLL hash preserved; Android APK/native/signing and
+frozen78 artifacts unchanged. Runtime NOT switched: main25332 still78, repeated user call
+during preparation again tested78. Await session-safe direction and audible79 acceptance.
+See PLAN-SUBNETDESK-VOICE-RING.md and outputs/SubnetDesk-helper-cm/RELEASE-1.3.3-BUILD79.md.
+No LAN Messenger implementation/protocol/parity changes, no installed-file/service changes,
+no push. Access modes/Keystore/reconnect chat-memory work remain separately pending.
+
+
 2026-10-08 latest SubnetDesk checkpoint: user explicitly approved removal of View camera
 on Both platforms, retaining screen/control and voice; LAN Messenger video is out of scope.
 Camera controls removed and native session/login routes deny camera access; advertised
