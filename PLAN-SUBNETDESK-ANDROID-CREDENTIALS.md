@@ -1,6 +1,6 @@
 # SubnetDesk Android: remember remote-device credentials
 
-Date: 2026-10-07. New implementation request: plan-first checkpoint; not yet executed.
+Date: 2026-10-07; execution approved on2026-10-08 with "execute everything".
 Assumption stated to user: this is SubnetDesk Android, not LAN Messenger Android.
 Windows dock execution remains authorized and independent.
 
@@ -29,11 +29,11 @@ Upstream v1.3.0 helper checkout:
 | ID | Platform | Task | Status | Dependencies | Notes / acceptance |
 |---|---|---|---|---|---|
 | SD-AP-01 | Android | Trace connection, successful authentication, fingerprint and forget flows | Initial findings complete; deeper trace planned | None | Find every connect entry: typed address, discovery/history cards, reconnect and auth dialog. |
-| SD-AP-02 | Android | Add opt-in "Remember this device's password" and a per-device forget action | Planned; awaiting explicit start | SD-AP-01 | Off by default; username/password entry remains masked; saved-state indication does not reveal the secret. |
-| SD-AP-03 | Android | Secure credential store using Android Keystore-backed encryption | Planned; awaiting explicit start | SD-AP-01 | Prefer existing safe Android/native facilities if present; otherwise narrow JNI/platform bridge. Never plaintext prefs/files, logs or LAN frames beyond existing authenticated flow. |
-| SD-AP-04 | Android | Save only after successful authenticated login; load only for verified fingerprint | Planned; awaiting explicit start | SD-AP-02, SD-AP-03 | Save username + password per fingerprint. IP change may reuse same verified identity; different fingerprint must not reuse it. No trust bypass or server/protocol change. |
-| SD-AP-05 | Android | Forget, failure and lifecycle behavior | Planned; awaiting explicit start | SD-AP-04 | Forget removes secret and metadata. Wrong saved password returns to editing; lock/store errors surface safely. Review backup exclusion and reinstall/upgrade behavior. |
-| SD-AP-06 | Android | Automated checks, signed candidate and physical acceptance | Planned; awaiting explicit start | SD-AP-05 | Record source checks, APK build and actual phone acceptance separately. Do not rebuild Windows solely for Android UI/storage. |
+| SD-AP-02 | Android | Add opt-in "Remember this device's password" and a per-device forget action | Approved; not implemented | SD-AP-01 | Off by default; username/password entry remains masked; saved-state indication does not reveal the secret. |
+| SD-AP-03 | Android | Secure credential store using Android Keystore-backed encryption | Approved; not implemented | SD-AP-01 | Prefer existing safe Android/native facilities if present; otherwise narrow JNI/platform bridge. Never plaintext prefs/files, logs or LAN frames beyond existing authenticated flow. |
+| SD-AP-04 | Android | Save only after successful authenticated login; load only for verified fingerprint | Approved; not implemented | SD-AP-02, SD-AP-03 | Save username + password per fingerprint. IP change may reuse same verified identity; different fingerprint must not reuse it. No trust bypass or server/protocol change. |
+| SD-AP-05 | Android | Forget, failure and lifecycle behavior | Approved; not implemented | SD-AP-04 | Forget removes secret and metadata. Wrong saved password returns to editing; lock/store errors surface safely. Review backup exclusion and reinstall/upgrade behavior. |
+| SD-AP-06 | Android | Automated checks, signed candidate and physical acceptance | Approved; pending implementation gates | SD-AP-05 | Record source checks, APK build and actual phone acceptance separately. Do not rebuild Windows solely for Android UI/storage. |
 
 ## Test tasks / acceptance
 
@@ -58,5 +58,5 @@ Keep all private key material outside source archives.
 
 ## Next checkpoint
 
-Await explicit Android execution start under the user's planning-first workflow.
+Execution is authorized; secure store/UI implementation and device acceptance remain pending.
 If the user intended LAN Messenger Android, revise this plan's target before implementation.

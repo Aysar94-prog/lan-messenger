@@ -1,5 +1,31 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 latest SubnetDesk checkpoint: user explicitly approved removal of View camera
+on Both platforms, retaining screen/control and voice; LAN Messenger video is out of scope.
+Camera controls removed and native session/login routes deny camera access; advertised
+capability false. Source version1.3.3/Flutter1.3.3+78; Windows frontend release and Flutter65/65
+pass. Native current-version camera/update tests and final native release/package pending.
+No current-version runtime/device acceptance; old1.3.1 process has not inherited these edits.
+Android build is in scoped native dependency preparation; no new APK installed. Original
+package/data/signing preserved. Three access modes, Keystore storage and reconnect chat-memory
+cleanup remain pending implementation; prior execution approval stands. No LAN code/parity changes.
+
+2026-10-08 checkpoint supersedes older awaiting-start entries: user approved all SubnetDesk
+features, including permanent updater shutdown explicitly. Buzzer and Windows incoming ring
+are implemented in helper source; focused Flutter17/17 and first native Windows Rust release
+pass. Immutable update policy blocks FFI/scheduler and legacy Windows CLI/installers; updater
+controls removed. Final builds/packages/runtime acceptance pending; running1.3.1 is unchanged.
+Three access modes and Android Keystore credential save are approved, not implemented yet.
+Android side-by-side candidate approved; scoped SDK/NDK dependencies prepared without altering
+original Android app/data or LAN signing key. LAN Messenger code/protocol/parity unchanged.
+
+2026-10-08 user approved SubnetDesk buzzer execution and a side-by-side Android candidate.
+Implementation started; not built/device accepted yet. Microphone permission explicitly
+approved and granted for installed SubnetDesk (granted=true/AppOps foreground); original
+phone connected successfully to Windows candidate during retest setup. Audible retest pending.
+New three-access-mode request (saved password/temporary code/manual approval) is plan-only,
+awaiting start in PLAN-SUBNETDESK-ACCESS-MODES.md. LAN Messenger code/parity unchanged.
+
 2026-10-08 SubnetDesk chat buzzer requested; Android sender -> Windows receiver first-stage
 plan in PLAN-SUBNETDESK-CHAT-BUZZER.md. No implementation/build; explicit start still required.
 User prefers no persistent chat history; no message/buzz storage added. Phone ADB diagnosis

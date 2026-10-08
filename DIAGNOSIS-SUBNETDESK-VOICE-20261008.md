@@ -2,6 +2,15 @@
 
 Date: 2026-10-08. Read-only diagnosis, not an app repair or release.
 
+## Superseding approved retest checkpoint
+
+User explicitly approved microphone access. RECORD_AUDIO is now granted=true/AppOps
+foreground. Original Android app connected to the existing Windows1.3.1 dock receiver;
+phone log at10:29:29 reports createAudioRecorder done and onVoiceCallStarted success.
+User reports voice call works, but no Windows incoming ringtone. Source confirms incoming
+call handler expands/restores CM without sound. See PLAN-SUBNETDESK-VOICE-RING.md (not
+implemented yet). User report/recorder success are not a stress or audio-quality measurement.
+
 ## Direct device evidence
 
 User connected the phone for diagnostics. ADB identifies SM-S908E, Android 16, with

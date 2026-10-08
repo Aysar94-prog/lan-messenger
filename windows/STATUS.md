@@ -1,5 +1,25 @@
 # Windows status
 
+2026-10-08 latest separate SubnetDesk helper checkpoint: View camera removal explicitly
+approved and implemented in UI and native outgoing/incoming guards. Screen/control and voice
+remain in scope; LAN Messenger video/code unchanged. Version1.3.3+78 Windows frontend builds;
+Flutter65/65 pass. Current native camera/updater tests and final native release/package pending;
+no current-version physical acceptance or runtime switch. Older1.3.1 remains unchanged.
+Updater shutdown/buzzer/ring implemented; access modes and reconnect chat-memory cleanup pending.
+
+2026-10-08 SubnetDesk private helper execution checkpoint: user approved permanent updater
+shutdown and all listed buzzer/ringtone/access-mode work. Native updater policy and UI removal,
+buzzer protocol/UI and Windows ring are implemented in helper source; focused Flutter17/17 and
+first Windows Rust release pass. Final frontend/Android builds and physical acceptance pending;
+running1.3.1 and original phone package remain unchanged. Three access modes/Android credential
+store remain approved pending implementation. LAN Messenger source/parity/signing unchanged.
+
+2026-10-08 SubnetDesk buzzer execution approved; source work started, no new build or device
+acceptance yet. Phone microphone permission granted and original Android connected to
+candidate1.3.1 with automatic CM24552; voice/listening retest pending. New saved-password/
+temporary-code/manual-approval request remains plan-only in ../PLAN-SUBNETDESK-ACCESS-MODES.md.
+No authentication redesign or LAN Messenger code/parity change during buzzer implementation.
+
 2026-10-08 separate SubnetDesk buzzer receiver plan prepared (not implemented): short sound,
 matching-chat/dock indication, mute and receiver-enforced rate limits, paired with Android
 sender. Await explicit start; see ../PLAN-SUBNETDESK-CHAT-BUZZER.md. No persistent chat/buzz

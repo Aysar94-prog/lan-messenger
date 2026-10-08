@@ -1,6 +1,7 @@
 # SubnetDesk chat attention / buzzer plan
 
-Date: 2026-10-08. Planning-first checkpoint: NOT implemented or built.
+Date: 2026-10-08. Execution approved by user on this date; implementation in progress.
+User also approved a separately identified side-by-side Android candidate; preserve original.
 
 ## Scope and execution gate
 
@@ -9,10 +10,9 @@ assumption follows the current usage: Android sends a buzzer to the Windows rece
 inside an authenticated, active session. Reverse-direction/Android receiver support is
 not automatically included; revise this scope if the user wants both directions.
 
-User approval to start the earlier Windows runner repair does not authorize this new
-feature. Await explicit buzzer execution approval before app changes or builds.
-Phone-control authorization permits relevant diagnostics; it does not by itself start
-this implementation. Supplied login credentials must not enter plans, logs or source.
+The user's "yes" to the buzzer/microphone checkpoint authorizes this feature's execution.
+The subsequent three-access-mode request is a separate plan, not yet authorized for execution.
+Supplied login credentials must not enter plans, logs or source.
 
 Source: D:/LAN-Messenger/reference/SubnetDesk-v1.3.0/source/zibo-chen-SubnetDesk-1d3ac5a.
 Outputs: D:/LAN-Messenger/outputs/SubnetDesk-helper-cm.

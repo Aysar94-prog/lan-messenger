@@ -1,5 +1,28 @@
 # Android status
 
+2026-10-08 latest separate SubnetDesk helper checkpoint: user explicitly approved View camera
+removal on Android and Windows, retaining screen/control and voice. Shared/mobile controls
+removed and native routes deny camera; source1.3.3+78, Flutter65/65 pass on Windows host.
+No Android native build/APK/device acceptance yet. Scoped Android dependency build encountered
+Windows-host assembler and FFmpeg option concatenation issues; narrow overlay-port fixes are
+under verification. Original phone package/data and LAN Messenger signing remain untouched.
+User reports voice now works after microphone grant; audible new ringtone/buzzer not accepted.
+Android Keystore credentials/access modes approved, not implemented; no LAN Messenger edits.
+
+2026-10-08 SubnetDesk private helper execution checkpoint: user approved permanent updater
+shutdown and all listed buzzer/ringtone/access-mode work. Native updater policy and UI removal,
+buzzer protocol/UI and Windows ring are implemented in helper source; focused Flutter17/17 and
+first Windows Rust release pass. Final frontend/Android builds and physical acceptance pending;
+running1.3.1 and original phone package remain unchanged. Three access modes/Android credential
+store remain approved pending implementation. LAN Messenger source/parity/signing unchanged.
+
+2026-10-08 user approved microphone permission and buzzer execution. RECORD_AUDIO now
+granted=true/AppOps foreground; installed original app reconnected to Windows successfully.
+Voice recording/listening retest pending. User approved separate side-by-side helper APK;
+original app/data remain intact. Buzzer source work in progress, not built/accepted yet.
+Three access modes are a new plan-only request: ../PLAN-SUBNETDESK-ACCESS-MODES.md; no auth
+changes yet. Password storage is not silently bundled into buzzer work. LAN Messenger unchanged.
+
 2026-10-08 separate SubnetDesk phone diagnostic: SM-S908E/Android16, installed
 package com.zibochen.subnetdesk1.3.0/code2075 has RECORD_AUDIO granted=false/AppOps ignore.
 At10:01:23 app log explicitly reports no RECORD_AUDIO permission then onVoiceCallStarted fail.
