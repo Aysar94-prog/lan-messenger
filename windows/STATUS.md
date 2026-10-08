@@ -1,5 +1,18 @@
 # Windows status
 
+2026-10-08 SubnetDesk chat memory continuation: helper05a206d shared Flutter cleanup implemented.
+CM message identity includes connId, ends/disconnected cards/snapshots clear that session's
+messages and selected draft/unread state; sender error/reconnect/close/dispose clear outgoing.
+Late async receive guarded; fold/tab does not erase active chat. Logical state cleanup only.
+Final Flutter89/89 PASS (memory8 + lifecycle8), Windows frontend1.3.3+80 PASS149.0s. Distinct
+Windows-x64-v1.3.3-build80-private staged; EXE SHA256
+4DE1DB3470DC63182AE6CEE42E271CE93E9E8EDB828E85BDD2F8A2FEE58A6576/FileVersion1.3.3+80,
+existing no-updater DLL9054FD39...F2D570 verified unchanged. No runtime switch/install/service
+or permission changes; currently used build79 has NOT gained the chat fix. Paired disconnect/
+reconnect/network-loss acceptance pending. Android APK80 building separately. Password store,
+temporary code and manual approval remain approved NOT implemented; not all requests done.
+See ../PLAN-SUBNETDESK-CHAT-MEMORY.md. LAN Messenger code/protocol/parity unchanged.
+
 2026-10-08 follow-up to79 handoff: main5476/build79 now has established phone .51 connection
 on21118 and actual child CM23876 from the79 folder. User reports Failed to start voice call;
 filtered phone helper PID16032 log explicitly shows missing RECORD_AUDIO, then recorder/call

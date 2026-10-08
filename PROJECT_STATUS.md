@@ -1,5 +1,18 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 approved SubnetDesk continuation: session-only chat memory implemented in helper
+05a206db8f4cc5e729602bd464b206ba581b7ad2. Exact peer+connId identity, disconnect/snapshot/
+outgoing error/reconnect/close/dispose cleanup of messages and selected draft, held-list cleanup
+and late async receive guards. Fold/tab/voice-call end alone preserve active-session chat.
+Logical application state removal, not forensic immutable-string/OS-memory overwriting.
+Full Flutter89/89 PASS including16 memory/lifecycle tests; Windows frontend1.3.3+80 PASS149.0s,
+staged distinct folder with verified unchanged no-updater DLL. Android APK80 build in progress.
+Neither app runtime updated for chat; physical reconnect/network-loss acceptance pending.
+Android saved-password Keystore store and temporary-code/manual-approval access modes remain
+approved NOT implemented. User's reminder is correct: do not claim all requests completed.
+See PLAN-SUBNETDESK-CHAT-MEMORY.md and the two credentials/access plans. LAN Messenger
+code/protocol/platform comparison unaffected; no credentials/permissions/signing changes.
+
 2026-10-08 SubnetDesk voice-start follow-up: Windows build79 main5476 has established phone
 connection/actual CM23876. User's Failed to start voice call is directly matched by helper
 PID16032 Android log: no RECORD_AUDIO permission -> recorder fail -> onVoiceCallStarted fail.

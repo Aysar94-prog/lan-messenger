@@ -1,5 +1,16 @@
 # Android status
 
+2026-10-08 SubnetDesk chat memory continuation: helper05a206d shared Flutter cleanup implemented
+for outgoing Android session reset/error/reconnect/close/dispose and incoming CM lifecycle.
+History/list references and selected draft discarded on session end; fold/tab alone preserves
+active chat. Host Flutter89/89 PASS including16 memory/lifecycle tests. Windows frontend80
+build passes; Android APK1.3.3/build80 candidate currently building, guarded reuse of verified
+unchanged private native library (no Rust/protocol changes). Existing APK1.3.3/code2078 and
+original Android app/data/signing/permissions untouched; no install or device chat acceptance.
+Physical reconnect/network-loss/no-retained-draft checks remain pending. This is logical app
+state removal, not a forensic RAM overwrite. Keystore saved-password option and three access
+methods remain approved NOT implemented. See ../PLAN-SUBNETDESK-CHAT-MEMORY.md; no LAN changes.
+
 2026-10-08 SubnetDesk new helper voice-start diagnosis (read-only): user reports Failed to
 start voice call after Windows build79 switch. Resumed phone app is helper1.3.3/code2078,
 PID16032. RECORD_AUDIO granted=false/AppOps ignore; filtered helper log at device clock

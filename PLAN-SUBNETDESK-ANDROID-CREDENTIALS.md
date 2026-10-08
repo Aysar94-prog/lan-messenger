@@ -69,9 +69,24 @@ If the user intended LAN Messenger Android, revise this plan's target before imp
   through interface.msgbox. Reuse it; avoid a second early save from the Connect button.
 - Android load must branch before desktop PeerConfig username lookup if both username and
   password are encrypted; otherwise loading would wrongly require plaintext metadata.
-- libs/scrap/src/android/ffi.rs owns JavaVM and application-context GlobalRefs, initialized
-  by Java_ffi_FFI_onAppStart before MainService. JNI access should reuse that lifecycle;
+- libs/scrap/src/android/ffi.rs owns JavaVM and application-context GlobalRefs. Current
+  Java_ffi_FFI_onAppStart sets application context but NOT JavaVM; JavaVM is set later
+  by MainService/clipboard initialization. Credential access must initialize/reuse it at
+  application start without requiring the receiver MainService. JNI should reuse this lifecycle;
   native attached threads must not assume FindClass uses the app's class loader.
 - Current save/clear hooks validate64-hex fingerprint and username/password. Retain validation
   and failure UI, no insecure fallback. Per-device forget must delete encrypted entry rather
   than merely removing the old PeerConfig metadata.
+
+2026-10-08 continuation: reviewed all four approved areas separately. Session-chat cleanup
+is being implemented first under PLAN-SUBNETDESK-CHAT-MEMORY.md; it must not erase saved
+credentials. Android saved-password UI/store/native bridge and device tests remain NOT
+implemented. Do not mark SD-AP-02..06 complete based on the chat build.
+
+Verified credential trust order for the next implementation: client/io_loop.rs checks
+confirm_lan_device before setting lan_fingerprint and calling send_initial_lan_login.
+Known fingerprint at a new unpinned endpoint can reuse trust; a changed identity at an
+already pinned endpoint requires explicit human verification first. Preserve that ordering
+and never select or send saved credentials using IP/address alone. Existing load/clear
+return Option/void, so storage errors and the per-device forget result need an explicit
+safe UI outcome when adding Android support; no silent plaintext fallback.
