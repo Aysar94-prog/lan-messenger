@@ -1,5 +1,12 @@
 # Windows status
 
+2026-10-08 separate SubnetDesk buzzer receiver plan prepared (not implemented): short sound,
+matching-chat/dock indication, mute and receiver-enforced rate limits, paired with Android
+sender. Await explicit start; see ../PLAN-SUBNETDESK-CHAT-BUZZER.md. No persistent chat/buzz
+history requested or added. Android voice failure is now confirmed by phone log as missing
+RECORD_AUDIO permission, not an established Windows audio fault. Permission unchanged and
+audible paired retest pending; Windows1.3.1 binary/service/acceptance gates unchanged.
+
 2026-10-08 user accepted initial visible incoming SubnetDesk1.3.1+76 dock ("ok now this is good").
 Live Android .51 -> Windows .12:21118 session belongs to main candidate PID4052. CM PID12188 is
 a child of that receiver, running candidate --cm with native window handle656146, not the

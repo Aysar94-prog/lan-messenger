@@ -1,5 +1,13 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 SubnetDesk chat buzzer requested; Android sender -> Windows receiver first-stage
+plan in PLAN-SUBNETDESK-CHAT-BUZZER.md. No implementation/build; explicit start still required.
+User prefers no persistent chat history; no message/buzz storage added. Phone ADB diagnosis
+now confirms Android RECORD_AUDIO granted=false/AppOps ignore and matching capture-failure
+log at10:01:23. Permission unchanged; audible voice retest pending. See
+DIAGNOSIS-SUBNETDESK-VOICE-20261008.md. No supplied login credentials retained in project files.
+LAN Messenger code/parity, helper binaries and Android signer/install remain unchanged.
+
 2026-10-08 SubnetDesk1.3.1+76 incoming dock visibility accepted by user: "ok now this is good".
 Live evidence: Android .51 Established to candidate PID4052/.12:21118; automatically launched
 child PID12188 uses candidate --cm and has a native window handle. Old service Stopped/Auto.

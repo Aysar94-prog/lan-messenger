@@ -1,5 +1,14 @@
 # Android status
 
+2026-10-08 separate SubnetDesk phone diagnostic: SM-S908E/Android16, installed
+package com.zibochen.subnetdesk1.3.0/code2075 has RECORD_AUDIO granted=false/AppOps ignore.
+At10:01:23 app log explicitly reports no RECORD_AUDIO permission then onVoiceCallStarted fail.
+No permission change, new call, APK/install or app repair performed; enabling permission and
+audible Android->Windows retest remain pending. See ../DIAGNOSIS-SUBNETDESK-VOICE-20261008.md.
+Buzzer sender -> Windows receiver plan in ../PLAN-SUBNETDESK-CHAT-BUZZER.md awaits explicit
+execution. Official SubnetDesk signer unavailable; candidate identity decision precedes APK.
+Password saving remains plan-only. No persistent chat/buzz storage; LAN Messenger unchanged.
+
 2026-10-07 separate SubnetDesk helper request (planning only): user requested a per-device
 remember-password option in the Android version; interpreted as SubnetDesk, with that assumption
 stated explicitly. Its v1.3.0 mobile UI hardcodes remember=false and its Rust credential store
