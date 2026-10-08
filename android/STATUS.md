@@ -3,9 +3,11 @@
 2026-10-08 latest separate SubnetDesk helper checkpoint: user explicitly approved View camera
 removal on Android and Windows, retaining screen/control and voice. Shared/mobile controls
 removed and native routes deny camera; source1.3.3+78, Flutter65/65 pass on Windows host.
-No Android native build/APK/device acceptance yet. Scoped Android dependency build encountered
-Windows-host assembler and FFmpeg option concatenation issues; narrow overlay-port fixes are
-under verification. Original phone package/data and LAN Messenger signing remain untouched.
+No Android native Rust build/APK/device acceptance yet. Scoped Android main dependencies pass
+after narrow Windows-host assembler and FFmpeg option delimiter fixes. Extra Windows-host
+libsodium cross-build is a prerequisite; pinned cargo-ndk3.1.2 prepared, candidate Gradle pins
+NDKr28c to match. Android build uses separate output roots; never reuse upstream native .so.
+Original phone package/data and LAN Messenger signing remain untouched.
 User reports voice now works after microphone grant; audible new ringtone/buzzer not accepted.
 Android Keystore credentials/access modes approved, not implemented; no LAN Messenger edits.
 

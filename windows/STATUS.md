@@ -2,9 +2,13 @@
 
 2026-10-08 latest separate SubnetDesk helper checkpoint: View camera removal explicitly
 approved and implemented in UI and native outgoing/incoming guards. Screen/control and voice
-remain in scope; LAN Messenger video/code unchanged. Version1.3.3+78 Windows frontend builds;
-Flutter65/65 pass. Current native camera/updater tests and final native release/package pending;
-no current-version physical acceptance or runtime switch. Older1.3.1 remains unchanged.
+remain in scope; LAN Messenger video/code unchanged. Version1.3.3+78 native/Flutter releases
+and Flutter65/65 pass; native camera3/3, updater4/4, chat attention5/5, encrypted protocol6/6,
+CM launch1/1 pass. Candidate/binary and matching source ZIP complete (helper12a8dac;
+private gate1193 entries). User-approved runtime switch: old1.3.1 closed normally with no session;
+new visible PID25332 owns21118/UIv1.3.3. Windows Firewall prompt requires manual user handling;
+automation paused, paired physical screen/voice/camera/ring/buzzer acceptance pending. Original
+installed service Stopped/Auto/path unchanged; no installed-release replacement.
 Updater shutdown/buzzer/ring implemented; access modes and reconnect chat-memory cleanup pending.
 
 2026-10-08 SubnetDesk private helper execution checkpoint: user approved permanent updater

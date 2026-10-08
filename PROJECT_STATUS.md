@@ -3,10 +3,15 @@
 2026-10-08 latest SubnetDesk checkpoint: user explicitly approved removal of View camera
 on Both platforms, retaining screen/control and voice; LAN Messenger video is out of scope.
 Camera controls removed and native session/login routes deny camera access; advertised
-capability false. Source version1.3.3/Flutter1.3.3+78; Windows frontend release and Flutter65/65
-pass. Native current-version camera/update tests and final native release/package pending.
-No current-version runtime/device acceptance; old1.3.1 process has not inherited these edits.
-Android build is in scoped native dependency preparation; no new APK installed. Original
+capability false. Windows1.3.3+78 native/Flutter release and Flutter65/65 pass; native camera3/3,
+updater4/4 (feature enabled), chat attention5/5, encrypted protocol6/6, CM launch1/1 pass.
+Versioned candidate/binary ZIP and1193-entry private-gated corresponding source ZIP complete
+(helper12a8dac/hbb_common d797b73); hashes in outputs/SubnetDesk-helper-cm/SHA256SUMS.txt.
+User approved switch: old1.3.1 closed normally without active session; visible new PID25332
+owns21118 and UIv1.3.3. Windows Firewall permission dialog requires user handling; GUI automation
+paused there. Original installed service Stopped/Auto/path unchanged; physical paired acceptance
+pending. Android main native dependencies pass; cross-built libsodium/native Rust/APK gates remain.
+No new APK installed. Original
 package/data/signing preserved. Three access modes, Keystore storage and reconnect chat-memory
 cleanup remain pending implementation; prior execution approval stands. No LAN code/parity changes.
 
