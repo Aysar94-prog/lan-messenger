@@ -13,8 +13,12 @@ paused there. Original installed service Stopped/Auto/path unchanged; physical p
 pending. Android main dependencies plus libsodium/OpenSSL pass; actual ARM64 Rust release now
 PASS2m02s (115 warnings recorded). JNI copy hash matches,16KB LOAD alignment/JNI exports checked.
 Android build-only support committed in helper8a66332; Windows source12a8dac artifacts preserved.
-APK building; manifest/signer/source packaging/install/device gates pending. No new APK installed. Original
-package/data/signing preserved. Three access modes, Keystore storage and reconnect chat-memory
+Android APK release PASS1164.2s;1.3.3/code2078 helper identity, no CAMERA, signature/alignment and
+rebuilt-to-stripped-to-APK native hash chain verified. Side-by-side install/startup smoke PASS;
+original1.3.0/code2075/update timestamp unchanged. Helper7a45b44 corresponding Android source ZIP
+1330-entry/private gate PASS; APK/source hashes in outputs manifest. Test signer preserved privately;
+fresh helper mic/notifications denied, require user handling. Paired physical acceptance pending.
+Original package/data/signing preserved. Three access modes, Keystore storage and reconnect chat-memory
 cleanup remain pending implementation; prior execution approval stands. No LAN code/parity changes.
 
 2026-10-08 checkpoint supersedes older awaiting-start entries: user approved all SubnetDesk

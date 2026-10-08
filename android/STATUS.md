@@ -5,7 +5,15 @@ removal on Android and Windows, retaining screen/control and voice. Shared/mobil
 removed and native routes deny camera; source1.3.3+78, Flutter65/65 pass on Windows host.
 Actual modified Android native Rust release PASS2m02s;115 compiler warnings recorded, no
 Android-baseline warning comparison. ARM64/16KB LOAD alignment/JNI exports verified; newly
-built/native-copy SHA2560656543e…eee1ec match. APK/manifest/signer/install/device gates pending.
+built/native-copy SHA2560656543e…eee1ec match. APK release PASS1164.2s, helper package/label/version
+1.3.3/code2078/arm64/no CAMERA/v2 signature/16KB ZIP alignment verified; reproduced AGP strip
+matches actual APK library B0e892cd…c4cdd36. Staged APK A36585e6…82341f. Source7a45b44 ZIP1330-entry
+private gate PASS, SHA25602131885…c7cd7. Side-by-side install and activity startup441ms PASS;
+helper process alive/no matching startup fatal/loader/Flutter errors in scoped snapshot.
+Original1.3.0/code2075/update timestamp unchanged. Test signer43e19ba2…057c52 preserved privately,
+never included in source ZIP; future build guard prevents silently changed signer. New helper
+mic/notifications not granted; user handling. Paired UI/screen/control/voice/buzzer/camera-denial
+acceptance still pending. Phone4KB pages; ELF/ZIP checks are not16KB device acceptance.
 Scoped main native dependencies, libsodium and OpenSSL pass. Narrow host/target build fixes
 committed in helper8a66332; pinned hwcodec build-only patch uses separate export, not Cargo
 cache edits or default dependency changes. See ../PLAN-SUBNETDESK-ANDROID-BUILD.md. Scoped

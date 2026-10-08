@@ -11,7 +11,9 @@ automation paused, paired physical screen/voice/camera/ring/buzzer acceptance pe
 installed service Stopped/Auto/path unchanged; no installed-release replacement.
 Updater shutdown/buzzer/ring implemented; access modes and reconnect chat-memory cleanup pending.
 Android-only build support now helper8a66332/native ARM64 release PASS; Windows artifacts
-remain matched to12a8dac and untouched. Android APK/paired acceptance still pending.
+remain matched to12a8dac and untouched. Android1.3.3/code2078 APK verification, side-by-side
+install/startup smoke and corresponding-source packaging now pass; paired acceptance still pending,
+including manual Windows Firewall/fresh-helper microphone permissions.
 
 2026-10-08 SubnetDesk private helper execution checkpoint: user approved permanent updater
 shutdown and all listed buzzer/ringtone/access-mode work. Native updater policy and UI removal,
