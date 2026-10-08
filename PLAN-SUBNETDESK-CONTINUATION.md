@@ -2,6 +2,12 @@
 
 Date: 2026-10-07
 
+2026-10-08 acceptance checkpoint: native runner repair/version1.3.1+76 completed in the separate
+Windows plan. User accepts initial incoming dock visibility ("ok now this is good"). Live .51
+phone session belongs to candidate PID4052/.12; automatic --cm child PID12188 has a native window.
+Fold/draft/unread, paired chat/audio, DPI/multiple sessions and installed-service/prelogin/reboot
+acceptance remain pending. This does not accept all SD-DOCK-05 gates or LAN Messenger integration.
+
 ## Authorized temporary backend handoff (2026-10-08)
 
 User explicitly approved stopping the old backend on this computer (Wi-Fi 192.168.1.12),

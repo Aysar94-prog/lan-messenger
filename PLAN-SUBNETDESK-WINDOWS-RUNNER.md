@@ -31,7 +31,7 @@ coverage because find_last_not_of can return npos.
 | SD-RUN-01 | Windows | Reproduce actual candidate failure and trace runner | Complete | Handoff approval | Live connection belongs to candidate; --cm exits1; source identifies last-character deletion. |
 | SD-RUN-02 | Windows | Correct trailing-whitespace trimming with focused native tests | Complete | SD-RUN-01 | Actual production header old0/17 -> fixed17/17; standalone CMake/CTest1/1; Rust launch policy2/2. No dependency changes. |
 | SD-RUN-03 | Windows | Distinct, consistent candidate version and rebuilt package | Complete | SD-RUN-02 | Full Rust release (6m04s/46 existing warnings) and Flutter Windows Release (25.3s) pass; Flutter53/53. Rust CLI1.3.1/exit0 and Windows metadata1.3.1+76. Binary/source ZIPs completed; source commit2aa0dc7 plus pinned submodule/WindowInjection,1180 entries, private-material gate pass. Local candidate, not official upstream release; originals preserved. |
-| SD-RUN-04 | Windows | Native --cm startup alongside main and incoming session | Startup reaches Flutter CM; paired dock pending | SD-RUN-03; approved candidate runtime switch | New main PID4052 owns TCP21118, service Stopped. Manual --cm PID8696 survives5s and logs --cm started/FFI cm initialization, then closes with no clients (consistent with existing6s idle close). No visible/session dock claim from this smoke. Manual CM no longer present; user reconnect requested to test automatic launch. |
+| SD-RUN-04 | Windows | Native --cm startup alongside main and incoming session | Initial incoming dock visibility accepted by user | SD-RUN-03; approved candidate runtime switch | User says "ok now this is good" after reconnect. Android .51 Established to main PID4052/.12:21118; automatic CM child PID12188 runs candidate --cm with native window handle656146. Manual idle probe is separate/historical. No DPI/service/reboot claim. |
 | SD-RUN-05 | Windows | Fold/chat/reconnect acceptance and status handoff | Pending | SD-RUN-04; phone/user interaction | Draft persistence, unread, bidirectional chat and reconnect verified. Voice audible acceptance separate. Do not infer service-installed/prelogin/DPI acceptance. |
 
 Diagnosis itself changed no application code/version/build and kept the session connected.
@@ -39,7 +39,8 @@ User subsequently authorized execution: native trimming fix, consistent local ca
 1.3.1+76 and full rebuild completed. The old candidate session was left running during build;
 approved runtime switch occurred at09:47:38 Asia/Jerusalem. New main receives on .12:21118/PID4052.
 Installed service retains Automatic startup; reboot may restart it. User reconnect requested;
-actual incoming dock, fold/chat/voice remain pending until observed/reported.
+initial incoming dock visibility subsequently accepted by user. Actual manual fold/draft/unread,
+paired chat and audible Voice remain pending until observed/reported.
 
 Artifacts in outputs/SubnetDesk-helper-cm:
 - SubnetDesk-1.3.1-Windows-x64-cm-dock.zip, SHA256357bd2ca6cb9cbe30a16f3208a6b8abedacbe594ddd8f198a66a3e2d74b6ef55.

@@ -1,5 +1,13 @@
 # Windows status
 
+2026-10-08 user accepted initial visible incoming SubnetDesk1.3.1+76 dock ("ok now this is good").
+Live Android .51 -> Windows .12:21118 session belongs to main candidate PID4052. CM PID12188 is
+a child of that receiver, running candidate --cm with native window handle656146, not the
+manual startup probe. Original service still Stopped/Auto. This accepts initial incoming dock
+visibility only. Do not infer physical fold/draft/unread, bidirectional chat, audible Voice,
+multi-session/DPI, installed-service/prelogin/reboot acceptance or LAN Messenger integration.
+Documentation only; binary/source artifact hashes unchanged. Android password-save not started.
+
 2026-10-08 authorized separate SubnetDesk runner repair: trim helper preserves final character
 and safely handles empty/all-whitespace. Actual production-header regression old0/17 -> fixed17/17,
 CMake/CTest1/1, launch-policy2/2; Flutter53/53. Full Rust release passes (46 existing warnings),

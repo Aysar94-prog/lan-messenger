@@ -1,5 +1,12 @@
 # LAN Messenger project status and platform comparison
 
+2026-10-08 SubnetDesk1.3.1+76 incoming dock visibility accepted by user: "ok now this is good".
+Live evidence: Android .51 Established to candidate PID4052/.12:21118; automatically launched
+child PID12188 uses candidate --cm and has a native window handle. Old service Stopped/Auto.
+Initial incoming panel visibility accepted; manual fold/drafts/unread, paired chat, audible
+Voice, DPI/multiple sessions and installed-service/prelogin/reboot behavior remain unaccepted.
+Android password-saving remains plan-only; LAN Messenger integration/code/parity unchanged.
+
 2026-10-08 SubnetDesk Windows native runner repair executed with user approval. Production
 argument helper old0/17 -> fixed17/17; CTest1/1; launch policy2/2; Flutter53/53; full Rust and
 Flutter Windows release builds pass. Local candidate1.3.1+76 (CLI1.3.1/exit0) staged and started
