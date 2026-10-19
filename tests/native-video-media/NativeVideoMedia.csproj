@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0-windows</TargetFramework><PlatformTarget>x64</PlatformTarget><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../windows/CallVideoNativeBridge.cs" Link="CallVideoNativeBridge.cs" />
+    <Compile Include="../../windows/CallVideoNativeMedia.cs" Link="CallVideoNativeMedia.cs" />
+    <Compile Include="../../windows/ICallVideoMedia.cs" Link="ICallVideoMedia.cs" />
+    <Compile Include="../../windows/CallVideoDiagnostics.cs" Link="CallVideoDiagnostics.cs" />
+    <Compile Include="../../windows/CallProtocol.cs" Link="CallProtocol.cs" />
+    <Compile Include="../../windows/CallVideoProtocol.cs" Link="CallVideoProtocol.cs" />
+    <Compile Include="../../windows/CallCapabilities.cs" Link="CallCapabilities.cs" />
+  </ItemGroup>
+</Project>

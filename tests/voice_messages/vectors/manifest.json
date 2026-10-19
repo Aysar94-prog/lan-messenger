@@ -1,0 +1,1218 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "pcm_contract_version": 1,
+  "validation_contract_version": 1,
+  "min_runner_schema": 1,
+  "description": "Voice Messages shared fixture manifest — canonical versioned test vectors for I03/I04. This manifest declares expected behavior for every fixture; actual binary source files are added incrementally. A null source means the binary is not yet committed; the declared expectations are still normative.",
+  "categories": {
+    "wav-validation": "WAV validation vectors covering contract.md WAV validation items 1–14",
+    "pcm-frames": "PCM frame assembly and stream-event vectors covering pcm-contract.md",
+    "seek": "Seek procedure vectors covering contract.md Seek procedure items 1–7",
+    "marker": "Marker filename validation vectors covering contract.md Decisions items 1, 8–9 (filename marker, store identity, forged/mismatched/unmarked classification)",
+    "receiver": "Receiver state transition vectors covering validation-contract.md Receiver state and fallback items 1–6",
+    "registry": "Registry and crash-boundary reconciliation vectors covering validation-contract.md Draft state recovery items 1–7 and Ten-step transaction and crash outcomes",
+    "scheduler": "Scheduler admission rule traces covering validation-contract.md Scheduler admission rules items 1–9 with counter, interruption, dedupe and restart outcomes"
+  },
+  "vectors": [
+    {
+      "id": "wav-valid-minimal",
+      "category": "wav-validation",
+      "description": "Minimal valid WAV: 16 kHz mono 16-bit PCM, exactly one 20 ms frame (640 data bytes), canonical 44-byte header",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 0,
+        "length": 684,
+        "sha256": "6d5a57285af5ab10fd11ee5fb4f564281eac95b3131bcadad5812952a39558e1"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 20,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 640,
+        "total_bytes": 684
+      }
+    },
+    {
+      "id": "wav-valid-300s-max",
+      "category": "wav-validation",
+      "description": "Maximum-duration valid WAV: 300 s at 16 kHz mono 16-bit PCM, 9,600,000 data bytes, canonical 44-byte header. Recipe-only: the 9.6 MB file is never committed; the expected hash is deterministic.",
+      "source": {
+        "recipe": "max-boundary",
+        "expected_sha256": "0d8478492c063d19d0918691e57f0700b707d0e486304a5f8fc1037a78fcd6f0",
+        "expected_byte_length": 9600044
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 300000,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 9600000,
+        "total_bytes": 9600044
+      }
+    },
+    {
+      "id": "wav-invalid-empty",
+      "category": "wav-validation",
+      "description": "Empty file (0 bytes) — fails at precedence 2: file too short for WAV header",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 684,
+        "length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "too short for WAV header"
+      }
+    },
+    {
+      "id": "wav-invalid-bad-riff",
+      "category": "wav-validation",
+      "description": "File whose first four bytes are not 'RIFF'",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 684,
+        "length": 684,
+        "sha256": "7c00f2f491b238b78b9985e94aaf1dcc7d74282e9c70336313a938b76cff20e3"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "missing RIFF identifier"
+      }
+    },
+    {
+      "id": "wav-invalid-wrong-rate",
+      "category": "wav-validation",
+      "description": "Structurally valid WAV with 44100 Hz sample rate instead of 16000 Hz",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 1368,
+        "length": 684,
+        "sha256": "09d6e030ae806840e3ecec0e2e4cffa8a03eaead034d42acf802df94eee23997"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "unsupported sample rate"
+      }
+    },
+    {
+      "id": "wav-invalid-truncated",
+      "category": "wav-validation",
+      "description": "WAV whose RIFF declared size (684) exceeds the actual file length (364): RIFF size mismatch detected at precedence 4 before data truncation analysis",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2052,
+        "length": 364,
+        "sha256": "10e2416ebf3f6b673fecd7548ea93181dea7c782a53b4a5def342bb5e1141487"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "RIFF size mismatch"
+      }
+    },
+    {
+      "id": "wav-valid-one-sample",
+      "category": "wav-validation",
+      "description": "One-sample valid WAV: 16 kHz mono 16-bit PCM, 2 data bytes (nonempty even)",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2416,
+        "length": 46,
+        "sha256": "156075e2635b9b2c186258f4db987ed9fbdfb727f49e5eac4b9a126aefbdf727"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 0,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 2,
+        "total_bytes": 46
+      }
+    },
+    {
+      "id": "wav-valid-short-final-frame",
+      "category": "wav-validation",
+      "description": "Valid WAV: 642 data bytes (one 640-byte full frame + 2-byte nonempty even final frame)",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 2462,
+        "length": 686,
+        "sha256": "12bc7121cd94e3fd56dbad6912783dfa40e4ef1c48469964580589783336802a"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 20,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 642,
+        "total_bytes": 686
+      }
+    },
+    {
+      "id": "wav-invalid-bad-block-align",
+      "category": "wav-validation",
+      "description": "Block alignment is 4 instead of 2",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 3148,
+        "length": 684,
+        "sha256": "b85f9c0c69a0df9cf03a4600171ecefbce9feb7ae297d0eb7f6644f31dcb28e2"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "incorrect block alignment"
+      }
+    },
+    {
+      "id": "wav-invalid-unknown-chunk",
+      "category": "wav-validation",
+      "description": "Has a 'junk' chunk between fmt and data chunks",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 3832,
+        "length": 700,
+        "sha256": "e0fee1c793082437b60fcff409a7ddfd6de4b9370772e136548806557126ffdd"
+      },
+      "expectations": {
+        "validation": "pass",
+        "duration_ms": 20,
+        "sample_rate": 16000,
+        "channels": 1,
+        "bits_per_sample": 16,
+        "data_bytes": 640,
+        "total_bytes": 700
+      }
+    },
+    {
+      "id": "wav-invalid-duplicate-chunk",
+      "category": "wav-validation",
+      "description": "Two 'fmt ' chunks — duplicate required chunk must be rejected",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 4532,
+        "length": 708,
+        "sha256": "01026b977a0e86dcaeb8fb44c094ad7577e50a9fd33ff6912f3602708fc54927"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "duplicate fmt chunk"
+      }
+    },
+    {
+      "id": "wav-invalid-reordered-chunks",
+      "category": "wav-validation",
+      "description": "'data' chunk appears before 'fmt ' chunk",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 5240,
+        "length": 684,
+        "sha256": "cbef7ed19efb69428ea5ebf7668391180619ab75ccd2a2965ce7d664dcc6cfa8"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "reordered chunks"
+      }
+    },
+    {
+      "id": "wav-invalid-riff-size-mismatch",
+      "category": "wav-validation",
+      "description": "RIFF declared size (676 → total 680) does not match physical file length (690): bounds error at precedence 4, detected before trailing analysis",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 5924,
+        "length": 690,
+        "sha256": "9c2ae4cadb00ed1cdbce6182d85c05489081b82e8672840a6334e10d4ce7e673"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "RIFF size mismatch"
+      }
+    },
+    {
+      "id": "wav-invalid-trailing-bytes",
+      "category": "wav-validation",
+      "description": "Size-correct RIFF (declared size matches physical length-8) with 6 raw bytes after the data chunk inside the RIFF envelope: trailing error at precedence 14",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 6614,
+        "length": 690,
+        "sha256": "b6cb648a9dc79ae9e7f24d1cd8987b60a925ccbfe0aab865dd8ee68e8a7d07f8"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "trailing bytes after data chunk"
+      }
+    },
+    {
+      "id": "wav-invalid-unsupported-format",
+      "category": "wav-validation",
+      "description": "Non-PCM audio format (ADPCM, format tag 2)",
+      "source": {
+        "path": "wav_cases.bin",
+        "offset": 7304,
+        "length": 684,
+        "sha256": "21831240978268a1bf9c16ce667de606199944b5acc5bd531aa6f4d88f5d73c4"
+      },
+      "expectations": {
+        "validation": "fail",
+        "failure_reason": "unsupported audio format"
+      }
+    },
+    {
+      "id": "pcm-empty-callback",
+      "category": "pcm-frames",
+      "description": "Empty callback delivers 0 bytes — no frames produced, no events, no odd byte pending",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 0,
+        "length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "expectations": {
+        "frame_count": 0,
+        "total_bytes": 0,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": []
+      }
+    },
+    {
+      "id": "pcm-one-sample",
+      "category": "pcm-frames",
+      "description": "Single 2-byte sample (one int16) — valid nonempty even final frame per Ownership item 3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 0,
+        "length": 2,
+        "sha256": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 2,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 0,
+        "first_timestamp_ns": 62500,
+        "last_timestamp_ns": 62500
+      }
+    },
+    {
+      "id": "pcm-one-frame-exact",
+      "category": "pcm-frames",
+      "description": "Exactly 640 bytes on a clean callback boundary — one complete frame",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 2,
+        "length": 640,
+        "sha256": "52c7c7d3e9efb6d3304579d3f44e5b804d2236f3a53d8eef62f4ac497cee3972"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 640,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 0,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 20000000
+      }
+    },
+    {
+      "id": "pcm-short-final",
+      "category": "pcm-frames",
+      "description": "642 bytes: one full 640-byte frame plus a 2-byte short final frame — both valid (nonempty and even)",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 642,
+        "length": 642,
+        "sha256": "7a5eb96e90d90b5f5cb22bc82eff1d8c2b63ececc8362cfe71d1940669f266d2"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 642,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 20062500
+      }
+    },
+    {
+      "id": "pcm-fragmented",
+      "category": "pcm-frames",
+      "description": "Two callbacks: first delivers 641 bytes (640-byte frame + 1 odd byte pending), second delivers 639 bytes (assembles with pending byte into another 640-byte frame)",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 1284,
+        "length": 1280,
+        "sha256": "194ae4ca2f4e3349524765c7826977a4201902180a9d09a51e71a7a553014d44"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 40000000,
+        "callback_plan": [
+          {"deliver_bytes": 641, "frames_emitted": 1, "odd_byte_pending_after": true},
+          {"deliver_bytes": 639, "frames_emitted": 1, "odd_byte_pending_after": false}
+        ]
+      }
+    },
+    {
+      "id": "pcm-oversized-callback",
+      "category": "pcm-frames",
+      "description": "Single callback delivers 1920 bytes (3 full frames) — must split incrementally with bounded allocation per Fragments item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 2564,
+        "length": 1920,
+        "sha256": "12d1334836be34d5fb4637c423f6430bf38498b4b4a423aee3b0ccac89fc9df3"
+      },
+      "expectations": {
+        "frame_count": 3,
+        "total_bytes": 1920,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End"],
+        "first_sequence": 0,
+        "last_sequence": 2,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 60000000
+      }
+    },
+    {
+      "id": "pcm-discontinuity",
+      "category": "pcm-frames",
+      "description": "Two frames with a Discontinuity event between them — gap in sample stream without closing epoch; sequence and timestamp continue per Epoch item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 4484,
+        "length": 1280,
+        "sha256": "891c7090d237b7d316880ea58377323c654c9c41aacdfb8f73a58782ccb34cc4"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["Discontinuity", "End"],
+        "first_sequence": 0,
+        "last_sequence": 1,
+        "first_timestamp_ns": 20000000,
+        "last_timestamp_ns": 40000000
+      }
+    },
+    {
+      "id": "pcm-overflow",
+      "category": "pcm-frames",
+      "description": "Nine frames (5760 bytes) exceed the 8-frame/5120-byte capacity — overflow discards the epoch and emits exactly one terminal DeviceFailure per Capacity items 1-3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 5764,
+        "length": 5760,
+        "sha256": "53aaa09fecb690cadc8f1b2e686c780a5f8eb5468c3c4d06f7cf6ed41af054ea"
+      },
+      "expectations": {
+        "frame_count": 8,
+        "total_bytes": 5120,
+        "odd_byte_pending": false,
+        "terminal_failure": true,
+        "failure_reason": "overflow beyond 8-frame capacity",
+        "events": ["DeviceFailure"]
+      }
+    },
+    {
+      "id": "pcm-restart",
+      "category": "pcm-frames",
+      "description": "One frame, End event, then Restart into a new epoch with reset sequence and timestamp per Epoch item 3 and Events item 4",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 11524,
+        "length": 1280,
+        "sha256": "36eab993c5343b9a845443caf69e7b4e5b77e601e880a79c8e398307653fc87c"
+      },
+      "expectations": {
+        "frame_count": 2,
+        "total_bytes": 1280,
+        "odd_byte_pending": false,
+        "terminal_failure": false,
+        "events": ["End", "Restart", "End"],
+        "epochs": [
+          {"sequence_range": [0, 0], "timestamp_ns_range": [20000000, 20000000]},
+          {"sequence_range": [0, 0], "timestamp_ns_range": [20000000, 20000000]}
+        ]
+      }
+    },
+    {
+      "id": "pcm-odd-byte-terminal",
+      "category": "pcm-frames",
+      "description": "641 bytes: one full 640-byte frame plus 1 odd byte — stream ends with pending odd byte, fatal per Fragments item 3",
+      "source": {
+        "path": "pcm_cases.bin",
+        "offset": 12804,
+        "length": 641,
+        "sha256": "30764b195c665cc17945c06f8f8fd9904054c566eb400c478189e062857df1d8"
+      },
+      "expectations": {
+        "frame_count": 1,
+        "total_bytes": 640,
+        "odd_byte_pending": true,
+        "terminal_failure": true,
+        "failure_reason": "odd byte pending at stream end",
+        "events": ["DeviceFailure"]
+      }
+    },
+    {
+      "id": "seek-clamp-beyond-duration",
+      "category": "seek",
+      "description": "Seek to 999999 ms on a 20 ms WAV clamps to 20 ms (end)",
+      "source": null,
+      "expectations": {
+        "duration_ms": 20,
+        "data_bytes": 640,
+        "data_start": 44,
+        "requested_ms": 999999,
+        "effective_ns": 20000000,
+        "aligned_byte": 684,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-one-ms-aligned",
+      "category": "seek",
+      "description": "Seek to 1 ms on a 1000 ms virtual WAV — resolves to 16 samples (32 bytes, even), byte 76, effective_ns 1000000; odd-byte claim impossible from time-only input at 16 kHz",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 1,
+        "effective_ns": 1000000,
+        "aligned_byte": 76,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-beginning",
+      "category": "seek",
+      "description": "Seek to 0 ms — lands on dataStart (byte 44), effective_ns 0, state ready",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 0,
+        "effective_ns": 0,
+        "aligned_byte": 44,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-middle",
+      "category": "seek",
+      "description": "Seek to 500 ms on a 1000 ms virtual WAV — evenly aligned, byte 16044",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 500,
+        "effective_ns": 500000000,
+        "aligned_byte": 16044,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-last-sample",
+      "category": "seek",
+      "description": "Seek to 999 ms — last complete aligned sample position before end, byte 32012",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 999,
+        "effective_ns": 999000000,
+        "aligned_byte": 32012,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-end",
+      "category": "seek",
+      "description": "Seek exactly to 1000 ms (duration) — produces completed state, byte at dataStart + data_bytes",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 1000,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-negative",
+      "category": "seek",
+      "description": "Seek to -100 ms — clamped to 0 ms per step 1, byte 44, state ready",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": -100,
+        "effective_ns": 0,
+        "aligned_byte": 44,
+        "state": "ready"
+      }
+    },
+    {
+      "id": "seek-oversized",
+      "category": "seek",
+      "description": "Seek to 999999 ms on a 1000 ms WAV — clamped to duration, completed state",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 999999,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "seek-overflow-attempt",
+      "category": "seek",
+      "description": "Seek with a requested time near Long.MAX_VALUE — must clamp first in step 1 before any arithmetic in step 2–4; no overflow",
+      "source": null,
+      "expectations": {
+        "duration_ms": 1000,
+        "data_bytes": 32000,
+        "data_start": 44,
+        "requested_ms": 9223372036854775807,
+        "effective_ns": 1000000000,
+        "aligned_byte": 32044,
+        "state": "completed"
+      }
+    },
+    {
+      "id": "marker-valid",
+      "category": "marker",
+      "description": "Valid marker: filename voice-msg01.lanvoice.wav, attachment message-id msg01, Normal store — parses, matches, candidate",
+      "source": null,
+      "expectations": {
+        "filename": "voice-msg01.lanvoice.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": true,
+        "extracted_message_id": "msg01",
+        "message_id_matches": true,
+        "classification": "candidate"
+      }
+    },
+    {
+      "id": "marker-forged",
+      "category": "marker",
+      "description": "Forged marker: filename has voice marker pattern but attachment is in Fast store, not Normal — store invalid, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "voice-evil01.lanvoice.wav",
+        "attachment_message_id": null,
+        "store": "Fast",
+        "marker_parses": true,
+        "extracted_message_id": "evil01",
+        "store_valid": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-mismatched",
+      "category": "marker",
+      "description": "Mismatched marker: filename says msg02 but attachment message-id is msg01 — parses but IDs do not match, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "voice-msg02.lanvoice.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": true,
+        "extracted_message_id": "msg02",
+        "message_id_matches": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-unmarked",
+      "category": "marker",
+      "description": "Unmarked WAV: filename regular.wav, no voice marker pattern — does not parse, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "regular.wav",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "marker-arbitrary-filename",
+      "category": "marker",
+      "description": "Arbitrary filename data.pcm with valid message-id msg01 in Normal store — no marker pattern, ordinary attachment",
+      "source": null,
+      "expectations": {
+        "filename": "data.pcm",
+        "attachment_message_id": "msg01",
+        "store": "Normal",
+        "marker_parses": false,
+        "classification": "ordinary_attachment"
+      }
+    },
+    {
+      "id": "receiver-candidate-to-playable",
+      "category": "receiver",
+      "description": "Candidate transitions to Playable after complete retrieval, SHA-256 integrity verification, and bounded streaming WAV validation that passes all checks",
+      "source": null,
+      "expectations": {
+        "initial_state": "Candidate",
+        "event": "retrieval_complete_validation_pass",
+        "resulting_state": "Playable",
+        "refetch_allowed": false,
+        "save_export_available": true,
+        "fallback_to_ordinary": false
+      }
+    },
+    {
+      "id": "receiver-candidate-to-invalid",
+      "category": "receiver",
+      "description": "Candidate transitions to Invalid marked content when WAV validation fails; UI replaces voice card with ordinary attachment card, does not re-fetch",
+      "source": null,
+      "expectations": {
+        "initial_state": "Candidate",
+        "event": "retrieval_complete_validation_fail",
+        "resulting_state": "Invalid marked content",
+        "refetch_allowed": false,
+        "save_export_available": false,
+        "fallback_to_ordinary": true
+      }
+    },
+    {
+      "id": "receiver-candidate-to-unavailable",
+      "category": "receiver",
+      "description": "Candidate transitions to Unavailable when retrieval fails due to expiry, authorization loss, source membership change, or storage failure",
+      "source": null,
+      "expectations": {
+        "initial_state": "Candidate",
+        "event": "retrieval_failed_expiry",
+        "resulting_state": "Unavailable",
+        "refetch_allowed": false,
+        "save_export_available": false,
+        "fallback_to_ordinary": false
+      }
+    },
+    {
+      "id": "receiver-fetching-transition",
+      "category": "receiver",
+      "description": "Fetching is an internal retrieval state; cancel and retry semantics follow existing attachment download path without special voice-message handling",
+      "source": null,
+      "expectations": {
+        "initial_state": "Fetching",
+        "event": "retrieval_complete_validation_pass",
+        "resulting_state": "Playable",
+        "refetch_allowed": false,
+        "save_export_available": true,
+        "fallback_to_ordinary": false,
+        "internal_only": true
+      }
+    },
+    {
+      "id": "receiver-playable-save-export",
+      "category": "receiver",
+      "description": "Save/Export is a separate user action available only in Playable state; opens platform destination picker and copies validated WAV content",
+      "source": null,
+      "expectations": {
+        "initial_state": "Playable",
+        "event": "user_save_export",
+        "resulting_state": "Playable",
+        "refetch_allowed": false,
+        "save_export_available": true,
+        "fallback_to_ordinary": false
+      }
+    },
+    {
+      "id": "receiver-invalid-no-refetch",
+      "category": "receiver",
+      "description": "Invalid marked content must not trigger a re-fetch; the ordinary attachment card is backed by the already-retrieved internal copy",
+      "source": null,
+      "expectations": {
+        "initial_state": "Invalid marked content",
+        "event": "user_retry_or_resume",
+        "resulting_state": "Invalid marked content",
+        "refetch_allowed": false,
+        "save_export_available": false,
+        "fallback_to_ordinary": true
+      }
+    },
+    {
+      "id": "receiver-playable-to-invalid-recheck",
+      "category": "receiver",
+      "description": "A previously Playable candidate whose re-validation fails transitions to Invalid marked content; does not re-fetch",
+      "source": null,
+      "expectations": {
+        "initial_state": "Playable",
+        "event": "revalidation_fails",
+        "resulting_state": "Invalid marked content",
+        "refetch_allowed": false,
+        "save_export_available": false,
+        "fallback_to_ordinary": true
+      }
+    },
+    {
+      "id": "registry-ten-cap",
+      "category": "registry",
+      "description": "Draft registry has a maximum capacity of 10 active or finalized drafts application-wide; reaching the limit blocks only creation, existing drafts remain available",
+      "source": null,
+      "expectations": {
+        "sub_category": "cap",
+        "registry_entry_count": 10,
+        "blocked_creation": true,
+        "existing_drafts_available": true,
+        "recovery_outcome": "recoverable_draft"
+      }
+    },
+    {
+      "id": "registry-stale",
+      "category": "registry",
+      "description": "A valid finalized draft receives a stale-review indication after 30 days; age alone never silently deletes it",
+      "source": null,
+      "expectations": {
+        "sub_category": "stale",
+        "draft_age_days": 30,
+        "stale_review_indicated": true,
+        "silently_deleted": false,
+        "recovery_outcome": "recoverable_draft"
+      }
+    },
+    {
+      "id": "registry-owner-invalid",
+      "category": "registry",
+      "description": "A registry entry whose owning conversation can no longer send is Preview/Delete-only, never retargeted, and transitions to diagnosed invalid on reconciliation",
+      "source": null,
+      "expectations": {
+        "sub_category": "owner-invalid",
+        "owner_can_send": false,
+        "preview_delete_only": true,
+        "retargeted": false,
+        "recovery_outcome": "diagnosed_invalid"
+      }
+    },
+    {
+      "id": "registry-crash-step-1",
+      "category": "registry",
+      "description": "Step 1: create and durably register draft ownership — crash after step 1 before step 2: registered draft with no PCM; recovery deletes the empty draft",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 1,
+        "crash_point": "after step 1 before step 2",
+        "initial_event": "registry_entry_created",
+        "registry_entry_exists": true,
+        "wav_file_exists": false,
+        "wav_file_valid": null,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-2",
+      "category": "registry",
+      "description": "Step 2: start accepting microphone frames only after step 1 is durable — crash during step 2 with partial PCM; recovery deletes partial PCM and clears registry",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 2,
+        "crash_point": "during step 2",
+        "initial_event": "microphone_frames_started",
+        "registry_entry_exists": true,
+        "wav_file_exists": false,
+        "wav_file_valid": null,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-3",
+      "category": "registry",
+      "description": "Step 3: write normalized PCM to application-private storage — crash after step 3 before step 4: partial PCM; recovery treats file as unvalidated, deletes it, clears registry",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 3,
+        "crash_point": "after step 3 before step 4",
+        "initial_event": "pcm_written",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": false,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-4",
+      "category": "registry",
+      "description": "Step 4: safely finalize the WAV — crash after step 4 before step5: finalized but unvalidated WAV; recovery deletes file and clears registry",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 4,
+        "crash_point": "after step 4 before step5",
+        "initial_event": "wav_finalized",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": false,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-5",
+      "category": "registry",
+      "description": "Step 5: flush and validate the complete file — crash after step5 before step 6: validated but unmarked WAV; file exists but not marked recoverable; recovery clears registry and deletes orphan plaintext",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 5,
+        "crash_point": "after step5 before step 6",
+        "initial_event": "wav_validated",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": true,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-6",
+      "category": "registry",
+      "description": "Step 6: mark the draft recoverable — crash after step 6 before step7: recoverable draft with valid WAV; recovery surfaces the draft for Send or Deletion",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 6,
+        "crash_point": "after step 6 before step7",
+        "initial_event": "draft_marked_recoverable",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": true,
+        "message_queued": false,
+        "message_id_allocated": false,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "recoverable_draft",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-7",
+      "category": "registry",
+      "description": "Step 7: allocate the message ID and final marker filename — crash after step7 before step8: message ID allocated but WAV not imported; message ID guaranteed not in queued table; plaintext orphaned and deleted",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 7,
+        "crash_point": "after step7 before step8",
+        "initial_event": "message_id_allocated",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": true,
+        "message_queued": false,
+        "message_id_allocated": true,
+        "encrypted_blob_exists": false,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-8",
+      "category": "registry",
+      "description": "Step 8: import the complete validated WAV into the encrypted Normal store — crash after step8 before step9: WAV imported but message not queued; encrypted blob is orphan attachment with no referencing message",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 8,
+        "crash_point": "after step8 before step9",
+        "initial_event": "wav_imported_to_normal_store",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": true,
+        "message_queued": false,
+        "message_id_allocated": true,
+        "encrypted_blob_exists": true,
+        "recovery_outcome": "diagnosed_invalid",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-9",
+      "category": "registry",
+      "description": "Step 9: durably save the queued message — crash after step9 before step10: message queued with durable encrypted source but registry entry still present; recovery verifies encrypted source exists, completes step10",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 9,
+        "crash_point": "after step9 before step10",
+        "initial_event": "message_queued_durably",
+        "registry_entry_exists": true,
+        "wav_file_exists": true,
+        "wav_file_valid": true,
+        "message_queued": true,
+        "message_id_allocated": true,
+        "encrypted_blob_exists": true,
+        "recovery_outcome": "durable_queued_message",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "registry-crash-step-10",
+      "category": "registry",
+      "description": "Step10: remove registry entry and best-effort delete plaintext — crash after step10: everything committed; recovery finds no orphaned state; the message is already queued with durable encrypted source",
+      "source": null,
+      "expectations": {
+        "sub_category": "crash-boundary",
+        "step": 10,
+        "crash_point": "after step10",
+        "initial_event": "registry_removed_plaintext_deleted",
+        "registry_entry_exists": false,
+        "wav_file_exists": false,
+        "wav_file_valid": null,
+        "message_queued": true,
+        "message_id_allocated": true,
+        "encrypted_blob_exists": true,
+        "recovery_outcome": "durable_queued_message",
+        "duplicate_send_possible": false,
+        "plaintext_dependency": false
+      }
+    },
+    {
+      "id": "scheduler-rule-1-user-initiated",
+      "category": "scheduler",
+      "description": "Rule 1: user-initiated attachment always admitted immediately regardless of pending voice/image admissions",
+      "source": null,
+      "expectations": {
+        "rule": 1,
+        "input": {
+          "user_initiated": true,
+          "voice_pending": true,
+          "image_pending": true,
+          "consecutive_voice_admissions": 2
+        },
+        "expected": {
+          "admitted": true,
+          "priority": "user-initiated",
+          "interrupted": false,
+          "voice_counter_reset": false
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-2-voice-next",
+      "category": "scheduler",
+      "description": "Rule 2: voice message retrieval is next priority after user-initiated when no user-initiated is pending",
+      "source": null,
+      "expectations": {
+        "rule": 2,
+        "input": {
+          "user_initiated": false,
+          "voice_pending": true,
+          "image_pending": true,
+          "consecutive_voice_admissions": 1
+        },
+        "expected": {
+          "admitted": true,
+          "priority": "voice",
+          "interrupted": false
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-3-image-last",
+      "category": "scheduler",
+      "description": "Rule 3: image retrieval is last priority, admitted only when no user-initiated or voice is pending",
+      "source": null,
+      "expectations": {
+        "rule": 3,
+        "input": {
+          "user_initiated": false,
+          "voice_pending": false,
+          "image_pending": true,
+          "consecutive_voice_admissions": 0
+        },
+        "expected": {
+          "admitted": true,
+          "priority": "image",
+          "interrupted": false
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-4-fairness",
+      "category": "scheduler",
+      "description": "Rule 4: three consecutive automatic voice admissions force an image admission (3:1 fairness); counter resets after forced image",
+      "source": null,
+      "expectations": {
+        "rule": 4,
+        "input": {
+          "user_initiated": false,
+          "voice_pending": true,
+          "image_pending": true,
+          "consecutive_voice_admissions": 3
+        },
+        "expected": {
+          "admitted": true,
+          "priority": "image",
+          "interrupted": false,
+          "voice_counter_reset": true
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-5-no-interruption",
+      "category": "scheduler",
+      "description": "Rule 5: voice and image admissions are never paused or cancelled once started",
+      "source": null,
+      "expectations": {
+        "rule": 5,
+        "input": {
+          "admission_in_progress": true,
+          "admission_type": "voice",
+          "higher_priority_arrives": true
+        },
+        "expected": {
+          "interrupted": false,
+          "cancelled": false,
+          "completes_normally": true
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-6-next-eligible",
+      "category": "scheduler",
+      "description": "Rule 6: manual request arriving while both capacity slots are occupied is queued, then admitted with user-initiated priority as the next eligible admission once a slot is released, ahead of pending voice and image",
+      "source": null,
+      "expectations": {
+        "rule": 6,
+        "input": {
+          "manual_request_queued": true,
+          "capacity_available": true,
+          "voice_pending": true,
+          "image_pending": true,
+          "consecutive_voice_admissions": 2
+        },
+        "expected": {
+          "admitted": true,
+          "priority": "user-initiated",
+          "interrupted": false,
+          "selection_reason": "manual-next-eligible-after-slot-released"
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-7-counter-success-only",
+      "category": "scheduler",
+      "description": "Rule 7: consecutive-voice counter increments only on successful admission, not on attempt or failure",
+      "source": null,
+      "expectations": {
+        "rule": 7,
+        "input": {
+          "admission_attempted": true,
+          "admission_successful": false,
+          "consecutive_voice_admissions_before": 2
+        },
+        "expected": {
+          "counter_unchanged": true,
+          "consecutive_voice_admissions_after": 2
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-8-offline-preserve",
+      "category": "scheduler",
+      "description": "Rule 8: offline transition preserves admission state; pending admissions and counters survive connectivity loss",
+      "source": null,
+      "expectations": {
+        "rule": 8,
+        "input": {
+          "offline_transition": true,
+          "pending_voice": true,
+          "pending_image": false,
+          "consecutive_voice_admissions": 1
+        },
+        "expected": {
+          "state_preserved": true,
+          "pending_voice_after": true,
+          "consecutive_voice_admissions_after": 1
+        }
+      }
+    },
+    {
+      "id": "scheduler-rule-9-restart-reconstruct",
+      "category": "scheduler",
+      "description": "Rule 9: restart reconstructs admission offers and partial-transfer state from durable history; the fairness counter resets to 0 and pending queues are restored",
+      "source": null,
+      "expectations": {
+        "rule": 9,
+        "input": {
+          "restart": true,
+          "durable_history_available": true,
+          "durable_consecutive_voice": 2,
+          "durable_pending_voice": true
+        },
+        "expected": {
+          "reconstructed": true,
+          "consecutive_voice_admissions_after": 0,
+          "pending_voice_after": true,
+          "history_matches_durable": true
+        }
+      }
+    }
+  ]
+}

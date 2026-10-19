@@ -1,0 +1,1244 @@
+package net.lanmsg.chat;
+
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+
+/** Main call controller.  One instance per device, owned by MessengerService.
+ *  Coordinates signaling, state, media, admission policy and timers.
+ *
+ *  Architecture (plan-v006):
+ *  - Service owns controller, signaling, media, quality polling.
+ *  - Activity handles presentation, sends identity-checked commands.
+ *  - Pure-Java core logic; media adapter injected (fake for testing, real in A2).
+ */
+public class CallController {
+
+  // ── Injectable clock (for deterministic testing) ──────────────
+
+  /** Clock interface — injectable for deterministic unit tests. */
+  public interface Clock {
+    long nowMs();
+    default void sleep(long ms) throws InterruptedException { Thread.sleep(ms); }
+  }
+
+  private static final Clock SYSTEM_CLOCK = System::currentTimeMillis;
+  private final Clock clock;
+
+  // ── Dependencies ───────────────────────────────────────────────
+
+  private final PeerEngine engine;
+  private final CallSettings settings;
+  private final CallProtocol.InvitationLimiter limiter;
+  private AudioOwnership audioOwner;
+  private ICallMedia.Factory mediaFactory; // set after construction, before use
+
+  // ── Current session ────────────────────────────────────────────
+
+  private CallSession.Builder session;
+  private ICallMedia media;
+  private final Object lock = new Object();
+
+  // ── Sequencing ─────────────────────────────────────────────────
+
+  private final AtomicLong sequence = new AtomicLong(0);
+  private long negotiationGeneration;
+  private CallFrameAdmission frameAdmission;
+  private int protocolVersion=1;
+  private CallVideoConsent videoConsent;
+  private volatile CallVideoCoordinator videoCoordinator;
+  private CallVideoActions videoActions;
+  private volatile boolean videoEnabled;
+  private CallVideoActions.Eligibility videoEligibility=id->false;
+  public interface RemoteSpeakerHandler { boolean apply(boolean speaker); }
+  private RemoteSpeakerHandler remoteSpeakerHandler=speaker->false;
+  public void configureRemoteSpeaker(RemoteSpeakerHandler handler){remoteSpeakerHandler=handler==null?speaker->false:handler;}
+  public void requestRemoteSpeaker(boolean speaker)throws IOException{
+    synchronized(lock){
+      if(session==null||!session.isCaller||session.regularCall||session.state!=CallProtocol.State.Connected||protocolVersion!=2)
+        throw new IOException("Remote speaker control is unavailable");
+      CallProtocol.Frame frame=new CallProtocol.Frame(CallProtocol.REMOTE_SPEAKER,session.callId,sequence.incrementAndGet(),0);
+      frame.body.put("speaker",speaker);sendFrame(frame);
+    }
+  }
+  /** Service enables only after camera/lifecycle/UI readiness is wired. */
+  public void requestRemoteCamera(String expected,boolean on,String facing)throws IOException{
+    synchronized(lock){
+      CallVideoCoordinator value=videoCoordinator;
+      if(session==null||!session.isCaller||session.regularCall||!session.callId.equals(expected)||session.state!=CallProtocol.State.Connected
+          ||protocolVersion!=2||value==null||value.snapshot().phase!=CallVideoConsent.Phase.Video)
+        throw new IOException("Recipient camera control requires an active video call");
+      CallVideoCoordinator.Snapshot video=value.snapshot();
+      CallProtocol.Frame frame=new CallProtocol.Frame(CallProtocol.REMOTE_CAMERA,expected,sequence.incrementAndGet(),video.generation);
+      frame.body.put("request",video.request);frame.body.put("camera",on);frame.body.put("facing",facing);sendFrame(frame);
+    }
+  }
+  public void configureVideo(boolean enabled,CallVideoActions.Eligibility eligibility){
+    videoEligibility=eligibility==null?id->false:eligibility;videoEnabled=enabled;
+  }
+  public CallVideoCoordinator video(String expectedCallId){
+    CallVideoCoordinator value=videoCoordinator;
+    return value!=null&&value.isForCall(expectedCallId)?value:null;
+  }
+  public CallVideoActions videoActions(String expectedCallId){
+    synchronized(lock){return session!=null&&session.callId.equals(expectedCallId)?videoActions:null;}
+  }
+  private void bindVideoActions(){
+    videoActions=null;
+    if(videoConsent==null)return;
+    videoActions=new CallVideoActions(videoConsent,videoEligibility,new CallVideoActions.Effects(){
+      public void answer(String id,boolean video)throws IOException{acceptPrepared(id,video);}
+      private CallVideoCoordinator live(String id)throws IOException{
+        CallVideoCoordinator value=CallController.this.video(id);
+        if(value==null)throw new IOException("That video call is no longer available");return value;
+      }
+      public void request(String id,String request)throws IOException{live(id).proposalAcceptedLocally(request);}
+      public void accept(String id,String request)throws IOException{live(id).upgradeAcceptedLocally(request);}
+      public void decline(String id,String request)throws IOException{live(id).upgradeDeclinedLocally(request);}
+      public void camera(String id,boolean on)throws IOException{live(id).cameraChosenLocally(on);}
+    });
+  }
+
+  // ── Timer management ───────────────────────────────────────────
+
+  private ScheduledExecutorService timer;
+  private ScheduledFuture<?> heartbeatTask, qualityTask;
+
+  // ── Outgoing transport interface ───────────────────────────────
+
+  /** Caller must provide a transport that sends serialized Frame bytes
+   *  to the specific peer over an authenticated channel. */
+  public interface Transport {
+    /** Send a signaling frame to the call peer.  Must use an already-authenticated connection. */
+    void send(byte[] frameBytes) throws IOException;
+  }
+
+  /** Opens the authenticated call channel for a specific call ID.
+   *
+   *  The call ID is generated by the controller and is part of the wire handshake
+   *  (CALLCONNECT carries it), so the channel cannot be opened before the ID exists. The factory
+   *  exists to break that ordering: the controller mints the ID, the service opens the matching
+   *  socket, and only then is the first INVITE written. */
+  public interface TransportFactory {
+    Transport open(String callId) throws IOException;
+  }
+
+  /** The live call channel, so the service can close it when the call ends.  Null while idle. */
+  private volatile Transport activeTransport;
+
+  private Transport transport;
+
+  /** Record the audio output route actually in use, so the call view shows the applied route
+   *  rather than a UI-side guess.  Route selection and its application are the service's job; the
+   *  controller only carries the value in the snapshot. */
+  public void setAudioRoute(String route) {
+    synchronized (lock) {
+      if (session == null) return;
+      session.audioRoute = route;
+      notifyCallback(session.snapshot());
+    }
+  }
+
+  /** Close the live call channel.  Called by the service after a terminal snapshot; the transport
+   *  itself may implement Closeable, and the controller never blocks on the close. */
+  public void closeTransport() {
+    Transport t = activeTransport;
+    activeTransport = null;
+    if (t instanceof java.io.Closeable) {
+      try { ((java.io.Closeable) t).close(); } catch (Exception ignored) {}
+    }
+  }
+
+  /** The peer ID of the live call, or null when idle. */
+  public String activePeerId() {
+    synchronized (lock) { return session != null ? session.peerId : null; }
+  }
+
+  // ── Callbacks ──────────────────────────────────────────────────
+
+  /** Fired whenever the session snapshot changes.  Called under lock. */
+  public interface Callback {
+    void onStateChanged(CallSession snapshot);
+  }
+
+  // The primary callback is a single slot (used by the desktop tests, and by anything that has
+  // exclusive ownership of the controller's state stream). Additional observers -- the service's
+  // call notifier and the Activity's CallUi -- register with addListener instead, so binding the
+  // UI can never displace the notifier. Listeners are invoked while the controller lock is held,
+  // so they must not block: the service and the Activity both hand off to a Handler immediately.
+  private volatile Callback callback = snap -> {};
+  private final List<Callback> listeners = new CopyOnWriteArrayList<>();
+
+  // ── Construction ───────────────────────────────────────────────
+
+  public CallController(PeerEngine engine, CallSettings settings) {
+    this(engine, settings, SYSTEM_CLOCK);
+  }
+
+  /** Package-private constructor with injectable clock for testing. */
+  CallController(PeerEngine engine, CallSettings settings, Clock clock) {
+    this.engine = engine;
+    this.settings = settings;
+    this.clock = clock;
+    this.limiter = new CallProtocol.InvitationLimiter();
+  }
+
+  public void setMediaFactory(ICallMedia.Factory factory) { this.mediaFactory = factory; }
+  public void setAudioOwner(AudioOwnership owner) { this.audioOwner = owner; }
+  public void setCallback(Callback cb) { this.callback = cb != null ? cb : snap -> {}; }
+
+  /** Register an additional state observer.  Never displaces setCallback's holder. */
+  public void addListener(Callback cb) { if (cb != null) listeners.add(cb); }
+  public void removeListener(Callback cb) { if (cb != null) listeners.remove(cb); }
+
+  /** Check whether calling is possible (engine online, media factory set). */
+  public boolean canCall() {
+    return mediaFactory != null;
+  }
+
+  /** Update the engine reference after engine recreation (generation change). */
+  public void updateEngine(PeerEngine newEngine) {
+    // Engine reference update — close any active call on the old engine
+    synchronized (lock) {
+      if (session != null && !session.state.terminal()) {
+        try { endCall(CallProtocol.EndReason.ENGINE_SHUTDOWN); }
+        catch (IOException ignored) {}
+      }
+    }
+  }
+
+  /** Called when a peer's verification is revoked — end any active call with them. */
+  public void onPeerRevoked(String peerId) {
+    synchronized (lock) {
+      if (session != null && session.peerId.equals(peerId) && !session.state.terminal()) {
+        try { endCall(CallProtocol.EndReason.ENGINE_SHUTDOWN); }
+        catch (IOException ignored) {}
+      }
+    }
+  }
+
+  /** Start the controller's background timer thread.  Called from MessengerService. */
+  public void start() {
+    if (timer == null || timer.isShutdown()) {
+      timer = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "call-controller");
+        t.setDaemon(true);
+        return t;
+      });
+    }
+  }
+
+  // ── Snapshot ───────────────────────────────────────────────────
+
+  public CallSession snapshot() {
+    synchronized (lock) {
+      return session != null ? session.snapshotWithDuration() : null;
+    }
+  }
+
+  public boolean hasActive() {
+    synchronized (lock) {
+      return session != null && !session.state.terminal();
+    }
+  }
+
+  public boolean isIdle() {
+    synchronized (lock) {
+      return session == null || session.state == CallProtocol.State.Idle;
+    }
+  }
+
+  // ── Outgoing call ──────────────────────────────────────────────
+
+  /** Initiate a call to a verified peer.  Returns the call ID, or throws on rejection. */
+  public String startCall(String peerId, Transport transport) throws IOException {
+    return startCall(peerId, callId -> transport);
+  }
+
+  /** Initiate a call, letting the caller open the authenticated channel for the generated call ID.
+   *
+   *  The channel is opened inside the controller lock, before the INVITE is written, so the first
+   *  frame can never precede the connection it is sent on.  A failure to open leaves no session
+   *  behind: the caller sees the IOException and the controller stays Idle. */
+  public String startCall(String peerId, TransportFactory factory) throws IOException {
+    return startCall(peerId,factory,false);
+  }
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo)throws IOException {
+    return startCall(peerId,factory,inviteVideo,null);
+  }
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo,String reservedCallId)throws IOException {
+    return startCall(peerId,factory,inviteVideo,reservedCallId,false);
+  }
+  /** @param regularCall true when the caller asked, at a per-call prompt, to place this as an
+   *  ordinary call despite holding a trusted call grant over this peer -- sent on the wire so the
+   *  receiving side skips its own auto-answer path for this call only; the grant itself is
+   *  untouched. */
+  public String startCall(String peerId,TransportFactory factory,boolean inviteVideo,String reservedCallId,boolean regularCall)throws IOException {
+    if(reservedCallId!=null&&!CallProtocol.validCallId(reservedCallId))throw new IOException("Invalid call invitation");
+    // Fresh network transaction is outside the controller lock and UI thread.
+    boolean capable=videoEnabled&&engine.probeCallVideo(peerId);
+    if(inviteVideo&&(!capable||!videoEligibility.mayCapture(null)))
+      throw new IOException("Video is not available for this contact");
+    CallLog.i("startCall to " + peerId);
+    synchronized (lock) {
+      if (session != null && !session.state.terminal())
+        throw new IOException("Already in a call");
+
+      // Audio ownership check (A05)
+      if (audioOwner != null && !audioOwner.canStartCall())
+        throw new IOException("Cannot start a call while recording a voice message");
+
+      PeerEngine.Peer peer = engine.peers().stream()
+        .filter(p -> p.id.equals(peerId)).findFirst().orElse(null);
+      if (peer == null)
+        throw new IOException("Peer not found");
+      if (!peer.trusted())
+        throw new IOException("Peer is not verified — verify before calling");
+
+      long now = clock.nowMs();
+      if (!limiter.record(peerId, now))
+        throw new IOException("Too many call attempts — wait before trying again");
+
+      String callId = reservedCallId==null?UUID.randomUUID().toString():reservedCallId;
+      Transport opened = factory == null ? null : factory.open(callId);
+      if (opened == null) throw new IOException("Could not open a call channel");
+      this.transport = opened;
+      this.activeTransport = opened;
+      this.session = new CallSession.Builder(callId, peerId, true, now);
+      this.protocolVersion=capable?2:1;
+      this.sequence.set(0);
+      this.frameAdmission = new CallFrameAdmission(callId,peerId,protocolVersion,0);
+      this.videoConsent=capable?new CallVideoConsent(callId,true,true,inviteVideo):null;
+      bindVideoActions();
+      session.videoCapable=capable;session.invitedVideo=inviteVideo;session.regularCall=regularCall;
+      session.state = CallProtocol.State.OutgoingRinging;
+      this.negotiationGeneration = capable?1:0;
+
+      // Send INVITE
+      CallProtocol.Frame invite = CallSignaling.invite(callId, sequence.incrementAndGet(),
+        engine.id, peerId);
+      if(capable)invite.body.put("media",inviteVideo?"video":"audio");
+      if(regularCall)invite.body.put("trust","ignore");
+      try {
+        sendFrame(invite);
+      } catch (IOException e) {
+        // The channel failed on its first write: leave no half-open session behind.
+        closeVideo();
+        session = null;
+        frameAdmission = null;
+        transport = null;
+        activeTransport = null;
+        closeTransportQuietly(opened);
+        throw e;
+      }
+
+      // Start ringing timeout
+      scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
+
+      CallSession snap = session.snapshot();
+      notifyCallback(snap);
+      return callId;
+    }
+  }
+
+  private void closeTransportQuietly(Transport t) {
+    if (t instanceof java.io.Closeable) {
+      try { ((java.io.Closeable) t).close(); } catch (Exception ignored) {}
+    }
+  }
+
+  // ── Incoming call handling ─────────────────────────────────────
+
+  /** Process an incoming INVITE frame.  Returns the accepted CallSession, or null if rejected.
+   *
+   *  A rejection is not silent: the caller must always receive a terminal frame, otherwise it
+   *  waits out its full ringing timeout and reports "No answer" for what was actually a policy
+   *  decline or a throttle. Policy-disabled invitations get DECLINE (which the caller's UI shows
+   *  as "Declined"); capacity and throttling rejections get the generic BUSY. Identity and
+   *  verification failures get no reply at all — the channel is not an authenticated peer we
+   *  admitted, so answering would confirm its guess. */
+  public CallSession onInvite(CallProtocol.Frame frame, String authenticatedPeerId,
+                               Transport transport) throws IOException {
+    synchronized (lock) {
+      long now = clock.nowMs();
+      if(frame==null||frame.senderSequence<=0)return null;
+      if(frame.protocolVersion!=1&&(frame.protocolVersion!=2||!videoEnabled||!CallVideoProtocol.valid(frame)))return null;
+      CallLog.i("INVITE call=" + frame.callId + " from " + authenticatedPeerId);
+
+      // Validate
+      String callerId = CallSignaling.getCaller(frame);
+      if (callerId == null || !callerId.equals(authenticatedPeerId)
+          || !engine.id.equals(CallSignaling.getCallee(frame))) {
+        CallLog.w("INVITE refused: identity mismatch (" + callerId + " vs " + authenticatedPeerId + ")");
+        return null; // mismatched identity — no reply
+      }
+
+      // A call ID that is not a well-formed UUID is refused before a session exists. Admitting one
+      // would produce a session whose own signaling frames the peer's parser cannot read, so the
+      // call could never be accepted or ended by message — it would only expire.
+      if (!CallProtocol.validCallId(frame.callId)) {
+        CallLog.w("INVITE refused: malformed call id");
+        return null; // malformed — no reply
+      }
+
+      PeerEngine.Peer peer = engine.peers().stream()
+        .filter(p -> p.id.equals(authenticatedPeerId)).findFirst().orElse(null);
+      if (peer == null || !peer.trusted()) {
+        CallLog.w("INVITE refused: peer not trusted");
+        return null; // not verified — no reply
+      }
+
+      // Admission policy. Checked before any ringing, notification, media or audio claim, and
+      // before glare handling, so simultaneous dialing cannot slip past a disabled preference.
+      // "Messages only" (settings.allowIncoming()==false while still Online) rejects everyone
+      // except a contact with an explicit trusted-call grant (auto-answer voice or video) --
+      // computed the same way the auto-answer check further below does, so the exception is
+      // exactly "whoever auto-answer already lets through".
+      boolean regularCallInvite = "ignore".equals(frame.body.get("trust"));
+      int trustedMaskInvite = regularCallInvite ? 0 : engine.trustedCallMask(authenticatedPeerId);
+      if (!settings.allowIncoming() && trustedMaskInvite == 0) {
+        CallLog.i("INVITE declined: incoming calls are switched off (messages only)");
+        rejectMessagesOnly(frame, authenticatedPeerId, transport);
+        return null;
+      }
+
+      if (session != null && !session.state.terminal()) {
+        if (session.peerId.equals(authenticatedPeerId) &&
+            session.callId.equals(frame.callId)) {
+          return session.snapshot(); // duplicate, already handled
+        }
+        reject(frame, authenticatedPeerId, transport, CallProtocol.BUSY);
+        return null; // busy
+      }
+
+      // Throttling — counts every distinct invitation regardless of the outcome.
+      if (!limiter.record(authenticatedPeerId, now)) {
+        reject(frame, authenticatedPeerId, transport, CallProtocol.BUSY);
+        return null; // exceeded limit
+      }
+
+      // Glare resolution
+      if (session != null && session.state == CallProtocol.State.OutgoingRinging &&
+          session.peerId.equals(authenticatedPeerId)) {
+        boolean localWins = CallProtocol.glareWinner(engine.id, authenticatedPeerId,
+          sequence.get(), frame.senderSequence);
+        if (!localWins) {
+          // Lose glare — accept their call, cancel ours
+          cancelCurrentLocked();
+        } else {
+          reject(frame, authenticatedPeerId, transport, CallProtocol.BUSY);
+          return null; // We win, they'll get BUSY from their side
+        }
+      }
+
+      // Create incoming session
+      this.transport = transport;
+      this.activeTransport = transport;
+      this.session = new CallSession.Builder(frame.callId, authenticatedPeerId, false, now);
+      this.protocolVersion=frame.protocolVersion;
+      this.sequence.set(0);
+      this.frameAdmission = new CallFrameAdmission(frame.callId,authenticatedPeerId,protocolVersion,frame.senderSequence);
+      session.videoCapable=protocolVersion==2;
+      session.invitedVideo=session.videoCapable&&"video".equals(frame.body.get("media"));
+      session.regularCall=regularCallInvite;
+      this.videoConsent=session.videoCapable?new CallVideoConsent(frame.callId,true,false,session.invitedVideo):null;
+      bindVideoActions();
+      session.state = CallProtocol.State.IncomingRinging;
+      this.negotiationGeneration = session.videoCapable?1:0;
+
+      // Claim audio ring ownership (A05) — blocks voice recording
+      if (audioOwner != null) audioOwner.claimRing();
+
+      // Confirm ringing to the caller. The caller's RINGING handler only extends its own
+      // ringing timeout, so this cannot be used to keep a call alive indefinitely.
+      sendFrame(CallSignaling.ringing(session.callId, sequence.incrementAndGet()));
+
+      // Start ringing timeout
+      scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
+
+      CallSession snap = session.snapshot();
+      int trustedMask=trustedMaskInvite;
+      boolean trustedVideo=session.invitedVideo
+        &&(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
+      boolean trustedVoice=(trustedMask&PeerEngine.TRUSTED_AUTO_ANSWER_VOICE)!=0;
+      if(trustedVideo||trustedVoice){
+        try{acceptInternal(frame.callId,trustedVideo,false,true);return session==null?null:session.snapshot();}
+        catch(IOException unavailable){CallLog.w("Trusted auto-answer unavailable: "+unavailable.getMessage());}
+      }
+      if(session!=null&&!session.state.terminal())notifyCallback(session.snapshot());
+      return snap;
+    }
+  }
+
+  /** Answer a rejected invitation on its own channel, without disturbing any local session. */
+  private void reject(CallProtocol.Frame frame, String peerId, Transport transport, String type) {
+    try {
+      CallProtocol.Frame reply = new CallProtocol.Frame(type, frame.callId,
+        sequence.incrementAndGet(), 0);
+      reply.protocolVersion=frame.protocolVersion;
+      if (type.equals(CallProtocol.DECLINE)&&frame.protocolVersion==1) {
+        reply.body = new LinkedHashMap<>();
+        reply.body.put("peer", peerId);
+      }
+      transport.send(CallSignaling.serialize(reply));
+    } catch (Exception ignored) {
+      // The channel is already gone; the caller falls back to its own ringing timeout.
+    }
+  }
+
+  /** Decline an invitation specifically because "Messages only" is on, distinct from a plain
+   *  reject(DECLINE): the body carries reason=messagesOnly so the caller's CallUi can say why,
+   *  instead of the generic "Declined". Mirrors Windows CallSignaling.Decline(messagesOnly:true). */
+  private void rejectMessagesOnly(CallProtocol.Frame frame, String peerId, Transport transport) {
+    try {
+      CallProtocol.Frame reply = new CallProtocol.Frame(CallProtocol.DECLINE, frame.callId,
+        sequence.incrementAndGet(), 0);
+      reply.protocolVersion=frame.protocolVersion;
+      reply.body = new LinkedHashMap<>();
+      if (frame.protocolVersion==1) reply.body.put("peer", peerId);
+      reply.body.put("reason", "messagesOnly");
+      transport.send(CallSignaling.serialize(reply));
+    } catch (Exception ignored) {
+      // The channel is already gone; the caller falls back to its own ringing timeout.
+    }
+  }
+
+  // ── User actions ───────────────────────────────────────────────
+
+  /** Accept an incoming call.
+   *
+   *  Re-checked against the live preference and a caller-supplied expected call ID.  A stale
+   *  notification action or a stale UI button therefore cannot accept a call the user has since
+   *  declined the policy for, nor accept a different call than the one that was on screen. */
+  public void accept() throws IOException { accept(null); }
+
+  /** Accept, but only if the ringing call is still the expected one.  expectedCallId may be null
+   *  to accept whatever is currently ringing (the on-screen Accept button). */
+  public void accept(String expectedCallId) throws IOException {
+    accept(expectedCallId,false);
+  }
+  public void accept(String expectedCallId,boolean video)throws IOException {
+    acceptInternal(expectedCallId,video,false);
+  }
+  private void acceptPrepared(String expectedCallId,boolean video)throws IOException {
+    acceptInternal(expectedCallId,video,true);
+  }
+  private void acceptInternal(String expectedCallId,boolean video,boolean prepared)throws IOException {
+    acceptInternal(expectedCallId,video,prepared,false);
+  }
+  private void acceptInternal(String expectedCallId,boolean video,boolean prepared,boolean trusted)throws IOException {
+    synchronized (lock) {
+      if (session == null || session.state != CallProtocol.State.IncomingRinging)
+        throw new IOException("No incoming call to accept");
+      if (expectedCallId != null && !expectedCallId.equals(session.callId))
+        throw new IOException("That call is no longer waiting");
+      if(video&&videoConsent==null)throw new IOException("Video unavailable");
+      if(videoConsent!=null&&!prepared){
+        boolean eligible=video&&videoEligibility.mayCapture(session.callId);
+        // Trusted video authorizes answering, not bypassing OS camera eligibility.
+        CallVideoConsent.Result result=trusted&&video&&!eligible
+          ?videoConsent.acceptInitialReceiveOnly(session.callId)
+          :videoConsent.acceptInitial(session.callId,video,eligible);
+        if(result!=CallVideoConsent.Result.Ready&&result!=CallVideoConsent.Result.Voice)
+          throw new IOException("Camera permission or foreground access unavailable");
+      }
+
+      // A disabled preference withdraws the invitation rather than letting it through -- unless
+      // the caller holds the same trusted-call grant that onInvite already let ring (and, for
+      // auto-answer, already decided to answer): re-checking the bare preference here, without
+      // that exception, silently killed every trusted auto-answered call under "Messages only",
+      // since this path runs for the auto-answer attempt onInvite just triggered as much as for
+      // a manual Accept tap. Mirrors the exact onInvite admission exception.
+      if (!settings.allowIncoming()) {
+        int trustedMask = session.regularCall ? 0 : engine.trustedCallMask(session.peerId);
+        if (trustedMask == 0) {
+          try {
+            sendFrame(CallSignaling.decline(session.callId, sequence.incrementAndGet()));
+          } catch (IOException ignored) {}
+          endCall(CallProtocol.EndReason.LOCAL_DECLINE);
+          throw new IOException("Incoming calls are turned off");
+        }
+      }
+
+      // Claim audio capture (A05)
+      if (audioOwner != null) audioOwner.claimCallCapture();
+
+      session.state = CallProtocol.State.Connecting;
+      cancelTimeout();
+
+      // Send ACCEPT
+      CallProtocol.Frame accepted=CallSignaling.accept(session.callId, sequence.incrementAndGet());
+      if(protocolVersion==2)accepted.body.put("media",video?"video":"audio");
+      sendFrame(accepted);
+
+      // Initialize media and create answer
+      try{startMedia();}catch(IOException failure){endCall(CallProtocol.EndReason.MEDIA_ERROR);throw failure;}
+      scheduleMediaTimeout();
+
+      notifyCallback(session.snapshot());
+    }
+  }
+
+  /** Decline an incoming call.  Sends DECLINE — caller sees "Declined". */
+  public void decline() throws IOException {
+    synchronized (lock) {
+      if (session == null || session.state != CallProtocol.State.IncomingRinging)
+        return;
+
+      sendFrame(CallSignaling.decline(session.callId, sequence.incrementAndGet()));
+      endCall(CallProtocol.EndReason.LOCAL_DECLINE);
+    }
+  }
+
+  /** Cancel an outgoing invitation still ringing.  Sends CANCEL, which the callee shows as
+   *  "Canceled" — distinct from a decline, and never presented as the peer declining. */
+  public void cancel() throws IOException {
+    synchronized (lock) {
+      if (session == null || session.state != CallProtocol.State.OutgoingRinging) return;
+      sendFrame(CallSignaling.cancel(session.callId, sequence.incrementAndGet()));
+      endCall(CallProtocol.EndReason.CANCELED);
+    }
+  }
+
+  /** Hang up the current call. */
+  public void hangup() throws IOException {
+    synchronized (lock) {
+      if (session == null || session.state.terminal()) return;
+      sendFrame(CallSignaling.hangup(session.callId, sequence.incrementAndGet()));
+      endCall(CallProtocol.EndReason.LOCAL_HANGUP);
+    }
+  }
+
+  /** Toggle mute.  Publishes a snapshot so the control that was pressed redraws itself: the mute
+   *  glyph is drawn from the session, and without a new snapshot the round control kept showing the
+   *  state it was built with and looked like a toggle that does nothing. */
+  public void setMute(boolean muted) throws IOException {
+    synchronized (lock) {
+      if (session != null) session.muted = muted;
+      if (media != null) {
+        try { media.setMute(muted); } catch (Exception e) {
+          throw new IOException("Mute failed: " + e.getMessage(), e);
+        }
+      }
+      if (session != null) notifyCallback(session.snapshot());
+    }
+  }
+
+  public boolean isMuted() {
+    synchronized (lock) {
+      return session != null && session.muted;
+    }
+  }
+
+  // ── Incoming signaling dispatch ─────────────────────────────────
+
+  public boolean ownsChannel(Transport channel,String callId,String peerId) {
+    synchronized(lock) {return session!=null&&activeTransport==channel
+      &&session.callId.equals(callId)&&session.peerId.equals(peerId);}
+  }
+  public void onFrame(CallProtocol.Frame frame,String peerId,Transport channel)throws IOException {
+    synchronized(lock) {
+      if(frame==null||!ownsChannel(channel,frame.callId,peerId))return;
+    }
+    onFrame(frame,peerId);
+  }
+
+  /** Dispatch an incoming call-signaling frame.  Called from PeerEngine's message handler. */
+  public void onFrame(CallProtocol.Frame frame, String authenticatedPeerId) throws IOException {
+    CallVideoCoordinator videoTarget;
+    synchronized(lock){
+      boolean videoFrame=frame!=null&&frame.type!=null&&frame.body!=null
+        &&(!CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media"))||frame.type.startsWith("VIDEO_"));
+      videoTarget=videoFrame&&protocolVersion==2&&session!=null&&session.state==CallProtocol.State.Connected
+        &&session.peerId.equals(authenticatedPeerId)&&session.callId.equals(frame.callId)?videoCoordinator:null;
+    }
+    if(videoTarget!=null){
+      videoTarget.receiveAdmitted(frame,incoming->{synchronized(lock){
+        if(session==null||session.state!=CallProtocol.State.Connected||videoCoordinator!=videoTarget
+            ||!session.peerId.equals(authenticatedPeerId)||!session.callId.equals(incoming.callId))return false;
+        if(frameAdmission==null||!frameAdmission.admit(incoming,authenticatedPeerId,true))return false;
+        noteInboundSignal();return true;
+      }});return;
+    }
+    synchronized (lock) {
+      if(frame==null||frame.type==null)return;
+      if (session == null || !session.peerId.equals(authenticatedPeerId)) {
+        CallLog.w("dropped " + frame.type + ": no session for peer " + authenticatedPeerId
+          + " (local session=" + (session == null ? "none" : session.callId) + ")");
+        return;
+      }
+
+      String allowed = CallProtocol.allowedSender(frame.type, session.state, session.isCaller);
+      boolean videoFrame=protocolVersion==2&&frame.body!=null&&
+        ((!CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media")))||frame.type.startsWith("VIDEO_"));
+      boolean permitted=allowed!=null;
+      if(protocolVersion==2){
+        if(videoFrame)permitted=session.state==CallProtocol.State.Connected&&videoCoordinator!=null&&videoCoordinator.permits(frame);
+        else if(CallProtocol.OFFER.equals(frame.type)||CallProtocol.ANSWER.equals(frame.type))
+          permitted=permitted&&session.state==CallProtocol.State.Connecting;
+        if(CallProtocol.ACCEPT.equals(frame.type)&&"video".equals(frame.body.get("media")))
+          permitted=permitted&&session.invitedVideo;
+      }
+      if (frameAdmission==null || !frameAdmission.admit(frame,authenticatedPeerId,permitted)) {
+        CallLog.w("dropped " + frame.type + ": not admissible in state " + session.state
+          + " as " + (session.isCaller ? "caller" : "callee"));
+        return; // invalid message for current state
+      }
+      // Only admitted fresh traffic bound to this exact peer/call/version proves liveness.
+      noteInboundSignal();
+      if(videoFrame){videoCoordinator.receive(frame);return;}
+
+      switch (frame.type) {
+        case CallProtocol.RINGING:
+          if (session.state == CallProtocol.State.OutgoingRinging) {
+            // Callee is ringing — caller stays in OutgoingRinging
+            cancelTimeout();
+            scheduleTimeout(CallProtocol.TIMEOUT_RINGING_MS, () -> onTimeout("ringing"));
+          }
+          break;
+
+        case CallProtocol.ACCEPT:
+          if (session.state == CallProtocol.State.OutgoingRinging) {
+            if(videoConsent!=null)videoConsent.peerAnswered(session.callId,"video".equals(frame.body.get("media")));
+            cancelTimeout();
+            session.state = CallProtocol.State.Connecting;
+            startMedia();
+            // We're the caller — create offer
+            try {
+              String offerSdp = media.createOffer();
+              sendFrame(CallSignaling.offer(session.callId, sequence.incrementAndGet(),
+                negotiationGeneration, offerSdp));
+            } catch (Exception e) {
+              endCall(CallProtocol.EndReason.MEDIA_ERROR);
+              return;
+            }
+            scheduleMediaTimeout();
+            notifyCallback(session.snapshot());
+          }
+          break;
+
+        case CallProtocol.DECLINE:
+          if (session.state == CallProtocol.State.OutgoingRinging ||
+              session.state == CallProtocol.State.IncomingRinging) {
+            boolean messagesOnly = frame.body != null && "messagesOnly".equals(frame.body.get("reason"));
+            endCall(messagesOnly ? CallProtocol.EndReason.MESSAGES_ONLY : CallProtocol.EndReason.DECLINED);
+          }
+          break;
+
+        case CallProtocol.BUSY:
+          if (session.state == CallProtocol.State.OutgoingRinging) {
+            endCall(CallProtocol.EndReason.BUSY_REMOTE);
+          }
+          break;
+
+        case CallProtocol.CANCEL:
+          if (session.state == CallProtocol.State.IncomingRinging ||
+              session.state == CallProtocol.State.OutgoingRinging) {
+            endCall(CallProtocol.EndReason.CANCELED);
+          }
+          break;
+
+        case CallProtocol.OFFER:
+          if (session.state == CallProtocol.State.Connecting && !session.isCaller) {
+            String sdp = CallSignaling.getSdp(frame);
+            if (sdp != null && sdp.length() <= CallProtocol.MAX_SDP_BYTES) {
+              try {
+                media.setRemoteDescription(sdp);
+                String answer = media.createAnswer(sdp);
+                sendFrame(CallSignaling.answer(session.callId, sequence.incrementAndGet(),
+                  frame.negotiationGeneration, answer));
+              } catch (Exception e) {
+                endCall(CallProtocol.EndReason.MEDIA_ERROR);
+                return;
+              }
+            }
+          }
+          break;
+
+        case CallProtocol.ANSWER:
+          if (session.state == CallProtocol.State.Connecting && session.isCaller) {
+            String sdp = CallSignaling.getSdp(frame);
+            if (sdp != null && sdp.length() <= CallProtocol.MAX_SDP_BYTES) {
+              try { media.setRemoteDescription(sdp); } catch (Exception e) {
+                endCall(CallProtocol.EndReason.MEDIA_ERROR);
+                return;
+              }
+            }
+          }
+          break;
+
+        case CallProtocol.ICE:
+          if (session.state.active()) {
+            String cand = CallSignaling.getCandidate(frame);
+            if (cand != null) {
+              String mid = frame.body != null ? (String)frame.body.get("sdpMid") : null;
+              Object idx = frame.body != null ? frame.body.get("sdpMLineIndex") : null;
+              int mLine = idx instanceof Number ? ((Number)idx).intValue() : 0;
+              try { media.addIceCandidate(cand, mid, mLine); } catch (Exception e) {}
+            }
+          }
+          break;
+
+        case CallProtocol.MEDIA_READY:
+          if (session.state == CallProtocol.State.Connecting) {
+            // Both sides ready → Connected
+            session.state = CallProtocol.State.Connected;
+            session.connectedAtMs = clock.nowMs();
+            cancelTimeout();
+            startHeartbeat();
+            startQualityPolling();
+            if(videoCoordinator!=null)videoCoordinator.audioConnected();
+            notifyCallback(session.snapshot());
+          }
+          break;
+
+        case CallProtocol.HANGUP:
+          endCall(CallProtocol.EndReason.REMOTE_HANGUP);
+          break;
+
+        case CallProtocol.ERROR:
+          endCall(CallProtocol.EndReason.MEDIA_ERROR);
+          break;
+
+        case CallProtocol.PING:
+          sendFrame(CallSignaling.pong(session.callId, sequence.incrementAndGet()));
+          break;
+
+        case CallProtocol.PONG:
+          // Reset heartbeat fail counter (implementation detail)
+          break;
+
+        case CallProtocol.REMOTE_SPEAKER:
+          if(!session.isCaller&&(engine.trustedCallMask(session.peerId)&PeerEngine.TRUSTED_REMOTE_SPEAKER)!=0
+              &&frame.body.get("speaker") instanceof Boolean
+              &&remoteSpeakerHandler.apply((Boolean)frame.body.get("speaker"))){
+            session.audioRoute=(Boolean)frame.body.get("speaker")?"Speaker":"Earpiece";
+            notifyCallback(session.snapshot());
+          }
+          break;
+        case CallProtocol.REMOTE_CAMERA:
+          if(!session.isCaller&&(engine.trustedCallMask(session.peerId)&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0&&videoCoordinator!=null){
+            CallVideoCoordinator.Snapshot video=videoCoordinator.snapshot();
+            if(video.phase==CallVideoConsent.Phase.Video&&video.generation==frame.negotiationGeneration
+                &&Objects.equals(video.request,frame.body.get("request")))
+              videoCoordinator.remoteCamera((Boolean)frame.body.get("camera"),(String)frame.body.get("facing"),
+                ()->(engine.trustedCallMask(authenticatedPeerId)&PeerEngine.TRUSTED_REMOTE_CAMERA)!=0);
+          }
+          break;
+      }
+    }
+  }
+
+  // ── Internal: media lifecycle ──────────────────────────────────
+
+  private void startMedia() throws IOException {
+    if (mediaFactory == null)
+      throw new IOException("Media factory not set — call media unavailable");
+    try {
+      media = mediaFactory.create();
+      final ICallMedia boundMedia=media;
+      final String boundAudioCall=session.callId;
+      media.setListener(new ICallMedia.Listener() {
+        public void onIceCandidate(String candidate, String sdpMid, int sdpMLineIndex) {
+          synchronized (lock) {
+            if (session == null || session.state.terminal()||media!=boundMedia||!session.callId.equals(boundAudioCall)) return;
+            try {
+              sendFrame(CallSignaling.ice(session.callId, sequence.incrementAndGet(),
+                negotiationGeneration, candidate, sdpMid, sdpMLineIndex));
+            } catch (IOException ignored) {}
+          }
+        }
+        public void onMediaReady() {
+          synchronized (lock) {
+            if (session == null || session.state.terminal()||media!=boundMedia||!session.callId.equals(boundAudioCall)) return;
+            try {
+              sendFrame(new CallProtocol.Frame(CallProtocol.MEDIA_READY,
+                session.callId, sequence.incrementAndGet(), negotiationGeneration));
+            } catch (IOException ignored) {}
+          }
+        }
+        public void onError(String message) {
+          synchronized (lock) {
+            if(session==null||media!=boundMedia||!session.callId.equals(boundAudioCall))return;
+            try { endCall(CallProtocol.EndReason.MEDIA_ERROR); }
+            catch (IOException ignored) {}
+          }
+        }
+      });
+      media.initialize();
+      if(videoConsent!=null){
+        ICallMedia.Video video=media.video();
+        if(video==null)throw new IOException("Video adapter unavailable");
+        final String boundCall=session.callId;
+        final CallVideoConsent boundConsent=videoConsent;
+        boolean autoVideo=(engine.trustedCallMask(session.peerId)&PeerEngine.TRUSTED_AUTO_ANSWER_VIDEO)!=0;
+        boolean autoCamera=session.invitedVideo&&(session.isCaller||autoVideo);
+        videoCoordinator=new CallVideoCoordinator(boundCall,session.isCaller,boundConsent,videoEligibility,video,
+          frame->{synchronized(lock){
+            if(session==null||!session.callId.equals(boundCall)||session.state!=CallProtocol.State.Connected)
+              throw new IOException("That call has ended");
+            frame.senderSequence=sequence.incrementAndGet();sendFrame(frame);
+          }},snapshot->{synchronized(lock){
+            if(session!=null&&session.callId.equals(boundCall)&&!session.state.terminal()){
+              session.video=snapshot;notifyCallback(session.snapshot());
+            }
+          }},autoVideo,autoCamera);
+        session.video=videoCoordinator.snapshot();
+      }
+    } catch (Exception e) {
+      throw new IOException("Media initialization failed: " + e.getMessage(), e);
+    }
+  }
+
+  // ── Internal: cleanup ──────────────────────────────────────────
+
+  private void endCall(CallProtocol.EndReason reason) throws IOException {
+    synchronized (lock) {
+      if (session == null) return;
+
+      // Captured before the state is overwritten: an error the peer cannot infer only matters
+      // once media is up, and a ringing/local-action end already sent its own frame.
+      final boolean wasActive = session.state.active();
+      CallProtocol.State wasState = session.state;
+      CallLog.i("ending call " + session.callId + ": " + reason + " (was " + wasState + ")");
+      session.state = CallProtocol.State.Ending;
+      session.endReason = reason;
+      session.durationMs = session.connectedAtMs > 0 ?
+        clock.nowMs() - session.connectedAtMs : 0;
+
+      cancelTimeout();
+      stopHeartbeat();
+      stopQualityPolling();
+
+      // Tell the peer why, when the reason is one it cannot infer and the channel is still up.
+      Transport live = transport;
+      if (live != null && wasActive)
+        sendBestEffort(live, reason);
+
+      // Dispose media
+      closeVideo();
+      if (media != null) {
+        try { media.dispose(); } catch (Exception ignored) {}
+        media = null;
+      }
+
+      // Release audio ownership (A05) — media is gone, so the device is free
+      if (audioOwner != null) audioOwner.forceRelease();
+
+      notifyCallback(session.snapshot());
+
+      // Return to Idle after a brief snapshot window
+      session.state = CallProtocol.State.Idle;
+      session = null;
+      frameAdmission = null;
+      transport = null;
+      negotiationGeneration = 0;
+      activeTransport = null;
+      if (live instanceof CallChannel) {
+        // Half-close rather than close outright: a reset here can destroy the DECLINE or HANGUP
+        // just written, leaving the peer to ring on until its timeout.
+        try { ((CallChannel) live).beginGracefulClose(); } catch (Exception ignored) {}
+      } else if (live instanceof java.io.Closeable) {
+        try { ((java.io.Closeable) live).close(); } catch (Exception ignored) {}
+      }
+    }
+  }
+
+  /** Best-effort terminal notification for a reason the peer cannot otherwise infer.  Never throws:
+   *  teardown must complete even when the signaling channel has already failed. */
+  private void sendBestEffort(Transport live, CallProtocol.EndReason reason) {
+    if (session == null) return;
+    try {
+      switch (reason) {
+        case TIMEOUT_MEDIA:
+        case MEDIA_ERROR:
+        case ENGINE_SHUTDOWN:
+          CallProtocol.Frame error=new CallProtocol.Frame(CallProtocol.ERROR,
+            session.callId, sequence.incrementAndGet(), negotiationGeneration);
+          error.protocolVersion=protocolVersion;
+          if(protocolVersion==2){error.negotiationGeneration=1;error.body.put("media","audio");error.body.put("code","failed");}
+          live.send(CallSignaling.serialize(error));
+          break;
+        case OFFLINE:
+        case NETWORK_FAILURE:
+        case SIGNALING_LOST:
+          // Nothing useful can be sent on a channel that is already gone or going away.
+          break;
+        default:
+          break;
+      }
+    } catch (Exception ignored) {}
+  }
+
+  private void cancelCurrentLocked() {
+    if (session != null && session.state == CallProtocol.State.OutgoingRinging) {
+      try {
+        sendFrame(CallSignaling.cancel(session.callId, sequence.incrementAndGet()));
+        session.state = CallProtocol.State.Idle;
+        cleanupMedia();
+        cancelTimeout();
+        session = null;
+        transport = null;
+        frameAdmission = null;
+      } catch (IOException ignored) {}
+    }
+  }
+
+  private void cleanupMedia() {
+    closeVideo();
+    if (media != null) {
+      try { media.dispose(); } catch (Exception ignored) {}
+      media = null;
+    }
+  }
+  private void closeVideo(){
+    videoActions=null;
+    if(videoCoordinator!=null){videoCoordinator.close();videoCoordinator=null;}
+    if(videoConsent!=null){videoConsent.end();videoConsent=null;}
+  }
+
+  // ── Internal: timers ───────────────────────────────────────────
+
+  private ScheduledFuture<?> timeoutFuture;
+
+  private void scheduleTimeout(long delayMs, Runnable onExpiry) {
+    cancelTimeout();
+    if (timer != null && !timer.isShutdown()) {
+      timeoutFuture = timer.schedule(() -> {
+        try { onExpiry.run(); } catch (Exception ignored) {}
+      }, delayMs, TimeUnit.MILLISECONDS);
+    }
+  }
+
+  private void cancelTimeout() {
+    if (timeoutFuture != null) { timeoutFuture.cancel(false); timeoutFuture = null; }
+  }
+
+  private void scheduleMediaTimeout() {
+    scheduleTimeout(CallProtocol.TIMEOUT_MEDIA_SETUP_MS, () -> {
+      synchronized (lock) {
+        if (session != null && session.state == CallProtocol.State.Connecting) {
+          try { endCall(CallProtocol.EndReason.TIMEOUT_MEDIA); }
+          catch (IOException ignored) {}
+        }
+      }
+    });
+  }
+
+  private void onTimeout(String phase) {
+    synchronized (lock) {
+      if (session == null) {
+        CallLog.w("timeout (" + phase + ") ignored: no session");
+        return;
+      }
+      CallLog.i("timeout fired in phase '" + phase + "' while " + session.state);
+      try {
+        switch (phase) {
+          case "ringing":
+            if (session.state == CallProtocol.State.OutgoingRinging)
+              endCall(CallProtocol.EndReason.TIMEOUT_RINGING);
+            else if (session.state == CallProtocol.State.IncomingRinging)
+              endCall(CallProtocol.EndReason.TIMEOUT_RINGING);
+            break;
+        }
+      } catch (IOException ignored) {}
+    }
+  }
+
+  // ── Internal: heartbeat ────────────────────────────────────────
+
+  private long lastInboundSignalMs;
+
+  private void startHeartbeat() {
+    lastInboundSignalMs = clock.nowMs();
+    if (timer != null && !timer.isShutdown()) {
+      heartbeatTask = timer.scheduleAtFixedRate(() -> {
+        synchronized (lock) {
+          if (session == null || !session.state.active()) return;
+          long now = clock.nowMs();
+          // Liveness first: a write into a socket that is already broken can still "succeed" for
+          // a while, so inbound evidence is what actually proves the peer is still there.
+          if (now - lastInboundSignalMs > CallProtocol.HEARTBEAT_FAIL_MS) {
+            try { endCall(CallProtocol.EndReason.SIGNALING_LOST); }
+            catch (IOException ignored) {}
+            return;
+          }
+          // Send PING
+          try {
+            sendFrame(CallSignaling.ping(session.callId, sequence.incrementAndGet()));
+          } catch (IOException e) {
+            try { endCall(CallProtocol.EndReason.SIGNALING_LOST); }
+            catch (IOException ignored) {}
+          }
+        }
+      }, CallProtocol.HEARTBEAT_INTERVAL_MS, CallProtocol.HEARTBEAT_INTERVAL_MS,
+         TimeUnit.MILLISECONDS);
+    }
+  }
+
+  private void stopHeartbeat() {
+    if (heartbeatTask != null) { heartbeatTask.cancel(false); heartbeatTask = null; }
+  }
+
+  // ── Internal: quality polling ──────────────────────────────────
+
+  private CallQualityMonitor qualityMonitor = new CallQualityMonitor();
+  private long qualityStartMs;
+
+  private void startQualityPolling() {
+    qualityMonitor.reset(clock.nowMs());
+    qualityStartMs = clock.nowMs();
+    if (timer != null && !timer.isShutdown()) {
+      qualityTask = timer.scheduleAtFixedRate(() -> {
+        synchronized (lock) {
+          if (session == null || session.state != CallProtocol.State.Connected) return;
+          if (media != null) {
+            ICallMedia.Stats stats = media.getStats();
+            long now = clock.nowMs();
+            qualityMonitor.sample(now, stats);
+            CallProtocol.Quality q = qualityMonitor.evaluate(now);
+            if (session.quality != q) {
+              session.quality = q;
+              notifyCallback(session.snapshot());
+            }
+          }
+        }
+      }, CallProtocol.QUALITY_WARMUP_MS, CallProtocol.QUALITY_SAMPLE_INTERVAL_MS,
+         TimeUnit.MILLISECONDS);
+    }
+  }
+
+  private void stopQualityPolling() {
+    if (qualityTask != null) { qualityTask.cancel(false); qualityTask = null; }
+    qualityMonitor.stop();
+  }
+
+  // ── Internal: helpers ──────────────────────────────────────────
+
+  private void sendFrame(CallProtocol.Frame frame) throws IOException {
+    if (transport == null) throw new IOException("No transport for call signaling");
+    if(protocolVersion==2){
+      frame.protocolVersion=2;
+      boolean video=frame.body!=null&&"video".equals(frame.body.get("media"));
+      switch(frame.type){
+        case "OFFER":case "ANSWER":case "ICE":case "MEDIA_READY":case "ERROR":
+          if(!video){frame.negotiationGeneration=1;frame.body.put("media","audio");}
+          if("ERROR".equals(frame.type)&&!frame.body.containsKey("code"))frame.body.put("code","failed");
+          break;
+        case "INVITE":case "ACCEPT":break;
+        case "VIDEO_REQUEST":case "VIDEO_ACCEPT":case "VIDEO_DECLINE":case "VIDEO_STATE":case "REMOTE_SPEAKER":case "REMOTE_CAMERA":break;
+        default:frame.negotiationGeneration=0;frame.body.clear();break;
+      }
+      if(!CallVideoProtocol.valid(frame))throw new IOException("Invalid local call frame");
+    }
+    byte[] wire = CallSignaling.serialize(frame);
+    transport.send(wire);
+  }
+
+  /** Record inbound signaling evidence for the heartbeat liveness check.  Only genuinely inbound
+   *  frames count -- a reply to our own PING is evidence the channel works, but our own write is
+   *  not evidence the peer is alive. */
+  public void noteInboundSignal() { lastInboundSignalMs = clock.nowMs(); }
+
+  private void notifyCallback(CallSession snap) {
+    Callback cb = this.callback;
+    if (cb != null) {
+      try { cb.onStateChanged(snap); } catch (Exception ignored) {}
+    }
+    for (Callback extra : listeners) {
+      try { extra.onStateChanged(snap); } catch (Exception ignored) {}
+    }
+  }
+
+  // ── Shutdown ───────────────────────────────────────────────────
+
+  /** Clean shutdown: end any active call, release timers. */
+  public void shutdown() {
+    synchronized (lock) {
+      try {
+        if (session != null && !session.state.terminal()) {
+          endCall(CallProtocol.EndReason.ENGINE_SHUTDOWN);
+        }
+      } catch (IOException ignored) {}
+    }
+    stopHeartbeat();
+    stopQualityPolling();
+    cancelTimeout();
+    if (timer != null) { timer.shutdown(); timer = null; }
+    limiter.clear();
+    if (audioOwner != null) audioOwner.forceRelease();
+    listeners.clear();
+  }
+
+  /** The signaling channel for a live call has failed at the transport level (socket closed or
+   *  unreadable) rather than at the frame level.  Ends the call so a dead channel cannot leave
+   *  an established call looking live until the heartbeat notices. */
+  public void onSignalingChannelClosed(Transport channel,String callId,String peerId) {
+    synchronized (lock) {
+      if(!ownsChannel(channel,callId,peerId))return;
+      if (session == null || session.state.terminal()) return;
+      try { endCall(CallProtocol.EndReason.SIGNALING_LOST); }
+      catch (IOException ignored) {}
+    }
+  }
+
+  /** Called when the engine goes Offline — ends active call without sending. */
+  public void onOffline() {
+    synchronized (lock) {
+      if (session != null && !session.state.terminal()) {
+        Transport live = transport;
+        session.state = CallProtocol.State.Ending;
+        session.endReason = CallProtocol.EndReason.OFFLINE;
+        session.durationMs = session.connectedAtMs > 0 ?
+          clock.nowMs() - session.connectedAtMs : 0;
+        cleanupMedia();
+        stopHeartbeat();
+        stopQualityPolling();
+        cancelTimeout();
+        notifyCallback(session.snapshot());
+        session.state = CallProtocol.State.Idle;
+        session = null;
+        transport = null;
+        activeTransport = null;
+        frameAdmission = null;
+        if (live instanceof java.io.Closeable) {
+          try { ((java.io.Closeable) live).close(); } catch (Exception ignored) {}
+        }
+      }
+    }
+    // Always release, even when no session was active (A05)
+    if (audioOwner != null) audioOwner.forceRelease();
+  }
+
+  /** Apply an incoming-call preference change.
+   *
+   *  Turning the preference off while an invitation is still ringing declines it immediately, so
+   *  the ringing UI and its notification are withdrawn rather than left to time out. An already
+   *  accepted Connecting/Connected call is untouched: the preference governs invitations, not
+   *  established calls. Turning it on affects future invitations only.
+   *
+   *  Returns true when a ringing invitation was declined as a result. A save failure keeps the
+   *  in-memory choice and is reported through the thrown IOException, matching the plan's
+   *  "retain the session choice" rule. */
+  public boolean setAllowIncoming(boolean value) throws IOException {
+    synchronized (lock) {
+      settings.setAllowIncoming(value);
+      if (value) return false;
+      if (session == null || session.state != CallProtocol.State.IncomingRinging) return false;
+      try {
+        sendFrame(CallSignaling.decline(session.callId, sequence.incrementAndGet()));
+      } catch (IOException ignored) {
+        // The channel is already gone; end locally regardless so no stale ringing UI survives.
+      }
+      endCall(CallProtocol.EndReason.LOCAL_DECLINE);
+      return true;
+    }
+  }
+
+  /** The current incoming-call preference, for UI. */
+  public boolean allowIncoming() { return settings.allowIncoming(); }
+
+  /** A recoverable settings error, or null. */
+  public String settingsLoadError() { return settings.loadError(); }
+}

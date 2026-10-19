@@ -1,0 +1,80 @@
+# SubnetDesk Android -> Windows voice diagnosis
+
+Date: 2026-10-08. Read-only diagnosis, not an app repair or release.
+
+## New helper permission failure after Windows build79 switch
+
+User reports "Failed to start voice call." Current resumed phone activity belongs to
+com.zibochen.subnetdesk.helper, version1.3.3/code2078, PID16032. Separate original package
+com.zibochen.subnetdesk1.3.0/code2075 remains installed/running and has RECORD_AUDIO
+granted=true. Helper has RECORD_AUDIO granted=false and AppOps ignore; original permission
+does not establish permission for the separately installed helper.
+
+Helper-process-only phone log records (device clock timestamps, not host clock):
+
+```text
+10-08 18:40:42.622 16032 D LOG_AUDIO_RECORD_HANDLE: createAudioRecorder failed, no RECORD_AUDIO permission
+10-08 18:40:42.623 16032 E LOG_AUDIO_RECORD_HANDLE: createAudioRecorder fail
+10-08 18:40:42.623 16032 E mMainActivity: onVoiceCallStarted fail
+```
+
+Inspected AudioRecordHandle.kt checks RECORD_AUDIO before creating the recorder and returns
+false with that log. MainActivity.kt emits the exact user-facing failure when this returns
+false. Thus this recorded failure is missing helper microphone permission, not a guessed
+Windows ringtone regression. Windows main5476/build79 owns21118 with an established phone
+connection and actual child CM23876 from the same build79 folder. This transport evidence
+does not accept ringing/audio quality. Firewall prompt disposition was not observed.
+
+Read-only diagnosis only: no permission/AppOps, source, package, service, output/volume or
+call changes. User must grant Microphone to **SubnetDesk Helper** manually in Android app
+permissions, preferably while using the app, then retry. Permission grant alone does not
+prove audible voice/ringtone or call lifecycle success. No credentials/chat recorded.
+
+## Superseding approved retest checkpoint
+
+User explicitly approved microphone access. RECORD_AUDIO is now granted=true/AppOps
+foreground. Original Android app connected to the existing Windows1.3.1 dock receiver;
+phone log at10:29:29 reports createAudioRecorder done and onVoiceCallStarted success.
+User reports voice call works, but no Windows incoming ringtone. Source confirms incoming
+call handler expands/restores CM without sound. See PLAN-SUBNETDESK-VOICE-RING.md (not
+implemented yet). User report/recorder success are not a stress or audio-quality measurement.
+
+## Direct device evidence
+
+User connected the phone for diagnostics. ADB identifies SM-S908E, Android 16, with
+installed package com.zibochen.subnetdesk versionName 1.3.0 / versionCode 2075.
+Package permission report: android.permission.RECORD_AUDIO granted=false.
+AppOps report: RECORD_AUDIO ignore. No permission/AppOps settings were changed.
+
+Filtered application log from the installed process records:
+
+```text
+10-08 10:01:23.369 D/LOG_AUDIO_RECORD_HANDLE: createAudioRecorder failed, no RECORD_AUDIO permission
+10-08 10:01:23.370 E/LOG_AUDIO_RECORD_HANDLE: createAudioRecorder fail
+10-08 10:01:23.370 E/mMainActivity: onVoiceCallStarted fail
+```
+
+This confirms why that recorded attempt failed: Android denied microphone capture.
+It does not prove all other voice paths will work after enabling the permission.
+Windows candidate main PID4052 remains at the 1.3.1 dock path; no active CM was present
+at inspection. No new call was initiated by the agent, and no audible retest was performed.
+Login credentials supplied by the user are intentionally not recorded or used in diagnostics.
+
+## Source correspondence
+
+In the helper checkout, AudioRecordHandle.kt:createAudioRecorder explicitly checks
+RECORD_AUDIO and returns false with the matching log message when permission is absent.
+MainActivity.kt:onVoiceCallStarted then emits the matching failure and the user-facing
+"Failed to start voice call." message. The inspected remote_page.dart call action directly
+requests a voice call; this action does not itself request Android microphone permission.
+The installed phone log independently confirms the permission failure; this is not merely
+a prediction from Windows logs or source inspection.
+
+## Next checkpoint
+
+Ask before enabling microphone access for this app, or have the user grant it in Android
+Settings -> Apps -> SubnetDesk -> Permissions -> Microphone -> Allow while using the app.
+Then retry Android-originated call, accept on Windows, inspect the app-specific log and
+test audible audio in both directions and clean hang-up. Enabling permission is not itself
+an audible-quality acceptance test. A future in-app permission prompt would be a separate
+implementation task subject to planning-first approval. No app code/build/signing changed.
